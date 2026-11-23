@@ -54,7 +54,7 @@ const WRITING = new Set(), S = {{pending: {{}}}}, D = {{notes: [], version: 'v'}
 const allRead = () => true, sendItems = () => rows, draw = async () => {{}}, relist = () => {{}}, refresh = async () => {{}};
 const gen = () => '', typingNote = () => tn, abPicks = () => ({{}}), pl = (n, a, b) => n + ' ' + (n === 1 ? a : b), updateBar = () => {{}};
 const draft = () => ({{reply: 'r'}}), setDraft = () => {{}}, optLabel = () => '';
-const document = {{querySelectorAll: () => []}};
+const document = {{querySelectorAll: () => []}}; let WROTEQ = new Set(), CARRY = null, GOING = null; const made = b => b.anchor_id + '|' + String(b.text || '').trim();
 const ctx = {{takeNow: async () => {{}}, prefs: {{get: () => null, set: () => {{}}}}, toast: t => {{ toast = t; }}}};
 const call = async p => {{ if (p === 'api/rounds/submit') {{ posted++; return round; }} return p === 'api/comments' ? {{id: 't'}} : {{}}; }};
 {deliv};

@@ -48,7 +48,8 @@
     const write = body !== undefined || !!method;
     // past the round check a write, other than the round's own, that changes a row the round carries never goes: no control can
     // get round the take-back gate (r12 audit35 running 1-4, frame 1-4)
-    if (write && own && path === 'api/comments' && sendP && sendP.made) sendP.made(body);
+    // by the path without its query: Questions posts to api/comments?author=… (r12 audit36 frame 1, questions 1)
+    if (write && own && path.split('?')[0] === 'api/comments' && sendP && sendP.made) sendP.made(body);
     if (write && !own && sendP && sendP.carriesPath && sendP.carriesPath(path, body)) {
       toast('This is already going with Send: it was not taken back');
       return Promise.reject(Object.assign(new Error('already going with Send'), {carried: true}));

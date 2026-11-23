@@ -43,7 +43,7 @@ const allRead = () => true, settled = () => allRead() && !WRITING.size, Q = () =
 const sendItems = () => rows, draw = async () => {{}}, relist = () => {{}}, refresh = async () => {{}};
 const gen = () => 'fb', typingNote = () => null, abPicks = () => ({{}}), pl = (n, a, b) => n + ' ' + (n === 1 ? a : b), updateBar = () => {{}};
 const draft = () => ({{}}), setDraft = () => {{}}, optLabel = () => '';
-const document = {{querySelectorAll: () => []}};
+const document = {{querySelectorAll: () => []}}; let WROTEQ = new Set(), CARRY = null, GOING = null; const made = b => b.anchor_id + '|' + String(b.text || '').trim();
 const ctx = {{takeNow: () => new Promise(r => {{ freeTake = r; }}), prefs: {{get: () => null, set: () => {{}}}}, toast: t => {{ toast = t; }}}};
 // the frame's wrapper, as far as the round sees it: a write not the round's own waits for ROUND
 const api = async (p, own) => {{ if (!own && ROUND) await ROUND; log.push(p);
@@ -96,7 +96,7 @@ const allRead = () => true, settled = () => allRead() && !WRITING.size, Q = () =
 const sendItems = () => rows, draw = async () => {{}}, relist = () => {{}}, refresh = async () => {{}};
 const gen = () => 'fb', typingNote = () => null, abPicks = () => ({{}}), pl = (n, a, b) => n + ' ' + (n === 1 ? a : b), updateBar = () => {{}};
 const draft = () => ({{}}), setDraft = () => {{}}, optLabel = () => '';
-const document = {{querySelectorAll: () => []}};
+const document = {{querySelectorAll: () => []}}; let WROTEQ = new Set(), CARRY = null, GOING = null; const made = b => b.anchor_id + '|' + String(b.text || '').trim();
 const ctx = {{takeNow: async () => {{}}, prefs: {{get: () => null, set: () => {{}}}}, toast: t => {{ toast = t; }}}};
 let ids = ['L'];
 const call = async p => {{ if (p === 'api/rounds/submit') {{ posted++; return {{comment_ids: ids}}; }} return {{}}; }};
@@ -131,7 +131,7 @@ const allRead = () => true, settled = () => allRead() && !WRITING.size, Q = () =
 const sendItems = () => rows, draw = async () => {{}}, relist = () => {{}}, refresh = async () => {{}};
 const gen = () => '', typingNote = () => null, abPicks = () => ({{}}), pl = (n, a, b) => n + ' ' + (n === 1 ? a : b), updateBar = () => {{}};
 const draft = () => ({{}}), setDraft = () => {{}}, optLabel = () => '';
-const document = {{querySelectorAll: () => []}};
+const document = {{querySelectorAll: () => []}}; let WROTEQ = new Set(), CARRY = null, GOING = null; const made = b => b.anchor_id + '|' + String(b.text || '').trim();
 const ctx = {{takeNow: async () => {{}}, prefs: {{get: () => null, set: () => {{}}}}, toast: t => {{ toast = t; }}, queueSent: (n, was) => {{ handed = was; }}}};
 const call = async p => p === 'api/rounds/submit' ? {{comment_ids: [], delivery: 'noop'}} : {{}};
 {deliv}

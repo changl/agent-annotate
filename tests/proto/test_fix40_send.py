@@ -196,7 +196,7 @@ def _q_failed(tmp_path, body):
     node(tmp_path, f"""
 const assert = require('assert');
 const store = {{}}, ctx = {{prefs: {{get: (k, d) => k in store ? store[k] : d, set: (k, v) => {{ store[k] = v; }}}}}};
-let drafts = {{}}, picks = {{}}; const D = {{questions: [{{id: 'q1'}}, {{id: 'q2'}}]}};
+let drafts = {{}}, picks = {{}}; const D = {{questions: [{{id: 'q1'}}, {{id: 'q2'}}]}}, gen = () => '', WROTEQ = new Set();
 const draft = id => drafts[id] || {{}}, setDraft = (id, p) => {{ drafts[id] = {{...draft(id), ...p}}; }};
 const abPicks = () => picks, setAB = (a, p) => {{ if (p) picks[a] = p; else delete picks[a]; }};
 {fn}

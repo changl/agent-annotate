@@ -57,7 +57,7 @@ def test_general_feedback_in_the_sheet_updates_its_count():
 def test_marker_on_edit_back_to_waiting_and_restore():
     """questions 03, frame 4: each of these toasts with Undo, so a copy shows 'prototype: not sent'."""
     s = _js("questions")
-    assert "ctx.toast(on ? 'Set aside for later' : 'Back to waiting', {going: 'q:' + q.id, undo: () => later(q, !on)});" in s
+    assert "ctx.toast(on ? 'Set aside for later' : 'Back to waiting', {going: 'q:' + q.id, undo: () => later(cur, !on)});" in s
     assert "ctx.toast('Restored to waiting', {going: [q.id, 'q:' + q.id, 'c:' + q.id], undo:" in s
     assert "c.toast('Note changed · goes with Send'" in s
 

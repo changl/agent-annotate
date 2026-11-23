@@ -159,7 +159,8 @@ def _beads(ids: set[str], page_dir: Path) -> dict:
 def _decision(d):
     if not isinstance(d, dict) or d.get("discarded"):
         return None
-    return {k: d.get(k) for k in ("verdict", "text", "option_id", "ts", "round_pending")}
+    # via and mine: a pending answer or card reply written by a round that then failed is his Send row on any reload (r12 audit36)
+    return {**{k: d.get(k) for k in ("verdict", "text", "option_id", "ts", "round_pending", "via")}, "mine": _mine(d.get("by"))}
 
 
 _all_cache: dict = {}  # page dir -> (comments.json's stamp, its cards): FastLane Drive's is 17 MB, 0.6 s to parse each read
