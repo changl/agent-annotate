@@ -369,6 +369,9 @@
         go: () => { const h = NK.hooks[r.tab]; if (h && h.go) h.go(r); else c.go(r.tab || 'questions'); },
         save: async () => { const u = `api/comments/${encodeURIComponent(r.id)}`;
           await (rep ? c.api(u + '/reply', {text: w}, undefined, true) : c.api(u, NK.body(r, w), 'PUT', true));
+          // written, not delivered: the kit's record keeps it as his edit or reply on a sent note, so every reader's row lists it
+          // until a round goes, as a reload does, and a failed round leaves it in Send (r12 audit36 running 1)
+          NK.put1(r.id, rep ? {replies: [{text: w}]} : {text: w});
           const n = (rep ? NK.th : NK.eds).get(r.id);
           if (n && rep) (n.replies = n.replies || []).push({agent: false, who: 'You', text: w, ts: new Date().toISOString(), unsent: true});
           if (n && !rep) Object.assign(n, {text: w, edited: true, flagged: false});
@@ -1469,7 +1472,8 @@
       // Its id joins the listed notes too, so a row the round leaves out is not counted (r12 audit30 questions 3)
       const wroteFor = (k, w) => { if (listed.keys.has(k) && w && w.id) { known.add(w.id); listed.notes.push(w.id); } };
       // another tab's note still being typed, listed: saved first, as Send's own write; a failed save stops here with the words kept
-      for (const x of Q().filter(x => x.save && listed.keys.has('x:' + x.key))) wroteFor('x:' + x.key, await x.save());
+      for (const x of Q().filter(x => x.save && listed.keys.has('x:' + x.key))) { const w = await x.save(); wroteFor('x:' + x.key, w);
+        if (w && w.id && w.id in NK.loc()) L0[w.id] = JSON.stringify(NK.loc()[w.id]); }  // its kit record is this round's own write, never a change after the check
       for (const q of answers) {
         const d = snap.get(q.id), w = (d.words || '').trim();
         const body = d.pick ? {verdict: 'select', text: optLabel(q, d.pick) + (w ? '\n\n' + w : ''), option_id: d.pick, defer_push: true} : {verdict: 'comment', text: w, defer_push: true};
