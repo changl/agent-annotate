@@ -30,7 +30,7 @@ def node(tmp_path, js):
 
 def test_saved_notes_list_before_the_read_and_follow_it(tmp_path):
     """Questions 1, running 1: with no read in, the saved notes are the rows; once read, the read replaces them."""
-    fn = grab(Q, "  const savedNotes = ", "\n  }")
+    fn = grab(Q, "  const owned = ", ";\n") + grab(Q, "  const savedNotes = ", "\n  }")
     node(tmp_path, f"""
 const assert = require('assert');
 const store = {{}}, P = {{notes: {{out: n => !n.sent || !!n.edited}}}}, NK = {{state: n => ({{sent: !!n.sent}})}};

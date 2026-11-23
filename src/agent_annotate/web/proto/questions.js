@@ -542,7 +542,10 @@
   // a sent note he re-opened is the kit's own Send row, listed from the one draft store on every tab (r12 audit16 frame 1)
   // a sent note open in its Edit with changed words is listed too, as the mock's open correction (r12 audit32 questions 5)
   const openEd = x => { const e = S.note || ctx.prefs.get('q:newnote', null); return !!(e && e.edit === x.id && x.sent && (e.text || '').trim() && e.text.trim() !== (x.text || '').trim()); };
-  const myNotes = q => { const own = new Set(q.map(x => x.note).filter(Boolean)); return D.notes.filter(x => (NK.out(x) || openEd(x)) && !x.closed && !own.has(x.id) && !ctx.taken(x.id) && !/^doc:/.test(x.anchor || '')); };
+  // the notes another row stands for: a tab's own note row, or an open Edit's row (ty:edit:<id>), whose words are what Send
+  // writes, so one note is one row in every reader's sheet (r12 audit37 running 2)
+  const owned = q => new Set([...q.map(x => x.note), ...q.map(x => /^ty:edit:/.test(x.key) && x.key.slice(8))].filter(Boolean));
+  const myNotes = q => { const own = owned(q); return D.notes.filter(x => (NK.out(x) || openEd(x)) && !x.closed && !own.has(x.id) && !ctx.taken(x.id) && !/^doc:/.test(x.anchor || '')); };
   // the one Send count, in items as the Send summary lists them: the bar here, the top bar and the phone's floating Send
   // the new note still being typed says it goes with the next Send, so Send lists, counts and carries it (audit7 #03)
   // a saved note open in its editor reads as he left it: in the editor, in Send and after a reload (audit8 #01)
@@ -553,7 +556,7 @@
   // his unsent notes (line, paragraph, chart point) as last read, so Send lists and counts each from its saved record while the questions are still on their way (r12 fix14 questions 1, running 1)
   const savedNotes = () => ctx.prefs.get('draft:qnotes', []);
   function notesNow(q) {
-    const own = new Set(q.map(x => x.note).filter(Boolean));
+    const own = owned(q);
     if (!D) return savedNotes().filter(n => !own.has(n.id));
     const l = myNotes(q), s = l.map(n => ({id: n.id, anchor: n.anchor, label: n.label, text: n.text, target: n.target, i: D.notes.indexOf(n) + 1, v: D.version, at: n.at, ...NK.state(n)}));
     if (JSON.stringify(s) !== JSON.stringify(savedNotes())) ctx.prefs.set('draft:qnotes', s);
@@ -1142,7 +1145,8 @@
     // the questions feed holds the page's notes; a copy's release notes are in Reference's and Pages & links' feeds alone, so their rows say (x.peer)
     const peer = id => { const n = id && D && D.notes.find(x => x.id === id); return !!n && !NK.mine(n); };
     // a row that names its owner (every tab's note row, a Re-open) keeps it: the owner is whoever did the row's action
-    for (const x of q) it.push([x.group, x.html, 'x:' + x.key, x.remove && !P.inflight(x.note || (/^ty:/.test(x.key) ? x.key.replace(/^ty:(edit|reply):/, '') : '')) ? 'x:' + x.key : '', x.peer != null ? !!x.peer : peer(x.note), x.note]);
+    const tyE = new Set(q.map(x => /^ty:edit:/.test(x.key) && x.key.slice(8)).filter(Boolean));
+    for (const x of q) if (!(x.note && tyE.has(x.note))) it.push([x.group, x.html, 'x:' + x.key, x.remove && !P.inflight(x.note || (/^ty:/.test(x.key) ? x.key.replace(/^ty:(edit|reply):/, '') : '')) ? 'x:' + x.key : '', x.peer != null ? !!x.peer : peer(x.note), x.note]);
     return it;
   }
   // the keys of what this client's Send delivers now: each of his rows (a peer's never goes) and General feedback

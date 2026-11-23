@@ -80,6 +80,26 @@ has('qr1:c6', '☑ Selected: my own words'); has('qr2:c6', '↺ my words');
     assert "|| isClosing(q) || !!pendA(q);" in Q and "hasReply(q) || pending(q)" in Q
 
 
+def test_one_note_is_one_row_in_every_sheet(tmp_path):
+    # History's stored edit (hcn:) and its open Edit (ty:edit:) on the same note: the open Edit's row alone (r12 audit37 running 2)
+    items = grab(Q, "function sendItems() {", "\n    return it;\n  }")
+    js = """
+const esc = s => String(s), cut = (s, n) => String(s).slice(0, n), draft = () => ({}), abPicks = () => ({}), notesNow = () => [];
+const typingNote = () => null, mk = s => s, NK = {}, P = {inflight: () => false}, D = {questions: [], notes: []};
+const pendA = () => null, pendR = () => [], isClosing = () => false, hasReply = () => false;
+const rows = [{key: 'hcn:n1', group: 'Notes', note: 'n1', html: 'stored', remove: null},
+  {key: 'ty:edit:n1', group: 'Notes', html: 'Edited', save: () => {}, remove: () => {}},
+  {key: 'hcn:n2', group: 'Notes', note: 'n2', html: 'other'}];
+const Q = () => rows;
+""" + items + r"""
+const keys = sendItems().map(r => r[2]);
+if (JSON.stringify(keys) !== JSON.stringify(['x:ty:edit:n1', 'x:hcn:n2'])) throw new Error('rows ' + JSON.stringify(keys));
+"""
+    node(tmp_path, js)
+    # Questions' own note rows leave out a note an open Edit's row stands for, as they do another tab's note row
+    assert "const myNotes = q => { const own = owned(q);" in Q and "const own = owned(q);\n    if (!D) return" in Q
+
+
 def test_waiting_leaves_out_his_pending_answer(tmp_path, monkeypatch):
     page = _page(tmp_path, monkeypatch)
     # open and unanswered: c1 and c5 (replies alone do not answer); c6 and c8 have his answer pending; c4, c8 set aside; c3, c7 closed
