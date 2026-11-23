@@ -346,15 +346,18 @@
     else if (b.dataset.nsave) {
       const k = b.dataset.nsave, text = (document.getElementById('l-nt').value || '').trim(), target = S.tgt || undefined;
       if (!text) return ctx.toast('Write something first');
+      const {l, line} = place(w, D, k, b);
       try {
-        const {l, line} = place(w, D, k, b);
         // while its Save is out the typed row has no Remove: the note is being stored, and Remove would hide it until it lands (r12 audit33 reference 1)
         SAVING = true; ctx.refreshTop();
         const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: l, text, target}).finally(() => { SAVING = false; });
         mine.push({id: c.id, a: k, l, line, text: c.text || text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), target});
-        S.note = ''; S.tgt = null; ctx.prefs.set('draft:lnote', null); draw(w, ctx, D); ctx.refreshChips();
+        // another spot opened while it was out keeps its own composer and draft (r12 fix45 pass 3)
+        const now = typed(ctx); if (!now || P.notes.same(now, k, target)) ctx.prefs.set('draft:lnote', null);
+        if (P.notes.same({a: S.note, tgt: S.tgt}, k, target)) { S.note = ''; S.tgt = null; }
+        draw(w, ctx, D); ctx.refreshChips(); ctx.refreshTop();
         ctx.toast('Note saved', {going: [c.id, 'ln:' + c.id], undo: () => undoNote(c.id, w, ctx, D)});
-      } catch (er) { ctx.toast(`The note was not saved: ${er.message}`); }
+      } catch (er) { if (!typed(ctx)) { ctx.prefs.set('draft:lnote', {a: k, tgt: target || null, text, l, line}); ctx.refreshTop(); } ctx.toast(`The note was not saved: ${er.message}`); }
     } else if (b.dataset.nundo) undoNote(b.dataset.nundo, w, ctx, D);
   }
   // another spot while a note is typed: the typed note is kept, by the round or saved as its own note (r12 fix45 pass 3).
@@ -363,6 +366,7 @@
     const d = typed(ctx);
     if (!d) return {tgt};
     if (!P.notes.other(d, k, tgt)) return {tgt: d.tgt || null};
+    if (SAVING) { ctx.prefs.set('draft:lnote', null); ctx.refreshTop(); return {tgt}; }  // its Save is out: that Save stores it (and puts it back if it fails)
     const text = d.text.trim();
     if (!P.notes.keep(ctx, {anchor_id: d.a, anchor_label: d.l, text, target: d.tgt || undefined},
       () => { if (!typed(ctx)) ctx.prefs.set('draft:lnote', d); redo(); ctx.refreshTop(); },

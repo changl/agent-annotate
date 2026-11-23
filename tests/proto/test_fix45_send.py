@@ -64,3 +64,8 @@ def test_another_spot_keeps_the_typed_note():
     assert REF.count("openAt(") == 5
     assert "if (!NK().keep(ctx, {anchor_id: d.a, anchor_label: d.l, text, target: d.tgt || undefined, ...(d.m || {})}," in REF
     assert "S.tgt = d.tgt || null; const t = document.getElementById('rf-nt')" in REF
+    # a Save still out when another spot opens: that Save stores the note once, and closes only its own composer
+    assert "if (SAVING) { ctx.prefs.set('draft:lnote', null); ctx.refreshTop(); return {tgt}; }" in LINKS
+    assert "if (P.notes.same({a: S.note, tgt: S.tgt}, k, target)) { S.note = ''; S.tgt = null; }" in LINKS
+    assert "else if (d && SAVING) setR(null);" in REF
+    assert "if (NK().same({a: S.note, tgt: S.tgt}, k, target)) { S.note = ''; S.tgt = null; }" in REF

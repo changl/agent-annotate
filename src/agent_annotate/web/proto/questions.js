@@ -302,6 +302,7 @@
     // or another line is another spot. keep: past the round check the round posts it as it read then, so the next spot just opens;
     // words typed since stay in their composer (false), as in Questions. Else it is saved as its own note, after a held round
     other: (d, a, tgt) => d.a !== a || (!!tgt && JSON.stringify(tgt) !== JSON.stringify(d.tgt || null)),
+    same: (d, a, tgt) => d.a === a && JSON.stringify(d.tgt || null) === JSON.stringify(tgt || null),  // the very spot a Save posted
     keep(c, body, back, saved) {
       const w = P.madeWords ? P.madeWords(body) : null;
       if (w !== null) return w === body.text;

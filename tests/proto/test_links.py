@@ -145,4 +145,4 @@ def test_a_note_being_typed_is_a_draft_in_send():
     assert "key: 'lnn:' + d.a, group: 'Notes'" in s and "(typed(c))" in s
     assert "if (back) { openAt(D, dr.a); S.note = dr.a;" in s and "dr.a.startsWith(`doc:kept-${ka[1]}~`)" in s
     assert "(e.metaKey || e.ctrlKey) && e.key === 'Enter'" in s and "e.stopPropagation()" in s
-    assert "ctx.prefs.set('draft:lnote', null); draw(w, ctx, D); ctx.refreshChips();" in s  # Save takes it out of the drafts
+    assert "if (!now || P.notes.same(now, k, target)) ctx.prefs.set('draft:lnote', null);" in s  # Save takes it out of the drafts

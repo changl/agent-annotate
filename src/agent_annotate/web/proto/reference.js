@@ -591,15 +591,18 @@
       const k = d.nsave, text = (document.getElementById('rf-nt').value || '').trim();
       if (!text) return ctx.toast('Write something first');
       const src = el.querySelector(`[data-line="${CSS.escape(k)}"]`);
+      const target = S.tgt || undefined;
       try {
-        const target = S.tgt || undefined;
         // while its Save is out the typed row has no Remove: the note is being stored, and Remove would hide it until it lands (r12 audit33 reference 1)
         SAVING = true; ctx.refreshTop();
         const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: src ? src.dataset.label : 'Reference', text, target, ...noteMeta(k)}).finally(() => { SAVING = false; });
         mine.push({id: c.id, a: k, l: src ? src.dataset.label : '', text: c.text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), v: c.version, target: c.target || target});
-        S.note = ''; S.tgt = null; setR(null); draw(); ctx.refreshChips();
+        // another spot opened while it was out keeps its own composer and draft (r12 fix45 pass 3)
+        const now = rnote(); if (!now || NK().same(now, k, target)) setR(null);
+        if (NK().same({a: S.note, tgt: S.tgt}, k, target)) { S.note = ''; S.tgt = null; }
+        draw(); ctx.refreshChips();
         ctx.toast('Note saved', {going: [c.id, 'rn:' + c.id], undo: () => undoNote(c.id)});
-      } catch (er) { fail(er); }
+      } catch (er) { if (!rnote()) setR({a: k, l: src ? src.dataset.label : 'Reference', tgt: target || null, text, m: noteMeta(k), item: S.sel || itemOf(k)}); fail(er); }
       return;
     }
     if (d.nundo) return undoNote(d.nundo);
@@ -617,6 +620,7 @@
   function openAt(k, tgt) {
     const d = rnote();
     if (d && !NK().other(d, k, tgt)) tgt = d.tgt || null;
+    else if (d && SAVING) setR(null);  // its Save is out: that Save stores it (and puts it back if it fails)
     else if (d) { const text = d.text.trim();
       if (!NK().keep(ctx, {anchor_id: d.a, anchor_label: d.l, text, target: d.tgt || undefined, ...(d.m || {})},
         () => { if (!rnote()) setR(d); redo(); },
