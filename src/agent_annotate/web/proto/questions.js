@@ -1319,21 +1319,21 @@
   async function later(q, on) {
     await call(`api/comments/${encodeURIComponent(q.id)}/answer-later`, {on});
     q.later = on; draw(true);
-    ctx.toast(on ? 'Set aside for later' : 'Back to waiting', {undo: () => later(q, !on)});
+    ctx.toast(on ? 'Set aside for later' : 'Back to waiting', {going: 'q:' + q.id, undo: () => later(q, !on)});
   }
   function close(q) {
     setDraft(q.id, {close: true}); S.open.delete(q.id); draw(true);
-    ctx.toast('Closed: no answer needed · goes with Send', {undo: () => { if (P.going('c:' + q.id)) return; setDraft(q.id, {close: null}); draw(true); }});
+    ctx.toast('Closed: no answer needed · goes with Send', {going: 'c:' + q.id, undo: () => { if (P.going('c:' + q.id)) return; setDraft(q.id, {close: null}); draw(true); }});
   }
   async function reopen(q) {
     await call(`api/comments/${encodeURIComponent(q.id)}/restore`, {}); q.closed = false; S.open.delete(q.id); draw(true);
-    ctx.toast('Restored to waiting', {undo: async () => { await call(`api/comments/${encodeURIComponent(q.id)}/archive`, {}); q.closed = true; draw(true); }});
+    ctx.toast('Restored to waiting', {going: [q.id, 'q:' + q.id, 'c:' + q.id], undo: async () => { await call(`api/comments/${encodeURIComponent(q.id)}/archive`, {}); q.closed = true; draw(true); }});
   }
   function undo(q) {
     if (P.going('q:' + q.id)) return;
     const keep = draft(q.id);
     setDraft(q.id, {pick: null, words: null}); S.open.delete(q.id); draw(true);
-    ctx.toast('Answer removed', {undo: () => { setDraft(q.id, {pick: keep.pick, words: keep.words}); draw(true); }});
+    ctx.toast('Answer removed', {going: 'q:' + q.id, undo: () => { setDraft(q.id, {pick: keep.pick, words: keep.words}); draw(true); }});
   }
   async function addNote(text) {
     const n = S.note; S.note = null; ctx.prefs.set('q:newnote', null);
@@ -1342,7 +1342,7 @@
     // listed at once from its stored record: Send, its count and the document never wait on the re-read (r12 audit14 questions 1)
     if (c && c.id && !D.notes.some(x => x.id === c.id)) D.notes.push({id: c.id, anchor: n.anchor, label: n.label, text: c.text || text, target: n.target, sent: false, at: c.created_at || new Date().toISOString()});
     notesNow(Q());
-    ctx.toast(n.fixOf ? 'Correction saved · goes with Send' : 'Note saved · goes with Send', {undo: () => delNote(c.id, true)});
+    ctx.toast(n.fixOf ? 'Correction saved · goes with Send' : 'Note saved · goes with Send', {going: [c.id, 'n:' + c.id], undo: () => delNote(c.id, true)});
     await draw(true);
     await refresh();
   }
@@ -1357,7 +1357,7 @@
     if (D) D.notes = D.notes.filter(x => x.id !== id);
     await draw(true);
     const back = async () => { keep(); ctx.prefs.set('draft:qnotes', P.putBack(savedNotes(), was, id)); await (D ? refresh() : draw(true)); };
-    if (!quiet && n) ctx.toast('Note removed', {undo: back});
+    if (!quiet && n) ctx.toast('Note removed', {going: [id, 'n:' + id], undo: back});
     return back;
   }
   async function copy(text, what) {
@@ -1506,6 +1506,8 @@
       ctx.prefs.set('draft:reopen', {});  // and every re-opened one, on any tab
       // and every edit and reply on a sent note, whatever tab holds it, as it read at the round check: one changed since stays
       NK.L = Object.fromEntries(L1); ctx.prefs.set('draft:nkput', NK.L);
+      if (ctx.queueWent) ctx.queueWent(listed.q);  // each row's delivered words: a failed round later drops a draft back at them
+      if (typeof qWent === 'function') qWent(answers.map(q => [q.id, snap.get(q.id)]), abs);
       if (ctx.queueSent) ctx.queueSent(got, listed.q);  // the other tabs' items went with it: inert, each tab clears its own; the frame shows this round as the last Send
       S.pending = null;
       document.querySelectorAll('.qsend.sending').forEach(x => x.remove());  // straight to the receipt, as in the mock, while the tab re-reads
@@ -1520,12 +1522,20 @@
       try { await refresh(); } catch (x) { console.warn('refresh after Send', x); }
     } catch (e) {
       S.pending = null; ROUND = null; CARRY = null; open();
+      if (typeof qFailed === 'function') qFailed();
       if (ctx.queueFailed) ctx.queueFailed();  // nothing was delivered: each base stays, and a draft back at it is no change (r12 audit35 running 7)
       await refresh();
       ctx.toast('Send failed: ' + e.message + '. Your drafts are kept.');
     } finally { ROUND = null; CARRY = null; open(); }
   }
   // Discard all: every draft, the general feedback and the unsent notes go, with one Undo (#10)
+  // an answer's and a picture pick's last delivered value; after a failed round a draft equal to it is no change and drops off (r12 audit35 running 7)
+  const ansSig = d => (d.pick || '') + '\n' + (d.words || '').trim();
+  function qWent(ans, picks) { const w = ctx.prefs.get('q:went', {});
+    for (const [id, d] of ans) w['q:' + id] = ansSig(d || {}); for (const [a, p] of picks) w['ab:' + a] = p.side; ctx.prefs.set('q:went', w); }
+  function qFailed() { const w = ctx.prefs.get('q:went', {});
+    for (const q of D ? D.questions : []) { const d = draft(q.id); if ((d.pick || d.words) && w['q:' + q.id] === ansSig(d)) setDraft(q.id, {pick: null, words: null}); }
+    for (const [a, p] of Object.entries(abPicks())) if (w['ab:' + a] === p.side) setAB(a, null); }
   async function discardAll() {
     const keep = drafts(), g = gen(), ab = abPicks(), q = Q(), notes = myNotes(q),  // counted as Send lists them: an answer and a reply are two (r12 fix7, questions 5)
       // a sent note's edit or reply has no Remove and stays, as today's Discard all (pending verdicts only): not counted (r12 audit19 reference 6)
@@ -1538,7 +1548,7 @@
     // kept until Undo is gone: Undo puts back the very notes (a re-opened one is the kit's queue row, removed above)
     const backs = []; for (const n of notes) if (NK.rowRm(n)) backs.push(await delNote(n.id, true));  // only the ones Send could Remove: the server keeps the rest
     await refresh();
-    ctx.toast(`Discarded ${pl(total, 'draft', 'drafts')}`, {undo: async () => {
+    ctx.toast(`Discarded ${pl(total, 'draft', 'drafts')}`, {going: true, undo: async () => {
       ctx.prefs.set('q:drafts', keep); ctx.prefs.set('q:general', g); ctx.prefs.set('draft:qab', ab);
       if (tn) { S.note = tn; ctx.prefs.set('q:newnote', tn); }
       await Promise.all(undos.map(u => u()));
@@ -1551,12 +1561,12 @@
     // Undo puts back the question's saved words and number too, so Send still names it before the questions are read
     const keep = draft(id), meta = {p: keep.p, n: keep.n, pl: keep.pl};
     if (P.going({ans: 'q:', close: 'c:', reply: 'r:', ab: 'ab:', newnote: 'nn:'}[kind] + id)) return;
-    if (kind === 'ans') { setDraft(id, {pick: null, words: null}); draw(true); ctx.toast('Answer removed', {undo: () => { setDraft(id, {...meta, pick: keep.pick, words: keep.words}); draw(true); }}); }
-    else if (kind === 'close') { setDraft(id, {close: null}); draw(true); ctx.toast('Close removed', {undo: () => { setDraft(id, {...meta, close: true}); draw(true); }}); }
-    else if (kind === 'reply') { setDraft(id, {reply: null, replyOpen: null}); draw(true); ctx.toast('Reply removed', {undo: () => { setDraft(id, {...meta, reply: keep.reply}); draw(true); }}); }
+    if (kind === 'ans') { setDraft(id, {pick: null, words: null}); draw(true); ctx.toast('Answer removed', {going: 'q:' + id, undo: () => { setDraft(id, {...meta, pick: keep.pick, words: keep.words}); draw(true); }}); }
+    else if (kind === 'close') { setDraft(id, {close: null}); draw(true); ctx.toast('Close removed', {going: 'c:' + id, undo: () => { setDraft(id, {...meta, close: true}); draw(true); }}); }
+    else if (kind === 'reply') { setDraft(id, {reply: null, replyOpen: null}); draw(true); ctx.toast('Reply removed', {going: 'r:' + id, undo: () => { setDraft(id, {...meta, reply: keep.reply}); draw(true); }}); }
     else if (kind === 'note') delNote(id);
-    else if (kind === 'newnote') { const n = typingNote(); S.note = null; ctx.prefs.set('q:newnote', null); draw(true); ctx.toast('Note removed', {undo: () => { S.note = n; ctx.prefs.set('q:newnote', n); draw(true); }}); }
-    else if (kind === 'ab') { const p = abPicks()[id]; setAB(id, null); draw(true); ctx.toast('Pick removed', {undo: () => { setAB(id, p); draw(true); }}); }
+    else if (kind === 'newnote') { const n = typingNote(); S.note = null; ctx.prefs.set('q:newnote', null); draw(true); ctx.toast('Note removed', {going: 'nn:', undo: () => { S.note = n; ctx.prefs.set('q:newnote', n); draw(true); }}); }
+    else if (kind === 'ab') { const p = abPicks()[id]; setAB(id, null); draw(true); ctx.toast('Pick removed', {going: 'ab:' + id, undo: () => { setAB(id, p); draw(true); }}); }
     else if (kind === 'x') {  // another tab's item: it leaves that tab too (r12 fix6)
       const x = Q().find(i => i.key === id); if (!x) return;
       if (!x.note && P.going(k)) return draw(true);  // a task status, approval, reopen, Copy library choice or request the round carries (a note: take() refuses)
@@ -1565,7 +1575,7 @@
       const again = () => Promise.resolve(draw(true)).then(() => x.note && D && refresh()).catch(e => { console.warn('send relist', e); return draw(true); });
       let back;
       try { back = await x.remove(); } catch (e) { again(); return P.carried(e) ? undefined : ctx.toast('Could not remove it: ' + e.message); }  // the refusal already said so
-      ctx.toast('Removed from Send', back ? {undo: async () => { await back(); again(); }} : {});
+      ctx.toast('Removed from Send', back ? {going: k, undo: async () => { await back(); again(); }} : {});
       again();
     }
   }
@@ -1667,7 +1677,7 @@
       const id = ds.askfile, d = draft(id), on = (d.reply || '').trim() !== ASKFILE, was = on ? d.reply : d.askWas;
       setDraft(id, on ? {reply: ASKFILE, askWas: was, replyOpen: null} : {reply: was, askWas: null});
       draw(true);
-      if (on) ctx.toast('Asked the agent to file a task · goes with Send', {undo: () => { if (P.going('r:' + id)) return; setDraft(id, {reply: was, askWas: null}); draw(true); }});
+      if (on) ctx.toast('Asked the agent to file a task · goes with Send', {going: 'r:' + id, undo: () => { if (P.going('r:' + id)) return; setDraft(id, {reply: was, askWas: null}); draw(true); }});
       return;
     }
     if (t.hasAttribute('data-board')) return ctx.go('running', 'tasks');
@@ -1726,7 +1736,7 @@
     if (ds.ab) {
       const [a, side] = ds.ab.split('~');
       setAB(a, {side, cap: ds.abcap || a}); draw(true);
-      return ctx.toast('Picked · goes with Send', {undo: () => { if (P.going('ab:' + a)) return; setAB(a, null); draw(true); }});
+      return ctx.toast('Picked · goes with Send', {going: 'ab:' + a, undo: () => { if (P.going('ab:' + a)) return; setAB(a, null); draw(true); }});
     }
     if (ds.unab) { if (P.going('ab:' + ds.unab)) return; setAB(ds.unab, null); return draw(true); }
     // a note: tap a picture spot, select words, or click a line, row or item of the document

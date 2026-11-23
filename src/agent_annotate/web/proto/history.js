@@ -279,7 +279,7 @@
     const n = allC().find(x => x.id === id), t = el.querySelector('#h-et'), text = ((t && t.value) || '').trim();
     S.ce = '';
     if (!n || (text === n.text && !n.sent)) { P.notes.tySet('edit:' + id, null); return draw(el, ctx); }  // the same words on a sent one still record an edit, as today
-    if (!text && !n.sent) { const back = await takeC(ctx, n).catch(e => { if (!P.carried(e)) throw e; }); if (!back) { S.ce = id; return draw(el, ctx); } P.notes.tySet('edit:' + id, null); return ctx.toast('Note removed', {undo: back}); }
+    if (!text && !n.sent) { const back = await takeC(ctx, n).catch(e => { if (!P.carried(e)) throw e; }); if (!back) { S.ce = id; return draw(el, ctx); } P.notes.tySet('edit:' + id, null); return ctx.toast('Note removed', {going: [n.id, 'hcn:' + n.id], undo: back}); }
     // the kit's edit, as on every tab: in place, with Undo; a sent one goes with the next Send again (today's edit on a sent note)
     const ok = await P.notes.fix(ctx, n, text, ctx.api, (w, p) => { [...CN, ...((QD && QD.notes) || [])].forEach(x => { if (x.id === id) Object.assign(x, p); }); redrawH(); ctx.refreshTop(); });
     if (!ok) { S.ce = id; draw(el, ctx); }
@@ -325,7 +325,7 @@
       const c = await ctx.api('api/comments', {anchor_id: 'chart:' + v, anchor_label: CLAB(v), text}).finally(() => { SAVING = false; });
       CN.push({id: c.id, anchor: 'chart:' + v, label: CLAB(v), text: c.text || text, at: c.created_at || new Date().toISOString()});
       S.cn = ''; ctx.prefs.set('draft:hnote', null); draw(el, ctx); ctx.refreshChips();
-      ctx.toast('Note saved', {undo: async () => { await ctx.api('api/comments/' + encodeURIComponent(c.id), undefined, 'DELETE'); CN = CN.filter(x => x.id !== c.id);
+      ctx.toast('Note saved', {going: [c.id, 'hcn:' + c.id], undo: async () => { await ctx.api('api/comments/' + encodeURIComponent(c.id), undefined, 'DELETE'); CN = CN.filter(x => x.id !== c.id);
         if (QD) QD.notes = (QD.notes || []).filter(x => x.id !== c.id); redrawH(); ctx.refreshChips(); }});
     } catch (er) { ctx.toast(`The note was not saved: ${er.message}`); }
   }
@@ -470,7 +470,7 @@
     if (b.hasAttribute('data-csave')) return saveC(el, ctx);
     if (ds.csavee) return editC(el, ctx, ds.csavee);
     if (ds.cned || ds.nedit) { S.cn = ''; S.ce = ds.cned || ds.nedit; draw(el, ctx); return focusC(el); }  // the kit's Edit on a sent one opens the same editor
-    if (ds.cdel) { const n = cn(ds.cdel); if (n) { const back = await takeC(ctx, n).catch(e => { if (!P.carried(e)) throw e; }); if (back) ctx.toast('Note removed', {undo: back}); } return; }
+    if (ds.cdel) { const n = cn(ds.cdel); if (n) { const back = await takeC(ctx, n).catch(e => { if (!P.carried(e)) throw e; }); if (back) ctx.toast('Note removed', {going: [n.id, 'hcn:' + n.id], undo: back}); } return; }
     if (ds.ccopy) return copyC(ctx, (cn(ds.ccopy) || {}).text || '', 'Note');
     if (ds.clink) return copyC(ctx, location.href.split('#')[0] + '#history/hn-' + ds.clink, 'Link to the note');
     if (b.hasAttribute('data-ccancel')) { if (S.ce) { S.ce = ''; return draw(el, ctx); } S.cn = ''; ctx.prefs.set('draft:hnote', null); return draw(el, ctx); }

@@ -491,7 +491,7 @@
   const unsort = () => { const u = unsorted(); D.plans.forEach(p => { if (u.includes(p.id)) p.topic = 'Unsorted'; }); if (u.length && !D.topics.includes('Unsorted')) D.topics = ['Unsorted', ...D.topics]; };
   const setUnsort = (ids, on) => { const u = unsorted().filter(x => !ids.includes(x)); ctx.prefs.set('ref-unsort', on ? [...u, ...ids] : u); };
   async function topicChange(body, done, undo, msg) {
-    try { await topicApi(body); done(); draw(); ctx.toast(msg, {undo: async () => { try { await undo(); draw(); } catch (e) { fail(e); } }}); }
+    try { await topicApi(body); done(); draw(); ctx.toast(msg, {going: false, undo: async () => { try { await undo(); draw(); } catch (e) { fail(e); } }}); }
     catch (e) { fail(e); }
   }
 
@@ -518,22 +518,22 @@
     if (d.plansec) {
       const p = D.plans.find(x => x.id === S.sel) || xOf(S.sel), f = filed(), was = f[p.id];
       ctx.prefs.set('ref-file', {...f, [p.id]: d.plansec}); draw();
-      return ctx.inert(`Filed “${cutq(p.t)}” as ${SN[d.plansec][0]}`, () => { const g = filed(); if (was) g[p.id] = was; else delete g[p.id]; ctx.prefs.set('ref-file', g); draw(); });
+      return ctx.inert(`Filed “${cutq(p.t)}” as ${SN[d.plansec][0]}`, () => { const g = filed(); if (was) g[p.id] = was; else delete g[p.id]; ctx.prefs.set('ref-file', g); draw(); }, false);
     }
     if (d.freopen) {
       const fk = d.freopen;
       S.reopen.set(fk, ''); draw();
       const t = el.querySelector(`[data-reopen="${CSS.escape(fk)}"]`); if (t) t.focus();
-      return ctx.inert('Finding reopened', () => { if (P.going('ro:' + fk)) return; S.reopen.delete(fk); draw(); });
+      return ctx.inert('Finding reopened', () => { if (P.going('ro:' + fk)) return; S.reopen.delete(fk); draw(); }, 'ro:' + fk);
     }
     if (d.appr) {  // approve the whole item: goes with the next Send, kept in memory
       // past the round check an approval the round carries is not taken back (r12 fix38): taking back, or undoing the approve
       const k = d.appr, on = !S.appr.has(k), flip = v => { if (!v && P.going('ap:' + k)) return; v ? S.appr.add(k) : S.appr.delete(k); draw(); };
       if (!on && P.going('ap:' + k)) return;
       flip(on);
-      return ctx.inert(on ? 'Approved; goes with your next Send' : 'Approval taken back', () => flip(!on));
+      return ctx.inert(on ? 'Approved; goes with your next Send' : 'Approval taken back', () => flip(!on), 'ap:' + k);
     }
-    if (d.unreopen) { if (P.going('ro:' + d.unreopen)) return; const fk = d.unreopen, t = S.reopen.get(fk); S.reopen.delete(fk); draw(); return ctx.inert('Reopen taken back', () => { S.reopen.set(fk, t); draw(); }); }
+    if (d.unreopen) { if (P.going('ro:' + d.unreopen)) return; const fk = d.unreopen, t = S.reopen.get(fk); S.reopen.delete(fk); draw(); return ctx.inert('Reopen taken back', () => { S.reopen.set(fk, t); draw(); }, 'ro:' + fk); }
     if (d.wmopen) return ctx.toast(`Opens “${d.wmopen}” in Windmill, in a new tab`, {inert: true});
     if (d.sec) { S.sec = d.sec; return draw(); }
     if (d.kind) { S.kind = S.kind === d.kind ? '' : d.kind; return draw(); }
@@ -548,16 +548,16 @@
     if (d.cpst) {  // Approve, Hold back or Use earlier: kept in memory, the copy sends nothing
       const [ck, st] = d.cpst.split('|'), was = S.cp.get(ck);
       S.cp.set(ck, {st}); draw();
-      return ctx.inert(st === 'ok' ? 'Text approved' : st === 'held' ? 'Text held back' : 'Earlier wording chosen', () => { if (!was && P.going('cp:' + ck)) return; was ? S.cp.set(ck, was) : S.cp.delete(ck); draw(); });
+      return ctx.inert(st === 'ok' ? 'Text approved' : st === 'held' ? 'Text held back' : 'Earlier wording chosen', () => { if (!was && P.going('cp:' + ck)) return; was ? S.cp.set(ck, was) : S.cp.delete(ck); draw(); }, 'cp:' + ck);
     }
-    if (d.cpundo) { if (P.going('cp:' + d.cpundo)) return; const ck = d.cpundo, was = S.cp.get(ck); S.cp.delete(ck); draw(); return ctx.inert('Text restored', () => { S.cp.set(ck, was); draw(); }); }
+    if (d.cpundo) { if (P.going('cp:' + d.cpundo)) return; const ck = d.cpundo, was = S.cp.get(ck); S.cp.delete(ck); draw(); return ctx.inert('Text restored', () => { S.cp.set(ck, was); draw(); }, 'cp:' + ck); }
     if (d.cped) { S.cpEd = d.cped; draw(); const t = el.querySelector('.rf-rte'); if (t) t.focus(); return; }
     if (d.cpalt !== undefined) { const t = el.querySelector('.rf-rte'); if (t) { t.textContent = d.cpalt; ctx.prefs.set('draft:rcped', {ck: S.cpEd, html: t.innerHTML}); } return; }  // an earlier wording into the editor
     if (d.rte) { document.execCommand(d.rte.split(':')[0], false, d.rte.split(':')[1] || (d.rte === 'createLink' ? prompt('Link address') || '' : undefined)); return; }
     if (d.cpsave) {
       const ck = d.cpsave, t = el.querySelector('.rf-rte'), was = S.cp.get(ck);
       S.cp.set(ck, {st: 'edit', html: t ? rich(t.innerHTML) : ''}); S.cpEd = ''; ctx.prefs.set('draft:rcped', null); draw();
-      return ctx.inert('Edit saved', () => { if (!was && P.going('cp:' + ck)) return; was ? S.cp.set(ck, was) : S.cp.delete(ck); draw(); });
+      return ctx.inert('Edit saved', () => { if (!was && P.going('cp:' + ck)) return; was ? S.cp.set(ck, was) : S.cp.delete(ck); draw(); }, 'cp:' + ck);
     }
     if (d.cpcancel !== undefined) { S.cpEd = ''; ctx.prefs.set('draft:rcped', null); return draw(); }
     // a marker's list and the note lifecycle: the code Questions uses (P.notes), so every tab behaves the same (r12 audit15 reference 2, 3)
@@ -596,7 +596,7 @@
         const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: src ? src.dataset.label : 'Reference', text, target, ...noteMeta(k)}).finally(() => { SAVING = false; });
         mine.push({id: c.id, a: k, l: src ? src.dataset.label : '', text: c.text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), v: c.version, target: c.target || target});
         S.note = ''; S.tgt = null; setR(null); draw(); ctx.refreshChips();
-        ctx.toast('Note saved', {undo: () => undoNote(c.id)});
+        ctx.toast('Note saved', {going: [c.id, 'rn:' + c.id], undo: () => undoNote(c.id)});
       } catch (er) { fail(er); }
       return;
     }
@@ -620,7 +620,7 @@
     let keep; try { keep = ctx.take(id, 'api/comments/' + encodeURIComponent(id)); } catch (e) { if (P.carried(e)) return; throw e; }  // refused past the round check (r12 audit32 running 5)
     const wm = mine, wd = D.notes;
     mine = mine.filter(n => n.id !== id); D.notes = D.notes.filter(n => n.id !== id); if (S.edit === id) S.edit = ''; draw(); ctx.refreshTop();
-    ctx.toast('Note removed', {undo: () => { keep(); mine = P.putBack(mine, wm, id); D.notes = P.putBack(D.notes, wd, id); draw(); ctx.refreshTop(); }});
+    ctx.toast('Note removed', {going: [id, 'rn:' + id], undo: () => { keep(); mine = P.putBack(mine, wm, id); D.notes = P.putBack(D.notes, wd, id); draw(); ctx.refreshTop(); }});
   }
   // Unsorted is not a stored topic: renaming or combining it files each of its plans under the named topic, one move each
   async function unsortedTo(topic, isNew) {
@@ -630,7 +630,7 @@
       const ids = ps.map(p => p.id);
       setUnsort(ids, false);
       for (const [i, p] of ps.entries()) { await topicApi({move: p.id, topic, ...(isNew && !i ? {new: true} : {})}); p.topic = topic; }
-      draw(); ctx.toast(`${pl(ps.length, 'plan', 'plans')} filed under “${topic}”`, {undo: () => { setUnsort(ids, true); unsort(); draw(); }});
+      draw(); ctx.toast(`${pl(ps.length, 'plan', 'plans')} filed under “${topic}”`, {going: false, undo: () => { setUnsort(ids, true); unsort(); draw(); }});
     } catch (e) { draw(); fail(e); }
   }
   function renameTopic(old, to) {
@@ -660,7 +660,7 @@
     if (topic === 'Unsorted') {
       if (old === 'Unsorted') return;
       back(); draw();
-      return ctx.toast('Moved back to “Unsorted”', {undo: () => { setUnsort([p.id], false); p.topic = old; draw(); }});
+      return ctx.toast('Moved back to “Unsorted”', {going: false, undo: () => { setUnsort([p.id], false); p.topic = old; draw(); }});
     }
     topicChange({move: p.id, topic, ...(isNew ? {new: true} : {})}, () => { setUnsort([p.id], false); p.topic = topic; },
       old === 'Unsorted' ? async () => back() : async () => { await topicApi({move: p.id, topic: old}); p.topic = old; },

@@ -346,7 +346,7 @@
         const c = await ctx.api('api/comments', {anchor_id: k, anchor_label: l, text, target}).finally(() => { SAVING = false; });
         mine.push({id: c.id, a: k, l, line, text: c.text || text, who: c.author_name || 'You', at: c.created_at || new Date().toISOString(), target});
         S.note = ''; S.tgt = null; ctx.prefs.set('draft:lnote', null); draw(w, ctx, D); ctx.refreshChips();
-        ctx.toast('Note saved', {undo: () => undoNote(c.id, w, ctx, D)});
+        ctx.toast('Note saved', {going: [c.id, 'ln:' + c.id], undo: () => undoNote(c.id, w, ctx, D)});
       } catch (er) { ctx.toast(`The note was not saved: ${er.message}`); }
     } else if (b.dataset.nundo) undoNote(b.dataset.nundo, w, ctx, D);
   }
@@ -370,7 +370,7 @@
     const n = D.notes.concat(mine).find(x => x.id === id); if (!n) return;
     let undo; try { undo = takeNote(ctx, n); } catch (e) { if (P.carried(e)) return; throw e; }  // past the round check: refused, and said so
     if (S.edit === id) S.edit = '';
-    ctx.toast('Note removed', {undo}); ctx.refreshTop();
+    ctx.toast('Note removed', {going: [id, 'ln:' + id], undo}); ctx.refreshTop();
   }
 
   /* ---------- People: two roles; edits change only this copy, kept in this browser ---------- */
@@ -395,9 +395,9 @@
       w.querySelector('[data-back]').onclick = () => ctx.go('links');
       w.querySelectorAll('[data-newrole]').forEach(b => { b.onclick = () => { role = b.dataset.newrole; w.querySelectorAll('[data-newrole]').forEach(x => x.setAttribute('aria-pressed', String(x === b))); }; });
       w.querySelectorAll('[data-prole]').forEach(b => { b.onclick = () => { const i = +b.dataset.prole, was = list[i].role, n = list.map((x, j) => j === i ? {...x, role: b.dataset.r} : x);
-        save(n); ctx.toast(`${list[i].name}: ${ROLE[b.dataset.r].toLowerCase()}`, {undo: () => save(list.map((x, j) => j === i ? {...x, role: was} : x))}); }; });
+        save(n); ctx.toast(`${list[i].name}: ${ROLE[b.dataset.r].toLowerCase()}`, {going: false, undo: () => save(list.map((x, j) => j === i ? {...x, role: was} : x))}); }; });
       w.querySelectorAll('[data-prm]').forEach(b => { b.onclick = () => { const before = list, x = list[+b.dataset.prm];
-        save(list.filter((_, j) => j !== +b.dataset.prm)); ctx.toast(`${x.name} removed`, {undo: () => save(before)}); }; });
+        save(list.filter((_, j) => j !== +b.dataset.prm)); ctx.toast(`${x.name} removed`, {going: false, undo: () => save(before)}); }; });
       w.querySelector('[data-add]').onsubmit = e => {
         e.preventDefault();
         const name = w.querySelector('#l-pname').value.trim(), mail = w.querySelector('#l-pmail').value.trim();
@@ -406,7 +406,7 @@
         if (err) return draw();
         const before = list;  // the email itself is never kept: every email shows as member@example.com
         save([...list, {name, role, added: new Date().toISOString().slice(0, 10)}]);
-        ctx.toast(`${name} added: ${ROLE[role].toLowerCase()}`, {undo: () => save(before)});
+        ctx.toast(`${name} added: ${ROLE[role].toLowerCase()}`, {going: false, undo: () => save(before)});
       };
     }
     draw();

@@ -314,7 +314,7 @@
         return CTX.inert(`Orca brought the terminal of ${wnm(ds.termmac)} forward on the ${(w && w.mac) || 'M1 Max'}`); }
       if (ds.ask != null) { S.ask = ds.ask; return draw(); }
       if (ds.rerun) { const p = ds.rerun; S.rerun.set(p, Date.now()); S.ask = ''; draw();
-        return CTX.inert('Rerun started', () => { S.rerun.delete(p); draw(); }); }
+        return CTX.inert('Rerun started', () => { S.rerun.delete(p); draw(); }, false); }
       if (ds.unrerun) { S.rerun.delete(ds.unrerun); return draw(); }
       if (ds.copy) { navigator.clipboard && navigator.clipboard.writeText(ds.copy).catch(() => {}); t.innerHTML = ic('tick'); setTimeout(() => { t.innerHTML = ic('copy'); }, 2000); return CTX.toast('Copied'); }
       if (ds.tst) { const all = CTX.prefs.get('tst', {}), id = S.task, b = D.board.beads[id], prev = all[id];

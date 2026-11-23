@@ -230,7 +230,12 @@
     // sig: a row's full words (say) or, with none, its listing: the round check and the clear compare these, never a shortened preview (r12 audit31 questions 2)
     sig: x => x.say || x.html,
     // done(key): the row went with this round as it reads now; a row changed or added after the round check stays (r12 audit31 running 1, 4)
-    queueFailed: () => SRC.forEach(s => { try { if (s.failed) s.failed(ctx); } catch (e) { console.warn('queue failed', e); } }),
+    // a round that failed after its check delivered nothing: every row with a base (a Copy library choice, an approval, a recovery
+    // request, a task status or comment) that reads as its last delivered words (sentSig) is no change, so it drops off (r12 audit35 running 7)
+    queueFailed: () => { const went = prefs.get('sentSig', {});
+      SRC.forEach(s => { try { if (s.failed) s.failed(ctx); for (const x of s.items(ctx) || []) if (!x.note && !x.save && x.remove && went[x.key] != null && went[x.key] === ctx.sig(x)) x.remove(); } catch (e) { console.warn('queue failed', e); } });
+      refreshSend(); },
+    queueWent: was => { if (!was) return; const went = prefs.get('sentSig', {}); for (const [k, sig] of was) went[k] = sig; prefs.set('sentSig', went); },
     queued, queueSent: (n, was) => { if (n) { prefs.set('lastSend', S.sent = {ts: new Date().toISOString(), n}); S.sentPaint = true; S.sendN = 0; } SRC.forEach(s => { try { if (!s.sent) return; const now = new Map((s.items(ctx) || []).map(x => [x.key, ctx.sig(x)])); s.sent(ctx, was, k => !was || (was.has(k) && was.get(k) === now.get(k))); } catch (e) { console.warn('queue sent', e); } }); if (sendP && sendP.saved) S.sendN = savedN(); paintSend(); refreshSend(); },  // a noop too: the top count follows the store at once (r12 audit23 frame 2)
   };
   P.ctx = ctx;
