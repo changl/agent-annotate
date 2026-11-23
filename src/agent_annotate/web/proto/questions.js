@@ -298,6 +298,16 @@
       const t = kept && document.querySelector(`[data-nedbox="${CSS.escape(id)}"] textarea,[data-cnote="${CSS.escape(id)}"] #h-et`);
       if (t) { t.focus(); t.setSelectionRange(...kept); }
     },
+    // another spot opened while a note is typed: the typed note is kept, never dropped (r12 fix45 pass 3). other: words, a point
+    // or another line is another spot. keep: past the round check the round posts it as it read then, so the next spot just opens;
+    // words typed since stay in their composer (false), as in Questions. Else it is saved as its own note, after a held round
+    other: (d, a, tgt) => d.a !== a || (!!tgt && JSON.stringify(tgt) !== JSON.stringify(d.tgt || null)),
+    keep(c, body, back, saved) {
+      const w = P.madeWords ? P.madeWords(body) : null;
+      if (w !== null) return w === body.text;
+      c.api('api/comments', body).then(saved, e => { if (!P.carried(e)) { back(); c.toast(`The note was not saved: ${e.message}`); } });
+      return true;
+    },
     // a reply being written
     typed: {get: id => (NK.ty()['reply:' + id] || {}).text, has: id => 'reply:' + id in NK.ty(), delete: id => NK.tySet('reply:' + id, null),
       set: (id, text) => { const n = NK.th.get(id); NK.tySet('reply:' + id, String(text || '').trim() ? {...(n ? NK.rec(n) : {}), id, text} : null); }},
@@ -1171,6 +1181,8 @@
     if (!CARRY || !GOING || key === false || !(key === true || GOING.has(key) || GOING.has('x:' + key) || CARRY.has(key))) return false;
     ctx.toast('This is already going with Send: it was not taken back'); return true;
   };
+  // the words of the new note the round posts at this spot past its check, else null (r12 fix45 pass 3)
+  P.madeWords = b => { if (!CARRY || !CARRY.made) return null; const p = made({...b, text: ''}), m = [...CARRY.made].find(x => x.startsWith(p)); return m === undefined ? null : m.slice(p.length); };
   P.past = () => !!CARRY;  // a round is past its check: it delivers what it listed, whatever is picked now
   // Questions' own rows by their full words (the rows show a preview): answers, replies, closes, picked sides, the note being
   // typed or edited, every note row's words and General feedback. Send's round check compares it with what the sheet listed

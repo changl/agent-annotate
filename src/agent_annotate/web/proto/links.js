@@ -268,6 +268,7 @@
         list: () => noteBox(ctx, D, nk, true),
         // Move armed in the viewer: the tap is its new point on this picture, the kit's re-pin (r12 audit19 running 2, reference 2)
         tap: tgt => { if (S.move) return moveTo(w, ctx, D, nk, document.querySelector('#p-mview .pic img'), tgt);
+          if (!keepTyped(w, ctx, D, nk, tgt)) return;
           S.tgt = tgt; S.note = nk; S.spot = S.pin = ''; draw(w, ctx, D); },
         click: ev => click(ev, w, ctx, D), input: ev => w.oninput(ev),
         close: () => { S.full = null; if (S.note === nk) { S.note = ''; S.tgt = null; } S.spot = S.pin = ''; draw(w, ctx, D); }}); }
@@ -276,6 +277,7 @@
     const im = !b && e.target.closest('.l-doc figure img'), pk = im && ((im.closest('figure').querySelector('[data-nk]') || {}).dataset || {}).nk;
     if (pk && (im.closest('[data-line]'))) { const tgt = P.notes.pointAt(e, im);
       if (S.move) return moveTo(w, ctx, D, pk, im, tgt);
+      if (!keepTyped(w, ctx, D, pk, tgt)) { const t = w.querySelector('#l-nt'); if (t) t.focus(); return; }
       S.tgt = tgt; S.spot = S.pin = ''; S.note = pk; draw(w, ctx, D);
       const t = w.querySelector('#l-nt'); if (t) t.focus(); return; }
     const ln = !b &&!e.target.closest('textarea, .l-notes') && e.target.closest('.l-doc [data-line]');
@@ -283,7 +285,8 @@
       const sel = getSelection(), q = sel && !sel.isCollapsed ? String(sel).trim() : '';
       const tgt = q && ln.contains(sel.anchorNode) ? {schema: 1, tag: ln.tagName.toLowerCase(), quote: q.slice(0, 300), at: P.notes.textAt(ln)} : null, k = ln.closest('[data-doc]').dataset.doc + '~' + ln.dataset.line;
       if (S.move) return moveTo(w, ctx, D, k, ln, tgt);  // Move: this line is its new place, as in Reference (r12 audit16 frame 3)
-      S.tgt = tgt; S.spot = '';
+      const kt = keepTyped(w, ctx, D, k, tgt); if (!kt) { const t = w.querySelector('#l-nt'); if (t) t.focus(); return; }
+      S.tgt = kt.tgt; S.spot = '';
       S.note = k; draw(w, ctx, D);
       const t = w.querySelector('#l-nt'); if (t) t.focus();
       return;
@@ -328,7 +331,8 @@
       S.pin = on ? '' : n.id; S.spot = on ? '' : S.full ? S.full.k : (b.closest('figure').querySelector('[data-nk]') || {dataset: {}}).dataset.nk || n.a; draw(w, ctx, D); }
     else if (b.hasAttribute('data-spotx')) { S.spot = S.pin = ''; draw(w, ctx, D); }
     else if (b.dataset.spotadd) { const p = b.dataset.spotpin && D.notes.concat(mine).find(x => x.id === b.dataset.spotpin);
-      S.spot = S.pin = ''; S.tgt = p ? {...p.target} : null; S.note = b.dataset.spotadd; draw(w, ctx, D); const t = document.getElementById('l-nt'); if (t) t.focus(); }
+      const kt = keepTyped(w, ctx, D, b.dataset.spotadd, p ? {...p.target} : null); if (!kt) return;
+      S.spot = S.pin = ''; S.tgt = kt.tgt; S.note = b.dataset.spotadd; draw(w, ctx, D); const t = document.getElementById('l-nt'); if (t) t.focus(); }
     else if (b.dataset.spotgo) { S.spot = S.pin = ''; S.hl = b.dataset.spotgo; S.scroll = true; if (S.full) P.media.closeView(); else draw(w, ctx, D); }
     // a saved, unsent note: the kit's Edit in place and Remove (r12 audit18 reference 4)
     else if (b.dataset.nedit) { S.edit = b.dataset.nedit; S.edt = null; draw(w, ctx, D); const t = document.querySelector('[data-nedtext]'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } }
@@ -337,7 +341,7 @@
       P.notes.fix(ctx, n, t.value, ctx.api, (x, p) => { D.notes.concat(mine, (LD || {}).notes || []).forEach(y => { if (y.id === n.id) Object.assign(y, p); }); S.edit = ''; S.edt = null; S.hl = n.id; draw(w, ctx, D); ctx.refreshTop(); }); }
     // a bar with notes lists them first; + Comment writes another (a blank editor only on a bar with none)
     else if (b.dataset.bnote && b.classList.contains('l-bar') && notesAt(D, b.dataset.bnote).length && S.note !== b.dataset.bnote) { S.note = ''; S.spot = S.spot === b.dataset.bnote ? '' : b.dataset.bnote; draw(w, ctx, D); }
-    else if (b.dataset.bnote) { S.tgt = null; S.spot = ''; S.note = S.note === b.dataset.bnote ? '' : b.dataset.bnote; draw(w, ctx, D); const t = w.querySelector('#l-nt'); if (t) t.focus(); }
+    else if (b.dataset.bnote) { if (S.note !== b.dataset.bnote && !keepTyped(w, ctx, D, b.dataset.bnote, null)) return; S.tgt = null; S.spot = ''; S.note = S.note === b.dataset.bnote ? '' : b.dataset.bnote; draw(w, ctx, D); const t = w.querySelector('#l-nt'); if (t) t.focus(); }
     else if (b.hasAttribute('data-ncancel')) { S.note = ''; S.tgt = null; ctx.prefs.set('draft:lnote', null); draw(w, ctx, D); }
     else if (b.dataset.nsave) {
       const k = b.dataset.nsave, text = (document.getElementById('l-nt').value || '').trim(), target = S.tgt || undefined;
@@ -352,6 +356,20 @@
         ctx.toast('Note saved', {going: [c.id, 'ln:' + c.id], undo: () => undoNote(c.id, w, ctx, D)});
       } catch (er) { ctx.toast(`The note was not saved: ${er.message}`); }
     } else if (b.dataset.nundo) undoNote(b.dataset.nundo, w, ctx, D);
+  }
+  // another spot while a note is typed: the typed note is kept, by the round or saved as its own note (r12 fix45 pass 3).
+  // null: its words, typed since the round check, stay open; else the new spot's target (a plain click on the typed line keeps its own)
+  function keepTyped(w, ctx, D, k, tgt) {
+    const d = typed(ctx);
+    if (!d) return {tgt};
+    if (!P.notes.other(d, k, tgt)) return {tgt: d.tgt || null};
+    const text = d.text.trim();
+    if (!P.notes.keep(ctx, {anchor_id: d.a, anchor_label: d.l, text, target: d.tgt || undefined},
+      () => { if (!typed(ctx)) ctx.prefs.set('draft:lnote', d); redo(); ctx.refreshTop(); },
+      r => { mine.push({id: r.id, a: d.a, l: d.l, line: d.line, text: r.text || text, who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), target: d.tgt || undefined});
+        redo(); ctx.refreshChips(); ctx.toast('Note saved', {going: [r.id, 'ln:' + r.id], undo: () => undoNote(r.id, w, ctx, D)}); })) return null;
+    ctx.prefs.set('draft:lnote', null); ctx.refreshTop();
+    return {tgt};
   }
   // Move to a bar, a Write a note or a line: the kit's re-pin, with Undo
   function moveTo(w, ctx, D, k, el, target) {

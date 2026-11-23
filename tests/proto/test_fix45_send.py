@@ -49,3 +49,18 @@ def test_a_line_label_leaves_out_picture_controls():
 def test_no_later_while_a_reply_waits_for_send():
     # reference 4: the store refuses Later (409) on a card with a stored reply not yet sent
     assert "const acts = `${done || pendR(q).length ? '' : ibw('later'," in Q
+
+
+def test_another_spot_keeps_the_typed_note():
+    # pass 3: kept, folder and plan had one draft slot, so a second selection replaced the typed note. Another spot keeps it:
+    # past the round check the round posts it (words typed since stay open), else it is saved as its own note
+    assert "other: (d, a, tgt) => d.a !== a || (!!tgt && JSON.stringify(tgt) !== JSON.stringify(d.tgt || null))," in Q
+    assert "if (w !== null) return w === body.text;" in Q
+    assert "P.madeWords = b => {" in Q
+    # Pages & links: line, inline picture, viewer tap, a spot's + and a bar each go through keepTyped before the slot moves
+    assert LINKS.count("keepTyped(w, ctx, D, ") == 6
+    assert "if (!P.notes.keep(ctx, {anchor_id: d.a, anchor_label: d.l, text, target: d.tgt || undefined}," in LINKS
+    # Reference: line, picture point, a spot's +, Write a note and Enter all open through openAt
+    assert REF.count("openAt(") == 5
+    assert "if (!NK().keep(ctx, {anchor_id: d.a, anchor_label: d.l, text, target: d.tgt || undefined, ...(d.m || {})}," in REF
+    assert "S.tgt = d.tgt || null; const t = document.getElementById('rf-nt')" in REF

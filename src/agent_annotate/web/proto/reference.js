@@ -507,7 +507,7 @@
       if (im) { const r = im.getBoundingClientRect(); S.tgt = {schema: 1, tag: 'img', offset: {dx: +((e.clientX - r.left) / r.width).toFixed(3), dy: +((e.clientY - r.top) / r.height).toFixed(3)}}; }
       else S.tgt = q && b.contains(sel.anchorNode) ? {schema: 1, tag: b.tagName.toLowerCase(), quote: q.slice(0, 300), at: NK().textAt(b)} : null;  // at: which occurrence (r12 audit37)
       if (S.move) return moveNote(S.move, d.line, b.dataset.label || '', S.tgt);  // Move: this line is its new place
-      S.note = d.line; draw(); return;
+      return openAt(d.line, S.tgt);
     }
     if (b.tagName === 'SUMMARY') { S.det = !b.parentElement.open; return; }  // kept across redraws
     if (b.matches('a[data-zoom]')) e.preventDefault();  // ⤢ Full size opens the viewer here, not a new tab
@@ -567,7 +567,7 @@
     if (d.spot !== undefined) { S.pin = ''; S.spot = S.spot === d.spot ? '' : d.spot; return draw(); }
     if (d.pin) { const n = nt(d.pin); if (!n) return; const on = S.pin === n.id; S.pin = on ? '' : n.id; S.spot = on ? '' : n.a; return draw(); }
     if (d.spotx !== undefined) { S.spot = S.pin = ''; return draw(); }
-    if (d.spotadd) { const p = d.spotpin && nt(d.spotpin); S.spot = S.pin = ''; S.note = d.spotadd; S.tgt = p ? {...p.target} : null; return draw(); }
+    if (d.spotadd) { const p = d.spotpin && nt(d.spotpin); S.spot = S.pin = ''; return openAt(d.spotadd, p ? {...p.target} : null); }
     if (d.spotgo) { S.spot = S.pin = ''; S.hl = d.spotgo; if (S.full) closeZoom(); else draw(); const x = el.querySelector(`[data-nid="${CSS.escape(d.spotgo)}"]`); if (x) x.scrollIntoView({block: 'center'}); return; }
     const life = how => id => { const n = nt(id); return n && NK().set(ctx, n, how, ctx.api, async nid => { S.spot = S.pin = ''; S.hl = nid; draw(); ctx.refreshChips(); }); };
     if (d.nclose) return life('close')(d.nclose);
@@ -577,7 +577,7 @@
     // the viewer closes first, so the outlined destination is in sight, as Go to it does (r12 audit17 reference 3)
     if (d.nres) { const n = nt(d.nres); if (n && S.full) { S.full = null; S.spot = S.pin = ''; NK().endMove(false); } return n && NK().goRes(ctx, n); }
     if (d.nmove) { S.move = S.move === d.nmove ? '' : d.nmove; draw(); if (S.move) ctx.toast('Click the new line for this note · Esc cancels'); return; }
-    if (d.note) { S.note = d.note; S.tgt = null; return draw(); }
+    if (d.note) return openAt(d.note, null);
     if (d.ncancel !== undefined) { S.note = ''; setR(null); return draw(); }
     if (d.zoom) {
       const k = d.zk, im = S.full && S.full.k === k ? null : el.querySelector(`[data-pk="${CSS.escape(k)}"] img`);  // the picture by its own key
@@ -611,6 +611,20 @@
     if (d.trnsave) return renameTopic(d.trnsave, (document.getElementById('rf-trn').value || '').trim());
     if (d.tmerge) { S.tmerge = S.tmerge === d.tmerge ? '' : d.tmerge; return draw(); }
     if (d.tmergeto) return combine(S.tmerge, d.tmergeto);
+  }
+  // a composer at another spot while a note is typed: the typed note is kept, by the round or saved as its own note (r12 fix45 pass 3);
+  // its words typed since the round check stay open instead. A plain click on the typed line keeps its own target
+  function openAt(k, tgt) {
+    const d = rnote();
+    if (d && !NK().other(d, k, tgt)) tgt = d.tgt || null;
+    else if (d) { const text = d.text.trim();
+      if (!NK().keep(ctx, {anchor_id: d.a, anchor_label: d.l, text, target: d.tgt || undefined, ...(d.m || {})},
+        () => { if (!rnote()) setR(d); redo(); },
+        r => { mine.push({id: r.id, a: d.a, l: d.l, text: r.text || text, who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), v: r.version, target: r.target || d.tgt || undefined});
+          redo(); ctx.refreshChips(); ctx.toast('Note saved', {going: [r.id, 'rn:' + r.id], undo: () => undoNote(r.id)}); })) {
+        S.tgt = d.tgt || null; const t = document.getElementById('rf-nt'); if (t) t.focus(); return; }
+      setR(null); }
+    S.note = k; S.tgt = tgt; draw();
   }
   function moveNote(id, a, l, target) {
     const n = allNotes().find(x => x.id === id); S.move = ''; if (!n) return draw();
@@ -688,7 +702,7 @@
     if (e.target.id === 'rf-trn' && e.key === 'Enter') renameTopic(S.trn, e.target.value.trim());
     // the note composer and an Edit stay open on Escape, as the folder's and kept document's do: only Cancel closes them (r12 audit35 reference)
     if (e.key === 'Escape' && (S.trn || S.tmerge || S.move || S.spot)) { S.trn = S.tmerge = S.move = S.spot = S.pin = ''; draw(); }
-    if (e.target.matches('[data-line]') && e.key === 'Enter') { S.note = e.target.dataset.line; draw(); }
+    if (e.target.matches('[data-line]') && e.key === 'Enter') openAt(e.target.dataset.line, null);
   }
 
   // what Reference says goes with the next Send, in the one Send (r12 fix6): reopened findings with their why (reference 5),
