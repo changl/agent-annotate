@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Opening Earlier feedback loads older comments and keeps new questions on the current version behind the refresh banner.
+
 ## 2.32.10
 
 - Pages open on the latest version's feedback. The first store read leaves out settled Review and plan feedback from older versions and sends counts in its place, so sections, badges and the unanswered warning read the same. The rest loads when the reviewer opens Earlier feedback, Not in this Send, History or an older version, follows a link to it, or has text typed on it. First read: FLD 16.2 MB → 298 KB, Rebex 2.9 MB → 196 KB; a FLD Send's traffic 49 MB → 742 KB (agent-annotate-uzd, part 1).
