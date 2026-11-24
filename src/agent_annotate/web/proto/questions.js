@@ -173,14 +173,16 @@
     // his Close, Re-open and their Undo in this visit, by note id ({closed, st}). A reader's note on screen and the feed's copy
     // Send lists from are separate objects, and a read can answer after the write: every feed read (frame data()) and every
     // feed already read takes it, so the reader, the sheet, the top count and the round read one state (r12 audit42 reference 1, frame 1)
-    life: {}, feeds: [],
+    // held: each note a Close or Re-open was pressed on (a reader's own copy no feed holds, as a note written this visit)
+    life: {}, feeds: [], held: {},
     lc(d) { const ns = d && Array.isArray(d.notes) ? d.notes : null; if (!ns) return d;
       if (!NK.feeds.includes(d)) { NK.feeds.push(d); if (NK.feeds.length > 12) NK.feeds.shift(); }
-      for (const n of ns) { const p = NK.life[n.id]; if (!p) continue;
-        if ('closed' in p) n.closed = p.closed;
-        if ('st' in p) n['status' in n ? 'status' : 'st'] = p.st; }
-      return d; },
-    setLife(n, p) { NK.life[n.id] = {...NK.life[n.id], ...p}; NK.feeds.forEach(NK.lc); },
+      ns.forEach(NK.life1); return d; },
+    life1(n) { const p = NK.life[n.id]; if (!p) return;
+      if ('closed' in p) n.closed = p.closed;
+      if ('st' in p) n['status' in n ? 'status' : 'st'] = p.st; },
+    setLife(n, p) { NK.life[n.id] = {...NK.life[n.id], ...p}; (NK.held[n.id] = NK.held[n.id] || new Set()).add(n);
+      NK.feeds.forEach(NK.lc); NK.held[n.id].forEach(NK.life1); },
     // Close and a closed note's Re-open: today's archive and restore; Re-open on a resolved one: a draft Send writes; each with Undo (#138, catalog 64)
     async set(c, n, how, api, redraw, quiet) {
       // Close (or taking back a Re-open) on a note the round carries is a take-back: refused, the note stays as it goes (r12 audit35 running 4)

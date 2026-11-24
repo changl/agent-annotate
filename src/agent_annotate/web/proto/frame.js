@@ -91,7 +91,8 @@
   P.carried = e => !!(e && e.carried);
   // a saved-draft list with the removed record id back at its old place, from was (the list before Remove); later changes kept
   P.putBack = (now, was, id) => { const i = was.findIndex(x => x.id === id), l = now.filter(x => x.id !== id); if (i >= 0) l.splice(Math.min(i, l.length), 0, was[i]); return l; };
-  const unTaken = d => d && Array.isArray(d.notes) && TAKEN.size ? {...d, notes: d.notes.filter(n => !TAKEN.has(n.id))} : d;
+  // and every read takes his Close and Re-open of this visit first (the notes kit's lc), however late it answers (r12 audit42 reference 1)
+  const unTaken = d => (d = P.notes && P.notes.lc ? P.notes.lc(d) : d) && Array.isArray(d.notes) && TAKEN.size ? {...d, notes: d.notes.filter(n => !TAKEN.has(n.id))} : d;
   // Today's page API, as the live shell calls it. Writes land in this copy only; delivery is sandboxed.
   Object.assign(api, {
     meta: () => api('current.meta.json'), comments: () => api('comments.json'), project: () => api('api/project'),
@@ -113,7 +114,7 @@
     delete pre[area];
     const p = cache[area] = Promise.race([got, late()])
       // a copy's read waits for the tab scripts: one landing before questions.js would be cached without the copy's notes (r12 audit22 questions 2)
-      .then(d => COPY && !P.copyData ? scriptsIn.then(() => d) : d).then(d => unTaken(COPY && P.copyData ? P.copyData(area, d) : d)).then(d => P.notes ? P.notes.lc(d) : d).catch(e => { if (cache[area] === p) failed.add(area); throw e; });  // a stalled read failing late never marks the fresh one Try again started
+      .then(d => COPY && !P.copyData ? scriptsIn.then(() => d) : d).then(d => unTaken(COPY && P.copyData ? P.copyData(area, d) : d)).catch(e => { if (cache[area] === p) failed.add(area); throw e; });  // a stalled read failing late never marks the fresh one Try again started
     // a failed read stays cached, failed: every later data(area) from any tab gets that failure, and only Try again
     // (reread, or a fresh read) reads again, so a down server is never asked on its own (r12 audit30 questions 4)
     failed.delete(area);
