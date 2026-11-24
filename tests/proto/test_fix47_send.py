@@ -44,7 +44,7 @@ def test_every_reader_uses_the_rule():
     assert "if (S.cn !== v && !keepC(ctx, v)) return focusC(el);" in HIST and "if (!keepC(ctx, ds.spotadd)) return focusC(el);" in HIST
     assert "if (was && was.v !== S.cn) P.notes.backs.put(ctx, HB, was);" in HIST and "key: 'hnb:' + b.a, spot: 'chart:' + b.a" in HIST
     # finding 3: a failed Questions Save goes through the rule; a spot opening takes its kept words; its drafts are Send rows
-    assert "catch (e) { if (!P.carried(e)) qBack({...n, text});" in Q and "S.note = next = fromBack(next);" in Q and "key: 'qnb:' + b.a" in Q
+    assert "catch (e) { unhold(); if (!P.carried(e)) qBack({...n, text});" in Q and "S.note = next = fromBack(next);" in Q and "key: 'qnb:' + b.a" in Q
     # finding 4 (and History's): a redraw keeps the composer's focus through the kit's hold
     assert "NK.hold(root)" in Q and "P.notes.hold(box)" in HIST and "P.notes.hold(w)" in LINKS
     # a failed Send puts back every typed note it carried and had not written, at its own spot (audit40 questions)

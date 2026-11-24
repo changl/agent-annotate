@@ -11,7 +11,7 @@ def test_a_closed_unsent_note_is_not_in_the_copys_round(tmp_path):
     sim = grab(Q, "  async function submitSim() {", "\n  }")
     node(tmp_path, f"""
 const assert = require('assert');
-const NK = {{settle: () => {{}}, reoQ: () => false, loc: () => ({{}}), mine: () => true, reo: () => ({{}}),
+const NK = {{settle: () => {{}}, reoQ: () => false, loc: () => ({{}}), mine: () => true, reo: () => ({{}}), rmd: new Set(),
 {out}
 }};
 const open = {{id: 'a', sent: false}}, shut = {{id: 'b', sent: false, closed: true}}, ref = {{id: 'c', sent: false, closed: true}};

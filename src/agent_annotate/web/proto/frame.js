@@ -78,14 +78,16 @@
   function finishTake(id, own) {
     const path = TAKEN.get(id); clearTimeout(takenT[id]); delete takenT[id];
     if (!path) return Promise.resolve();
-    return api(path, undefined, 'DELETE', own).catch(e => { if (!/not found/i.test(e.message)) toast('A note you removed could not be removed: ' + e.message); })
+    return api(path, undefined, 'DELETE', own).then(() => { if (P.notes && P.notes.rmd) P.notes.rmd.add(id); }).catch(e => { if (!/not found/i.test(e.message)) toast('A note you removed could not be removed: ' + e.message); })
       .finally(() => { TAKEN.delete(id); keepTaken(); });
   }
   const take = (id, path) => {
     // past the round check a note the round carries cannot be taken back: say so and stop the caller before it hides the note or says it was removed (r12 audit31 questions 3)
     if (sendP && sendP.carries && sendP.carries(id)) { toast('This note is already going with Send: it was not removed'); throw Object.assign(new Error('already going with Send'), {carried: true}); }
     TAKEN.set(id, path); keepTaken(); takenT[id] = setTimeout(() => finishTake(id), TAKE_MS);
-    return () => { clearTimeout(takenT[id]); delete takenT[id]; TAKEN.delete(id); keepTaken(); };
+    const reo = P.notes && P.notes.drop ? P.notes.drop(ctx, id) : () => {};  // its Re-open row leaves Send now; a reload or the DELETE never brings it back (r12 audit44 reference 1)
+    refreshSend();
+    return () => { clearTimeout(takenT[id]); delete takenT[id]; TAKEN.delete(id); keepTaken(); reo(); refreshSend(); };
   };
   // the refusal above: every Remove caller catches it, so it is said once and never an uncaught exception (r12 audit32 running 5)
   P.carried = e => !!(e && e.carried);
@@ -194,10 +196,16 @@
     if (!opts.hold && wait > 0) { setTimeout(() => toast(msg, opts), wait); return; }
     if (opts.hold) heldTo = Date.now() + opts.hold;
     const el = document.getElementById('p-toast');
-    clearTimeout(toastTimer);
-    if (S.sentPaint) { S.sentPaint = false; drawTop(); drawFab(); if (S.menu === 'nav') drawLayer(); }  // the last-Send chip changes with the receipt (r12 fix10 frame 4)
     // On a copy every simulated write says so, whichever tab drew it: an undoable change, or a toast just after a write
     const mark = opts.inert || (COPY && (opts.undo || Date.now() - wroteAt < 3000));
+    // a plain notice never takes a pending Undo away: it shows above it for its 5 s, and the Undo stays until used or timed out (r12 audit44 reference 2)
+    if (!opts.undo && !opts.hold && el.querySelector('[data-undo]')) {
+      const x = document.createElement('div'); x.className = 'p-toast'; x.setAttribute('role', 'status');
+      x.innerHTML = `<span>${esc(msg)}</span>${mark ? P.inertMark() : ''}`; el.prepend(x); setTimeout(() => x.remove(), 5000);
+      return;
+    }
+    clearTimeout(toastTimer);
+    if (S.sentPaint) { S.sentPaint = false; drawTop(); drawFab(); if (S.menu === 'nav') drawLayer(); }  // the last-Send chip changes with the receipt (r12 fix10 frame 4)
     el.innerHTML = `<div class="p-toast" role="status"><span>${esc(msg)}</span>${mark ? P.inertMark() : ''}${opts.undo ? '<button class="lk" data-undo>Undo</button>' : ''}</div>`;
     const undo = el.querySelector('[data-undo]');
     // the one toast Undo gate (r12 audit35 running 1-6): past the round check an Undo of a row the round carries (opts.going: its

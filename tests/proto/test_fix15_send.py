@@ -54,7 +54,7 @@ def test_taken_note_stays_until_undo_is_gone(tmp_path):
     fn = grab(FRAME, "  const TAKEN = new Map()", "TAKEN.has(n.id))} : d;")
     node(tmp_path, f"""
 const assert = require('assert');
-const store = {{}}, calls = [], P = {{}}, sendP = null;
+const store = {{}}, calls = [], P = {{}}, sendP = null, refreshSend = () => {{}};
 const prefs = {{get: (k, d) => k in store ? store[k] : d, set: (k, v) => {{ store[k] = v; }}}};
 const api = (p, b, m) => {{ calls.push([m, p]); return Promise.resolve({{}}); }}, toast = () => {{}};
 {fn}

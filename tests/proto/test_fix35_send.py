@@ -75,7 +75,7 @@ def test_remove_on_a_carried_note_says_so_and_takes_nothing(tmp_path):
     node(tmp_path, """
 const assert = require('assert');
 let said = ''; const prefs = {set: () => {}}, toast = t => { said = t; }, api = async () => {}, P = {};
-const sendP = {carries: id => id === 'a'};
+const sendP = {carries: id => id === 'a'}, refreshSend = () => {};
 """ + fn + """
 assert.throws(() => take('a', 'api/comments/a')); assert.ok(/already going with Send/.test(said)); assert.ok(!TAKEN.has('a'));
 const u = take('b', 'api/comments/b'); assert.ok(TAKEN.has('b')); u(); assert.ok(!TAKEN.has('b'));

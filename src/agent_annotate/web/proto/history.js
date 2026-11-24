@@ -287,8 +287,10 @@
     ctx.prefs.set('draft:hcnotes', was.filter(x => x.id !== n.id));  // Send's count follows at once
     dropC(n.id); if (S.ce === n.id) S.ce = ''; redrawH(); ctx.refreshChips();
     // its saved record goes back too, so every later first Send lists it before Questions answers (r12 audit13 running 2)
-    return async () => { keep(); const l = P.putBack(ctx.prefs.get('draft:hcnotes', []), was, n.id); if (!l.some(x => x.id === n.id)) l.push({id: n.id, anchor: n.anchor, label: n.label, text: n.text, at: n.at});
-      ctx.prefs.set('draft:hcnotes', l); CN.push({...n, sent: false}); redrawH(); ctx.refreshChips(); };
+    // only a note that is its own Send row: a re-opened one is the kit's Re-open row, never a second (r12 audit44 frame 2)
+    return async () => { keep(); const l = P.putBack(ctx.prefs.get('draft:hcnotes', []), was, n.id); if (!l.some(x => x.id === n.id) && P.notes.out(n)) l.push({id: n.id, anchor: n.anchor, label: n.label, text: n.text, at: n.at});
+      // the very note, as it was: a re-opened sent one keeps its "re-opened · goes with Send" (r12 audit44 running 2)
+      ctx.prefs.set('draft:hcnotes', l); CN.push(n); redrawH(); ctx.refreshChips(); };
   }
   // a saved note on a point, as the mock's noteBox: Edit, Undo, Copy note and Copy note link; Edit opens its own wording (audit10 running 3)
   function cbox(ctx, x, no, v) {

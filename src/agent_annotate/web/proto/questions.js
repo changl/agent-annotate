@@ -92,6 +92,10 @@
     // vis: the visit that re-opened it, kept through every rewrite of its record, so settle() can tell an earlier visit's (r12 audit21 frame 2)
     put(c, id, r) { const m = NK.reo(c); if (r) m[id] = {...r, vis: r.vis || (m[id] && m[id].vis) || VISIT}; else delete m[id]; c.prefs.set('draft:reopen', m); },
     setReo(c, n, on) { NK.put(c, n.id, on ? NK.rec(n) : null); },
+    // Remove (frame's take, every tab) takes its Re-open row out of Send with the note; the returned Undo puts it back (r12 audit44 reference 1)
+    drop(c, id) { const r = NK.reo(c)[id]; if (!r) return () => {}; NK.put(c, id, null); return () => NK.put(c, id, r); },
+    // removed: a note whose DELETE went. A feed read before Remove still holds it, and out() must never list it (r12 audit44 reference 1)
+    rmd: new Set(),
     // each tab tells the kit how to show a note and redraw (go(record), redo(), res(note) for a resolution on that tab);
     // P.noteHooks, since the tabs' scripts load in any order
     hooks: P.noteHooks = P.noteHooks || {},
@@ -114,7 +118,8 @@
     // a re-opened one is listed once, as the kit's Re-open row: its status PUT reads as an edit in the feed, never a second row (r12 audit22 running 2)
     reoQ: n => { const r = P.ctx && NK.reo(P.ctx)[n.id]; return !!r && typeof r === 'object'; },
     // a closed note never goes, as the server's round skips an archived one: every sheet, count and round read this (r12 audit41 questions 1)
-    out: n => { NK.settle(n); return !n.closed && !NK.reoQ(n) && (!n.sent || !!n.edited || (n.replies || []).some(r => r.unsent) || n.id in NK.loc()); },
+    // a removed one (its Undo open, or its DELETE gone) never goes, from any copy of it a reader still holds (r12 audit44 reference 1)
+    out: n => { NK.settle(n); return !n.closed && !NK.reoQ(n) && !NK.rmd.has(n.id) && !(P.ctx && P.ctx.taken && P.ctx.taken(n.id)) && (!n.sent || !!n.edited || (n.replies || []).some(r => r.unsent) || n.id in NK.loc()); },
     // a Send took it, with its edit and replies; another reviewer's stays pending, as the server leaves it (r12 audit22 frame 2)
     // and a peer's reply or edit on it stays pending too (r12 audit25 running 1)
     // a closed note's edit waits for its Re-open, as the server's round skips an archived one (r12 audit42 running 2)
@@ -293,6 +298,8 @@
       const put = async w => { const b = NK.body(n, w); await api(`api/comments/${encodeURIComponent(n.id)}`, b, 'PUT');
         NK.tySet('edit:' + n.id, null);  // saved: the typed draft is delivered
         if (n.sent) NK.put1(n.id, {text: w});
+        // its Re-open row carries the latest saved words, after a reload too (r12 audit44 questions 3, frame 2)
+        const r = NK.reo(c)[n.id]; if (r && typeof r === 'object') NK.put(c, n.id, {...r, text: w});
         await apply(w, {...b, ...(n.sent ? {edited: true} : {}), flagged: false}); };
       try { await put(t); } catch (e) { c.toast('Not changed: ' + e.message); return false; }
       c.toast('Note changed · goes with Send', {going: [n.id, 'n:' + n.id, 'ty:edit:' + n.id], undo: () => put(was)});
@@ -530,7 +537,8 @@
       set({sent: true, read: false, decision: {...body, ts}, ...(prev ? {earlier: [{v: D.version, t: String(prev.ts || '').slice(0, 10), q: cur.prompt, a: (prev.text || '').split('\n\n')[0], own: true}, ...(cur.earlier || [])]} : {})});
     }
     else if (act === 'reply') { const cur = (D && D.questions.find(x => x.id === nid)) || {}; set({replies: [...(cur.replies || []), {you: true, text: body.text, ts, sent: true}]}); }
-    else if (id && !act && method === 'DELETE') { if (added) NOTES.add.splice(NOTES.add.indexOf(added), 1); else NOTES.gone.add(nid); }
+    // its simulated state goes too: a Send never carries a deleted id (r12 audit44 reference 1)
+    else if (id && !act && method === 'DELETE') { if (added) NOTES.add.splice(NOTES.add.indexOf(added), 1); else NOTES.gone.add(nid); delete SIM[nid]; delete NOTES.text[nid]; }
     else if (id && !act && method === 'PUT' && body.text != null) { if (added) added.text = body.text; else NOTES.text[nid] = body.text; set({...(body.status ? {status: body.status} : {}), edited: true}); }  // edited: the feed keeps it only on a sent note
     // a note's Re-open (status) or Move (anchor): kept like Close, by the note's id
     else if (id && !act && method === 'PUT') set({...(body.status ? {status: body.status, closed: false} : {}), ...(body.anchor_id ? {anchor: body.anchor_id, label: body.anchor_label, target: body.target} : {})});
@@ -565,7 +573,7 @@
       .concat(NOTES.add.filter(n => FEED[area].test(n.anchor || '') && !have.has(n.id))
         .map(n => ({id: n.id, a: n.anchor, l: n.label || '', text: n.text, who: 'You', at: n.at || '', v: n.version, target: n.target, sent: !!n.sent || NOTES.sent.has(n.id)})))
       // a note's Close, Re-open and Move on the copy, as Questions shows them (r12 fix17)
-      .map(n => { const s = SIM[n.id]; return !s ? n : {...n, ...('status' in s ? {status: s.status} : {}), ...('closed' in s ? {closed: s.closed} : {}), ...(s.edited && n.sent ? {edited: true} : {}), ...(s.anchor ? {a: s.anchor, l: s.label || '', target: s.target} : {})}; });
+      .map(n => { const s = SIM[n.id]; return !s ? n : {...n, ...('status' in s ? {status: s.status} : {}), ...('closed' in s ? {closed: s.closed} : {}), ...(s.edited && n.sent ? {edited: true, flagged: false} : {}), ...(s.anchor ? {a: s.anchor, l: s.label || '', target: s.target} : {})}; });
     return d;
   };
   // a newer version asks the same question again under a new id: his unsent answer and a copy's simulated one move to it (audit5 #02),
@@ -609,6 +617,8 @@
       .filter(n => !(P.ctx && P.ctx.taken(n.id)))  // removed, its Undo still open (frame take)
       .map(n => { const s = SIM[n.id] || {}, o = {...n, text: n.id in NOTES.text ? NOTES.text[n.id] : n.text, sent: n.sent || NOTES.sent.has(n.id)};
         for (const k of NOTEP) if (k in s) o[k] = s[k];
+        // his edit since the copy's Send, as the server answers it: edited, and un-flagged, so Remove shows as in the ordinary reader (r12 audit44 frame 4)
+        if (s.edited && o.sent) Object.assign(o, {edited: true, flagged: false});
         return o; });
     return d;
   }
@@ -646,8 +656,9 @@
   // the new note still being typed says it goes with the next Send, so Send lists, counts and carries it (audit7 #03)
   // a saved note open in its editor reads as he left it: in the editor, in Send and after a reload (audit8 #01)
   const editText = n => { const e = S.note || ctx.prefs.get('q:newnote', null); return e && e.edit === n.id && e.text != null ? e.text : n.text; };
-  // one whose Save the store has is that saved note, never a second row (r12 audit43 frame 2)
-  const typingNote = () => { const n = S.note || ctx.prefs.get('q:newnote', null); return n && !n.edit && (n.text || '').trim() && !NK.hit(D && D.notes, {a: n.anchor, tgt: n.target || null, text: n.text}) ? n : null; };
+  // one whose Save the store has is that saved note, never a second row (r12 audit43 frame 2); matched against the notes this
+  // reader lists (D) alone, as its kept drafts are, so another tab's feed never leaves the words in no row (r12 audit44 running 3)
+  const typingNote = () => { const n = S.note || ctx.prefs.get('q:newnote', null); return n && !n.edit && (n.text || '').trim() && !NK.hit(D && D.notes, {a: n.anchor, tgt: n.target || null, text: n.text}, undefined, true) ? n : null; };
   // the kit's second-spot rule here: the composer (S.note) is the one typed slot; words it cannot hold are drafts at their own
   // spots (draft:qback), each a Send row, back in its composer when that spot opens (r12 audit40 running 3, questions)
   const QB = 'draft:qback', qSpot = n => ({...n, a: n.anchor, tgt: n.target || null}), qNote = ({a, tgt, ...n}) => n;
@@ -658,7 +669,7 @@
   // the kit's prune as the questions first land: a typed note a reload cut off from its Save's answer is that saved note (r12 audit42 running 3)
   const pruneQ = () => { const t = NK.prune(ctx, D.notes, 'q:newnote', QB, d => !d.edit && (d.a || d.anchor));
     if (t && S.note && !S.note.edit && S.note.anchor === t.anchor && S.note.text === t.text) S.note = null; };
-  if (P.queue) P.queue({items: c => NK.backs.all(c, QB).filter(b => !NK.hit(D && D.notes, b)).map(b => ({key: 'qnb:' + b.a + ' ' + JSON.stringify(b.tgt || null), spot: b.a, tgt: b.target, group: 'Notes', say: b.text.trim(),
+  if (P.queue) P.queue({items: c => NK.backs.all(c, QB).filter(b => !NK.hit(D && D.notes, b, undefined, true)).map(b => ({key: 'qnb:' + b.a + ' ' + JSON.stringify(b.tgt || null), spot: b.a, tgt: b.target, group: 'Notes', say: b.text.trim(),
     html: `On “${esc(cut((b.target && b.target.quote) || b.label || 'Questions', 50))}”: ${esc(cut(b.text.trim(), 140))}`,
     // Go to it: the composer he was typing in stays a draft at its own spot; shortcut: an open Edit of a saved note is replaced, as the 'nn:' row's Go to it does
     go: () => { const now = typingNote(); if (now && NK.other(qSpot(now), b.a, b.tgt)) NK.backs.put(c, QB, qSpot(now));
@@ -1498,12 +1509,17 @@
     const n = from || S.note; if (!n || newRefused(n)) return;
     if (!from) { S.note = null; ctx.prefs.set('q:newnote', null); }
     if (!text.trim()) return draw(true);
+    // until its Save answers, the words are a draft at their own spot: Send lists them once, as the draft until the saved note is
+    // listed, never zero; a reload meanwhile prunes it against the store (r12 audit44 running 3)
+    const sp = qSpot({...n, text}), unhold = () => NK.backs.drop(ctx, QB, sp.a, sp.tgt, text.trim());
+    NK.backs.put(ctx, QB, sp);
     let c; try { c = await call('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text, version: D.version, target: n.target}); }
     // refused as the very note the round posts: those words go with it. Any other failure: the words stay open
     // with another spot open or typed, the failed words are a draft at their own spot (the kit's second-spot rule, r12 audit40 running 3)
-    catch (e) { if (!P.carried(e)) qBack({...n, text}); await draw(true); if (!P.carried(e)) ctx.toast('Not saved: ' + e.message); return; }
+    catch (e) { unhold(); if (!P.carried(e)) qBack({...n, text}); await draw(true); if (!P.carried(e)) ctx.toast('Not saved: ' + e.message); return; }
     // listed at once from its stored record: Send, its count and the document never wait on the re-read (r12 audit14 questions 1)
     if (c && c.id && !D.notes.some(x => x.id === c.id)) D.notes.push({id: c.id, anchor: n.anchor, label: n.label, text: c.text || text, target: n.target, sent: false, at: c.created_at || new Date().toISOString()});
+    unhold();
     notesNow(Q());
     ctx.toast(n.fixOf ? 'Correction saved · goes with Send' : 'Note saved · goes with Send', {going: [c.id, 'n:' + c.id], undo: () => delNote(c.id, true)});
     await draw(true);
