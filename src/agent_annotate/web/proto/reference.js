@@ -111,7 +111,7 @@
     const list = S.spot === k && !S.full === !dlg && ns.length;
     if (!ns.length && !box) return '';
     return `<div class="rf-notes">${list ? spotList(k, ns) : ''}${ns.map(n => noteLine(k, n, dlg)).join('')}
-      ${box ? `<div class="rf-box">${S.tgt ? `<div class="small rf-on">New note${onWhat(S.tgt)}</div>` : ''}<textarea id="rf-nt" rows="3" placeholder="Write a note for the agent: a question, a change, or ask for another version" aria-label="Your note">${esc(typedR(k))}</textarea>
+      ${box ? `<div class="rf-box">${S.tgt ? `<div class="small rf-on">New note${onWhat(S.tgt)}</div>` : ''}<textarea id="rf-nt" data-spot="${esc(JSON.stringify([k, S.tgt || null]))}" rows="3" placeholder="Write a note for the agent: a question, a change, or ask for another version" aria-label="Your note">${esc(typedR(k))}</textarea>
         <div class="rf-acts"><button class="btn sm pri" data-nsave="${esc(k)}">Save note</button><button class="btn sm" data-ncancel data-going="rnn:${esc(k)}">Cancel</button><span class="small mut">Saved on this page for the agent</span></div></div>` : ''}</div>`;
   }
   const at = (k, label) => `data-line="${esc(k)}" data-label="${esc(String(label || '').slice(0, 80))}"`;
@@ -469,13 +469,13 @@
     if (!!S.full !== !!S.fWas) { S.fWas = !!S.full; NK().endMove(false); }
     keepDrafts();  // every change to a draft redraws, on this tab or from Send
     if (!here() || !D) return;  // still reading: render draws once the data is in, with what Send's Remove or Undo changed (r12 audit11 frame 2, reference 3)
-    const a = document.activeElement, keep = a && a.id && el.contains(a) ? [a.id, a.selectionStart, a.selectionEnd, a.value] : null;
+    const a = document.activeElement, keep = a && a.id && el.contains(a) ? [a.id, a.selectionStart, a.selectionEnd, a.value, a.dataset.spot] : null;
     const zt = (el.querySelector('.zoomv') || {}).scrollTop || 0;
     el.innerHTML = `<div class="rf">${list()}${viewer()}${zoomView()}</div>`;
     // each saved quote's words marked in its line, as Questions does (r12 audit38 running 2)
     for (const n of allNotes()) { const t = n.target || {}, le = !n.closed && t.quote && el.querySelector(`[data-line="${CSS.escape(n.a)}"]`); if (le) NK().mark(le, t.quote, t.at); }
     const zv = el.querySelector('.zoomv'); if (zv) zv.scrollTop = zt;
-    if (keep) { const b = document.getElementById(keep[0]); if (b) { if (keep[0] === 'rf-nt') b.value = keep[3]; b.focus(); try { b.setSelectionRange(keep[1], keep[2]); } catch {} } }
+    if (keep) { const b = document.getElementById(keep[0]); if (b) { if (keep[0] === 'rf-nt' && b.dataset.spot === keep[4]) b.value = keep[3]; b.focus(); /* another spot's composer never takes these words (r12 fix47 pass 2) */ try { b.setSelectionRange(keep[1], keep[2]); } catch {} } }
     if (S.note && !keep) { const t = document.getElementById('rf-nt'); if (t) t.focus({preventScroll: true}); }
     if (S.scroll) { const h = S.hl && el.querySelector('.rf-hl'), v = h || document.getElementById('rf-viewer'); if (v) v.scrollIntoView({block: h ? 'center' : 'start'});
       S.scroll = !!(S.hl && !h && Object.keys(loading).some(k => !blocks[k])); }  // a highlight in a revision still being read scrolls once it is drawn

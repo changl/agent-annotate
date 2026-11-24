@@ -51,3 +51,9 @@ def test_every_reader_uses_the_rule():
     assert "for (const x of left) if (x.put) x.put();" in Q and "if (tnLeft) qBack(tnLeft);" in Q
     for src in (LINKS, REF, HIST):
         assert src.count("put: () => putBack(") + src.count("put: () => { putC(") >= 2
+
+
+def test_a_redraw_never_moves_words_to_another_spots_composer():
+    # pass 2: the Reference redraw restored the focused composer's words into the next spot's composer
+    assert 'data-spot="${esc(JSON.stringify([k, S.tgt || null]))}"' in REF
+    assert "if (keep[0] === 'rf-nt' && b.dataset.spot === keep[4]) b.value = keep[3];" in REF
