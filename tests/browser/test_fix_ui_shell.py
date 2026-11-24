@@ -16,6 +16,7 @@ from test_single_page_acceptance import workspace  # noqa: F401
 from test_workspace_intent import _page
 
 from agent_annotate.pagegen import generate
+from agent_annotate.store import transaction
 
 playwright = pytest.importorskip("playwright.sync_api")
 expect = playwright.expect
@@ -366,43 +367,81 @@ def test_first_review_open_refreshes_store_when_meta_shows_a_new_publish(tmp_pat
         assert len(reads) >= 2
 
 
-def test_first_review_open_uses_the_version_from_the_retried_store(tmp_path, versions):
+@pytest.mark.parametrize("later_meta", [False, True], ids=["matched", "metadata-ahead"])
+def test_startup_publish_keeps_draft_and_refresh_on_the_reissued_version(tmp_path, versions, later_meta):
     source = tmp_path / "v3.md"
     source.write_text("---\ntitle: Third review\nversion: v3\nfull_plan: true\nother_files_required: none\n---\n\n## Checks\n\nThird document.\n")
-    previous_meta = json.loads((versions / "current.meta.json").read_text())
     generate(source, versions)
-    complete(versions)
     path = versions / "comments.json"
     snapshot = json.loads(path.read_text())
-    snapshot["anchors"]["d:q31"] = [{
-        "id": "v3-only", "number": 31, "anchor_id": "d:q31", "version": "v3", "text": "V3-only question?",
+    question = {
+        "number": 31, "anchor_id": "d:q31", "text": "Keep the check?",
         "author": "agent:review-test", "status": "open", "replies": [],
-        "decision_request": {"prompt": "V3-only question?", "options": ["accept", "reject"]},
-    }]
+        "decision_request": {"prompt": "Keep the check?", "options": ["accept", "reject"]},
+    }
+    snapshot["anchors"]["d:q31"] = [dict(question, id=f"reissued-v{i}", version=f"v{i}") for i in (2, 3)]
     path.write_text(json.dumps(snapshot))
     reads = []
-
-    def meta(route):
-        route.fulfill(json=previous_meta)
 
     def store(route):
         reads.append(route.request.url)
         if len(reads) == 1:
+            # Startup already read an older store before it saw v2 metadata.
             older = route.fetch().json()
             older["current_version"] = "v1"
-            older["anchors"].pop("d:q31", None)
             route.fulfill(json=older)
+        else:
+            if len(reads) == 2:
+                with transaction(versions):
+                    complete(versions)
+            route.continue_()
+
+    def meta(route):
+        if len(reads) == 2:
+            ahead = route.fetch().json()
+            ahead["current"] = "v4"
+            ahead["history"].append({"version": "v4"})
+            route.fulfill(json=ahead)
         else:
             route.continue_()
 
-    routes = [("**/current.meta.json", meta), ("**/comments.json?view=page", store)]
-    with opened(tmp_path, versions, routes=routes) as (page, _, _):
+    # Drive the poll explicitly so a slow Chrome run cannot heal startup first.
+    manual_poll = """(() => {
+        const timeout = window.setTimeout;
+        window.setTimeout = (fn, ms, ...args) => timeout(fn, fn.name === 'refresh' ? 120000 : ms, ...args);
+    })();"""
+    routes = [("**/comments.json?view=page", store)]
+    if later_meta:
+        routes.append(("**/current.meta.json", meta))
+    with opened(tmp_path, versions, routes=routes, init=[manual_poll]) as (page, _, _):
         assert frame_version(page) == "v3"
         assert len(reads) >= 2
         urls = page.evaluate("performance.getEntriesByType('resource').map(e => e.name)")
         assert not any("view=poll" in url for url in urls)
         page.evaluate("() => window.AA.rail.reveal()")
-        expect(page.locator('#comment-list .citem[data-comment-id="v3-only"]')).to_be_visible()
+        text = "Draft from the reissued v3 question"
+        page.locator('#comment-list [data-decision-say-ta="reissued-v3"]').fill(text)
+        page.locator("#send-btn").click()
+        page.locator("#round-submit-btn").click()
+        expect(page.locator("#round-confirm-backdrop")).to_be_hidden()
+        older, current = json.loads(path.read_text())["anchors"]["d:q31"]
+        assert (current.get("decision") or {}).get("text") == text
+        assert not older.get("decision")
+
+        # An in-flight poll leaves the Refresh click using the installed metadata.
+        paused = []
+        pattern = "**/current.meta.json"
+        page.route(pattern, lambda route: paused.append(route))
+        try:
+            with page.expect_request(pattern):
+                page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+            with page.expect_request("**/content?v=v3"):
+                page.locator("#aa-fresh").click()
+            assert frame_version(page) == "v3"
+        finally:
+            for route in paused:
+                route.continue_()
+            page.unroute(pattern)
 
 
 # ── UI-28: the version hint, and pages with one tab ────────────────────────

@@ -609,18 +609,28 @@ async function loadMeta() {
   try {
     const url = doc === 'plans' ? './api/plans/' + encodeURIComponent(PLAN_ID) : './current.meta.json';
     const earlyMeta = takeEarly(url);
-    let got = await (earlyMeta || pollJson(url));
+    const startupReview = earlyMeta && doc === 'review';
+    const readMeta = () => pollJson(url).catch(() => ({ ok: false }));
+    let got = earlyMeta ? await earlyMeta.catch(() => ({ ok: false })) : await readMeta();
     // Review may have published between the early meta read and the store read.
-    if (earlyMeta && doc === 'review' && STORE.current_version && got.data?.current !== STORE.current_version) {
-      got = await pollJson(url);
-      if (got.ok && got.data.current !== STORE.current_version) {
-        await loadStore();
+    if (startupReview && STORE.current_version && got.data?.current !== STORE.current_version) {
+      const refreshed = await readMeta();
+      if (refreshed.ok) got = refreshed;
+      if (got.ok && got.data.current !== STORE.current_version && await loadStore() && got.data.current !== STORE.current_version) {
+        const afterStore = await readMeta();
+        if (afterStore.ok) got = afterStore;
       }
     }
-    if (!got.ok) return false;
-    if (doc !== DOC) return false;
-    if (got.same && (META.current || (META.history || []).length)) return true;
-    const meta = got.data;
+    const version = startupReview && STORE.current_version;
+    if ((!got.ok && !version) || doc !== DOC) return false;
+    if (got.same && got.data.current === META.current && (META.current || (META.history || []).length)) return true;
+    let meta = got.data || {};
+    // If another publish races the retry, install metadata for the store we will show.
+    if (version && meta.current !== version) {
+      const history = meta.history || [];
+      const at = history.findIndex(h => h.version === version);
+      meta = { ...meta, current: version, history: at < 0 ? [...history, { version }] : history.slice(0, at + 1) };
+    }
     if (doc === 'plans') { META = { current: meta.current, history: meta.history || [], content_stamps: {}, title: meta.title }; return true; }
     if (JSON.stringify(meta.history || []) !== JSON.stringify(META.history || [])) historyDirty = true;
     if (meta.project_info && meta.delivery_status) {
