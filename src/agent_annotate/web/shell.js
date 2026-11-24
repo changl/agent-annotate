@@ -364,25 +364,32 @@ function authorQuery() {
 // cost no parsing or rendering; `pollChanged` records whether any read in a
 // poll brought something new (`quiet` reads handle their own changes).
 const pollLast = {};
+let pollAsked = 0;
 let pollChanged = false;
 // Posts not answered yet, each with how to put it on a fresh store (see
 // "Optimistic posts").
 const pendingEdits = new Map();
 async function pollJson(url, quiet) {
+  const asked = ++pollAsked;
   const last = pollLast[url];
   const r = await fetch(apiUrl(url), { cache: 'no-store', headers: last && last.etag ? { 'If-None-Match': last.etag } : {}, signal: AbortSignal.timeout(10000) });
   // Read the empty 304 body: an unread one ends as an aborted request.
-  if (r.status === 304 && last) { await r.text(); return { ok: true, same: true, data: last.data }; }
-  if (!r.ok) return { ok: false, status: r.status };
+  if (!r.ok && (r.status !== 304 || !last?.etag)) return { ok: false, status: r.status };
   const text = await r.text();
-  const etag = r.headers.get('ETag');
-  if (last && last.text != null && text === last.text) { last.etag = etag; return { ok: true, same: true, data: last.data }; }
-  const data = JSON.parse(text);
-  // The body is kept for comparing only when the server sends no ETag (the
-  // FLD store's text is megabytes held twice otherwise).
-  pollLast[url] = { etag, text: etag ? null : text, data };
-  if (!quiet) pollChanged = true;
-  return { ok: true, same: false, data };
+  const current = pollLast[url];
+  if (current && asked < current.asked) return { ok: true, same: true, data: current.data };
+  // A 304 validates the entry used by this request, even if the cache moved on.
+  let answer = last;
+  if (r.status !== 304) {
+    const etag = r.headers.get('ETag');
+    const data = current?.text === text ? current.data : JSON.parse(text);
+    // Keep the raw text only when it serves as the validator.
+    answer = { etag, text: etag ? null : text, data };
+  }
+  pollLast[url] = { ...answer, asked };
+  const same = current?.data === answer.data;
+  if (!quiet && !same) pollChanged = true;
+  return { ok: true, same, data: answer.data };
 }
 
 // The page's one comment store, shared by every document and tab.
@@ -407,7 +414,10 @@ async function pollStore() {
     // answers last would put the card back as it was before the save.
     if (asked < storeTaken) return true;
     storeTaken = asked;
-    if (!got.same || !LIVE) LIVE = got.data && got.data.schema_version === 2 ? got.data : { schema_version: 2, anchors: {}, archived: {} };
+    if (got.data !== LIVE) {
+      LIVE = got.data && got.data.schema_version === 2 ? got.data : { schema_version: 2, anchors: {}, archived: {} };
+      pollChanged = true;
+    }
     return true;
   } catch { return false; }
 }
@@ -461,8 +471,8 @@ function wantFullStore() {
   if (!STORE.partial) return Promise.resolve(true);
   if (fullStore) return fullStore;
   STORE_VIEW = 'poll';
-  fullStore = pollStore().then(ok => {
-    if (!ok || !LIVE || LIVE.partial) { STORE_VIEW = 'page'; fullStore = null; return false; }
+  fullStore = pollStore().then(() => {
+    if (!LIVE || LIVE.partial) { STORE_VIEW = 'page'; fullStore = null; return false; }
     adoptFull();
     if (VIEW_DOC) withDoc(VIEW_DOC, renderAll);
     document.dispatchEvent(new CustomEvent('annotate:store'));
@@ -478,6 +488,8 @@ function adoptFull() {
     for (const [aid, items] of Object.entries(STORE[area] || {})) for (const c of items) where.set(c.id, { area, aid, c });
   }
   const out = Object.assign({}, LIVE, { anchors: {}, archived: {} });
+  // The partial response records exactly which historical cards it left out.
+  const omittedStamps = new Set(STORE.omitted_stamps);
   const placed = new Set();
   for (const area of ['anchors', 'archived']) {
     for (const [aid, items] of Object.entries(LIVE[area] || {})) {
@@ -487,12 +499,7 @@ function adoptFull() {
         if (shown) {
           if (shown.area !== area || shown.aid !== aid) continue;
           placed.add(c.id);
-        } else {
-          // A historical answer can become pending after the partial read left it out.
-          const category = commentCategory(c);
-          const current = category === 'review' ? LIVE.current_version : LIVE.plan_versions?.[c.doc];
-          if ((category !== 'review' && category !== 'plans') || (current && c.version === current)) continue;
-        }
+        } else if (!omittedStamps.has(LIVE.item_stamps?.[c.id])) continue;
         list.push(shown ? shown.c : c);
       }
       if (list.length) out[area][aid] = list;
@@ -532,10 +539,14 @@ function waitingChanges() {
   waiting = { live: LIVE, doc: DOC, out };
   const all = (store) => { const s = STORE; STORE = store; try { return flattenStore(true).filter(c => docOf(c) === DOC); } finally { STORE = s; } };
   const shown = new Map(all(STORE).filter(c => !c.pending).map(c => [c.id, JSON.stringify(c)]));
+  const omittedStamps = new Set(STORE.omitted_stamps);
   for (const c of all(LIVE)) {
     const was = shown.get(c.id);
     shown.delete(c.id);
-    if (was === undefined) { if (c.decision_request) out.questions++; else out.cards++; }
+    if (was === undefined) {
+      if (omittedStamps.has(LIVE.item_stamps?.[c.id])) continue;
+      if (c.decision_request) out.questions++; else out.cards++;
+    }
     else if (was !== JSON.stringify(c)) out.changed++;
   }
   out.changed += shown.size; // gone from the server

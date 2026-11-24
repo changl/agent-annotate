@@ -88,6 +88,7 @@ USAGE (directory layout, version-pivot, comment lifecycle)
 """
 
 import argparse
+import base64
 import difflib
 import functools
 import gzip
@@ -594,7 +595,7 @@ def _plan_stamps(artifact_dir: Path) -> tuple:
     return tuple(sorted(stamps))
 
 
-def _plan_docs(artifact_dir: Path, store: dict, *, with_anchors: bool = True) -> dict:
+def _plan_docs(artifact_dir: Path, store: dict) -> dict:
     """{"plan:<id>": (current, published versions in order, body card anchors)} for the plans the store has comments on."""
     from .categories import _json, safe_path, validate_plan_id
     docs = {c.get("doc") for area in ("anchors", "archived") for items in (store.get(area) or {}).values()
@@ -609,11 +610,15 @@ def _plan_docs(artifact_dir: Path, store: dict, *, with_anchors: bool = True) ->
         history = [h.get("version") for h in meta.get("history") or [] if isinstance(h, dict) and h.get("version")]
         current = meta.get("current")
         if current in history:
-            anchors = None
-            if with_anchors:
-                anchors = _card_anchors(functools.partial(safe_path, artifact_dir, f"plans/{plan}/versions/{current}.html"))
-            out[doc] = (current, history, anchors)
+            out[doc] = (current, history, _card_anchors(functools.partial(safe_path, artifact_dir, f"plans/{plan}/versions/{current}.html")))
     return out
+
+
+def _item_stamp(area: str, anchor: str, comment: dict) -> str:
+    # Legacy label pinning and the agent's saved view can change without reviewer activity.
+    fields = {k: v for k, v in comment.items() if k not in ("number", "agent_snapshot")}
+    body = json.dumps([area, anchor, fields], ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
+    return base64.b64encode(hashlib.blake2b(body, digest_size=12).digest()).decode("ascii")
 
 
 def _page_store(store: dict, numbers: dict, docs: dict) -> dict:
@@ -673,21 +678,28 @@ def _page_store(store: dict, numbers: dict, docs: dict) -> dict:
             if id(c) not in keep and answered and c.get("decision_request") and _prompt_keys(c) & asked:
                 keep.add(id(c))
     omitted = {}
+    omitted_stamps = []
+    item_stamps = {}
     out = {area: {} for area in areas}
     for area, items in areas.items():
         for aid, c in items:
+            stamp = _item_stamp(area, aid, c)
             if id(c) in keep:
                 out[area].setdefault(aid, []).append(c)
-            elif not newer(c) and not (area == "anchors" and c.get("withdrawn")):
-                left = omitted.setdefault(doc_of(c), {"earlier": 0, "rest": 0, "rest_missing": 0})
-                left["earlier"] += 1
-                if area == "anchors" and c.get("decision_request") and c.get("status") not in ("archived", "resolved_in_version"):
-                    left["rest"] += 1
-                    left["rest_missing"] += not (c.get("decision") or {}).get("verdict")
-    shown = [c["id"] for items in out.values() for cs in items.values() for c in cs if c.get("id") in numbers]
+                if "id" in c:
+                    item_stamps[c["id"]] = stamp
+            else:
+                omitted_stamps.append(stamp)
+                if not newer(c) and not (area == "anchors" and c.get("withdrawn")):
+                    left = omitted.setdefault(doc_of(c), {"earlier": 0, "rest": 0, "rest_missing": 0})
+                    left["earlier"] += 1
+                    if area == "anchors" and c.get("decision_request") and c.get("status") not in ("archived", "resolved_in_version"):
+                        left["rest"] += 1
+                        left["rest_missing"] += not (c.get("decision") or {}).get("verdict")
     # approved_plans is the server's approval catalog; the browser never reads it (FLD: 75 KB).
     return {**{k: v for k, v in store.items() if k != "approved_plans"}, **out, "partial": True, "omitted": omitted,
-            "numbers": {cid: numbers[cid] for cid in shown},
+            "item_stamps": item_stamps, "omitted_stamps": omitted_stamps,
+            "numbers": {cid: numbers[cid] for cid in item_stamps if cid in numbers},
             "number_max": max((n for n in numbers.values() if type(n) is int), default=0)}
 
 
@@ -1864,11 +1876,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         review = (current_version, [v for v in published if v],
                                   _card_anchors(lambda: _version_file(self.artifact_dir, current_version)))
                         store = _page_store(store, numbers, {"review": review, **_plan_docs(self.artifact_dir, store)})
-                    elif view == "poll":
-                        # Classify newly loaded history against this snapshot's plan revisions.
-                        store["plan_versions"] = {
-                            doc: current for doc, (current, _, _) in
-                            _plan_docs(self.artifact_dir, store, with_anchors=False).items()
+                    else:
+                        store["item_stamps"] = {
+                            c["id"]: _item_stamp(area, aid, c)
+                            for area in ("anchors", "archived") for aid, items in store[area].items() for c in items if "id" in c
                         }
                 body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
                 packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body

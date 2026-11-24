@@ -9,7 +9,7 @@ import json
 import urllib.request
 
 import pytest
-from test_keep_drafts import _directory, _session
+from test_keep_drafts import _agent, _directory, _session
 
 from agent_annotate.categories import publish_plan_revision
 
@@ -98,7 +98,7 @@ def test_opening_earlier_feedback_keeps_new_questions_behind_refresh(tmp_path):
         new_question.wait_for()
 
 
-def test_opening_earlier_feedback_restores_an_answer_edited_in_another_tab(tmp_path):
+def test_opening_earlier_feedback_holds_an_answer_edited_in_another_tab_for_refresh(tmp_path):
     directory = _directory(tmp_path)
     _long_history(directory, 2)
     path = directory / "comments.json"
@@ -110,7 +110,6 @@ def test_opening_earlier_feedback_restores_an_answer_edited_in_another_tab(tmp_p
 
     with _session(tmp_path, directory) as (page, base, _):
         old_selector = '#comment-list [data-comment-id="old-0"]'
-        partial = page.request.get(base + "comments.json?view=page").json()
         assert page.locator(old_selector).count() == 0
         other = page.context.new_page()
         other.set_default_timeout(8000)
@@ -130,11 +129,13 @@ def test_opening_earlier_feedback_restores_an_answer_edited_in_another_tab(tmp_p
         page.bring_to_front()
 
         page.locator('#comment-list [data-section-toggle="earlier"]').click()
+        playwright.expect(page.locator('#comment-list [data-comment-id="old-1"]')).to_be_visible()
+        playwright.expect(page.locator(old_selector)).to_have_count(0)
+        playwright.expect(page.locator("#aa-fresh .aa-fresh-n")).to_have_text("1")
+        page.locator("#aa-fresh").click()
         playwright.expect(page.locator(old_selector)).to_be_visible()
-        playwright.expect(page.locator("#aa-fresh .aa-fresh-n")).to_be_hidden()
 
-        # A link opened with the same partial snapshot still finds the saved draft via the full store.
-        page.route("**/comments.json?view=page", lambda route: route.fulfill(json=partial), times=1)
+        # Opening a link to the answer still restores the draft from the other tab.
         page.goto(base + "#view=review&feedback=old-0")
         page.reload(wait_until="networkidle")
         linked = page.locator(old_selector + ".hl")
@@ -166,7 +167,7 @@ def test_opening_earlier_feedback_keeps_plan_history_after_a_new_revision(tmp_pa
             publish_plan_revision(directory, "rollout", "<h1>Rollout v2</h1>", title="Rollout")
             latest = json.loads(path.read_text())
             latest["anchors"]["s:rollout"].extend([
-                dict(historical, id="plan-v1", version="v1", text="Feedback on the first revision"),
+                dict(historical, id="plan-v1", version="v1", text="New feedback on the first revision"),
                 dict(historical, id="plan-v2", version="v2", text="Feedback on the second revision"),
             ])
             path.write_text(json.dumps(latest))
@@ -175,10 +176,101 @@ def test_opening_earlier_feedback_keeps_plan_history_after_a_new_revision(tmp_pa
         page.route("**/comments.json?view=poll", publish_revision, times=1)
         rail.locator('[data-section-toggle="earlier"]').click()
         playwright.expect(rail.locator('[data-comment-id="plan-legacy"]')).to_be_visible()
-        rail.locator('[data-section-toggle="done"]').click()
-        playwright.expect(old).to_be_visible()
+        assert page.evaluate("!window.AnnotateDocs.findComment('plan-v1')")
         playwright.expect(current).to_have_count(0)
-        playwright.expect(page.locator("#aa-fresh .aa-fresh-n")).to_have_text("1")
+        playwright.expect(page.locator("#aa-fresh .aa-fresh-n")).to_have_text("2")
 
         page.locator("#aa-fresh").click()
+        rail.locator('[data-section-toggle="done"]').click()
         playwright.expect(current).to_be_visible()
+        playwright.expect(old).to_be_visible()
+
+
+def test_approval_managed_plan_keeps_new_questions_behind_refresh(tmp_path):
+    directory = _directory(tmp_path)
+    path = directory / "comments.json"
+    store = json.loads(path.read_text())
+    store["approved_plans"] = {"rollout": {
+        "title": "Filed rollout", "current": "v1", "section": "approved", "managed": True,
+        "history": [{"version": "v1", "source_version": "v1", "evidence_revision": "missing",
+                     "label": "Approved", "source_card": "question-11", "by": "Reviewer",
+                     "ts": "2026-10-01T00:00:00Z", "consequence": "Release."}],
+    }}
+    path.write_text(json.dumps(store))
+
+    with _session(tmp_path, directory) as (page, base, _):
+        page.goto(base + "#view=plans&plan=rollout", wait_until="networkidle")
+        playwright.expect(page.frame_locator("#content-frame").get_by_role("heading", name="Filed rollout")).to_be_visible()
+
+        def add_question(route):
+            _agent(base, "api/comments/batch", {"items": [{
+                "id": "catalog-question", "anchor_id": "s:rollout", "doc": "plan:rollout", "version": "v1",
+                "text": "Can we release?", "decision_request": {
+                    "prompt": "Can we release?", "options": [{"id": "yes", "label": "Yes"}],
+                },
+            }]})
+            route.continue_()
+
+        page.route("**/comments.json?view=poll", add_question, times=1)
+        page.locator("#tab-history").click()
+        page.wait_for_function("() => !window.AnnotateDocs.store().partial")
+        page.locator("#tab-feedback").click()
+        question = page.locator('#comment-list [data-comment-id="catalog-question"]')
+        playwright.expect(question).to_have_count(0)
+        playwright.expect(page.locator("#aa-fresh .aa-fresh-n")).to_have_text("1")
+        page.locator("#aa-fresh").click()
+        playwright.expect(question).to_be_visible()
+
+
+def test_late_full_response_keeps_the_newer_etag(tmp_path):
+    directory = _directory(tmp_path)
+    _long_history(directory, 2)
+    full_url = "comments.json?view=poll"
+    with _session(tmp_path, directory) as (page, base, _):
+        def poll():
+            with page.expect_response(lambda r: r.url.endswith(full_url)) as response:
+                page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+            return response.value
+
+        held = []
+        page.route("**/" + full_url, lambda route: held.append((route, route.fetch())), times=1)
+        page.locator('#comment-list [data-section-toggle="earlier"]').click()
+        page.wait_for_function("() => document.querySelector('#sec-body-earlier')?.textContent.includes('Loading earlier feedback')")
+        route, initial = held.pop()
+        comment_url = base + "api/comments"
+        assert page.request.post(comment_url, data={
+            "id": "temporary", "anchor_id": "s:checks", "text": "Temporary note", "version": "v1",
+        }).status == 201
+        newer = poll()
+        assert newer.headers["etag"] != initial.headers["etag"]
+        route.fulfill(response=initial)
+        playwright.expect(page.locator('#comment-list [data-comment-id="old-0"]')).to_be_visible()
+        badge = page.locator("#aa-fresh .aa-fresh-n")
+        playwright.expect(badge).to_have_text("1")
+
+        assert page.request.delete(comment_url + "/temporary").ok
+        assert page.request.get(base + full_url).headers["etag"] == initial.headers["etag"]
+        after_delete = poll()
+        assert after_delete.request.headers["if-none-match"] == newer.headers["etag"]
+        assert after_delete.status == 200
+        playwright.expect(badge).to_be_hidden()
+        page.locator("#aa-fresh").click()
+        assert page.evaluate("!window.AnnotateDocs.findComment('temporary')")
+
+
+def test_unchanged_multi_plan_full_store_revalidates_after_restart(tmp_path, monkeypatch):
+    directory = _directory(tmp_path)
+    for n in range(8):
+        publish_plan_revision(directory, f"plan-{n}", f"<h1>Plan {n}</h1>", title=f"Plan {n}")
+    monkeypatch.setenv("PYTHONHASHSEED", "1")
+    with _session(tmp_path, directory) as (page, base, restart):
+        _agent(base, "api/comments/batch", {"items": [{
+            "id": f"note-{n}", "anchor_id": "s:checks", "doc": f"plan:plan-{n}",
+            "version": "v1", "text": f"Agent note {n}",
+        } for n in range(8)]})
+        url = base + "comments.json?view=poll"
+        etag = page.request.get(url).headers["etag"]
+        monkeypatch.setenv("PYTHONHASHSEED", "2")
+        restart()
+        response = page.request.get(url, headers={"If-None-Match": etag})
+        assert response.status == 304
