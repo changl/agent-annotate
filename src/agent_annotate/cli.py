@@ -1342,13 +1342,15 @@ def _publish_already_running(project: str, slug: str, slug_dir: Path,
                 record.update(fields)
                 _write_owner_meta(slug_dir, fields)
     else:
-        # Send wakes the owner's terminal. An owner whose process ended never
-        # hears it, so the session publishing a version takes the page over
-        # (Chang, 2026-10-31: three Sends waited on an owner gone since Oct 21).
-        from .delivery import _target_exited, capture_target
+        # A publisher can take over from a departed owner, but the old PID may
+        # belong to a session that has already resumed in another terminal.
+        from .delivery import _target_exited, capture_target, refresh_session_owners
         old = record.get("owner_target")
-        if _target_exited(old) and capture_target(_session_id(), _session_agent()):
-            if cmd_claim(argparse.Namespace(slug=f"{project}/{slug}", project=None)) == 0:
+        if _target_exited(old):
+            resumed = old.get("worktree") and refresh_session_owners(
+                record.get("owner_session"), {(project, slug): record}, via="publish")
+            if (not resumed and capture_target(_session_id(), _session_agent())
+                    and cmd_claim(argparse.Namespace(slug=f"{project}/{slug}", project=None)) == 0):
                 record = _load_state_for_project(project)["slugs"].get(slug, record)
     report = _run_gate(record, args)
     if report is not None:

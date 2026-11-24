@@ -273,15 +273,15 @@ def _target_exited(target: dict | None) -> bool:
         return False
 
 
-def refresh_session_owners(session: str, records: dict, *, via: str = "prompt") -> None:
+def refresh_session_owners(session: str, records: dict, *, via: str = "prompt") -> bool:
     """Rebind a resumed session only after its recorded process provably ended.
 
-    via: "prompt" (prompt hook, in the session), "start" (SessionStart hook, in
-    the session) or "watchdog" (revive, from outside). A resume rebound without
-    a prompt leaves the agent idle, so those get one wake-up from the watchdog.
+    Return whether a matching live target was found, even if another writer won
+    the rebind. The watchdog and publish look up the target from outside the
+    session. Rebinds outside a prompt are eligible for one watchdog wake-up.
     """
     if not session or session == "unknown":
-        return
+        return False
     if via == "prompt":  # this prompt is the turn a pending wake-up was for
         def settle(row):
             if row and row.get("state") == "pending" and row["target"].get("session") == session:
@@ -294,6 +294,8 @@ def refresh_session_owners(session: str, records: dict, *, via: str = "prompt") 
             except (OSError, ValueError, TypeError, KeyError, AttributeError):
                 continue
     exited, targets, refreshed = {}, {}, []
+    find_target = resumed_target if via in ("watchdog", "publish") else capture_target
+    resumed = False
     for (project, slug), record in records.items():
         old = record.get("owner_target")
         if (record.get("owner_session") != session or not isinstance(old, dict)
@@ -310,11 +312,12 @@ def refresh_session_owners(session: str, records: dict, *, via: str = "prompt") 
             if agent not in ("claude", "codex"):
                 continue
             if agent not in targets:
-                targets[agent] = (resumed_target if via == "watchdog" else capture_target)(session, agent)
+                targets[agent] = find_target(session, agent)
             target = targets[agent]
             # Orca gives a relaunched pane a new handle; its worktree id survives a restart.
             if not target or (old.get("worktree") and old["worktree"] != target.get("worktree")):
                 continue
+            resumed = True
             from .cli import (
                 _flock,
                 _load_state_for_project,
@@ -357,6 +360,7 @@ def refresh_session_owners(session: str, records: dict, *, via: str = "prompt") 
             dispatch_record(current, project, slug)
         except (OSError, ValueError, TypeError, KeyError, RuntimeError, subprocess.SubprocessError):
             continue
+    return resumed
 
 
 WAKE_CAP = 3  # wake-ups per watchdog pass: after a reboot every resumed owner is eligible at once
