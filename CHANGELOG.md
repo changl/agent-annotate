@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## 2.32.14
+
+- A page owner that resumed in a new terminal keeps its page when another session publishes to it (agent-annotate-akg). Before a publish takes over a page whose recorded owner process has exited, it looks for the same owner session live in its original Orca worktree; if found, the page rebinds to that terminal and pending Sends go there. On 2026-11-24 an image worker's section publish took over the Rebex page this way after its orchestrator resumed, and two Sends (10 answers) went to the worker instead. A truly departed owner is still taken over as before.
+
 ## 2.32.13
 
 - Opening Earlier feedback keeps what the page already shows (agent-annotate-1us, PR #168). The first read carries a small mark; opening Earlier adds only older cards unchanged since that mark, plus a card a link or a saved draft points at, and holds anything newer behind Refresh. A late full response no longer overwrites a newer cached read. After a server restart the mark is unknown and the page loads the full store as before; startup keeps a newly published Review question behind Refresh. Accepted difference: after a restart, a note deleted in another tab disappears when Earlier opens.
