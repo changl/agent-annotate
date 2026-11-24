@@ -613,6 +613,11 @@ async function loadMeta() {
     // Review may have published between the early meta read and the store read.
     if (earlyMeta && doc === 'review' && STORE.current_version && got.data?.current !== STORE.current_version) {
       got = await pollJson(url);
+      if (got.ok && got.data.current !== STORE.current_version) {
+        await loadStore();
+        // If another publish raced the retry, the full store includes both revisions.
+        if (got.data.current !== STORE.current_version && await wantFullStore()) applyLive();
+      }
     }
     if (!got.ok) return false;
     if (doc !== DOC) return false;

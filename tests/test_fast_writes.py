@@ -159,6 +159,32 @@ def test_categories_revalidate_plan_and_topic_replacements_with_preserved_mtimes
     assert status == 200 and json.loads(body)["plan_topics"] == ["Modern"]
 
 
+@pytest.mark.parametrize("target", ["plan", "topics"])
+def test_categories_revalidate_same_stat_mapped_edits(server, monkeypatch, target):
+    httpd, root, _, _ = server
+    if target == "plan":
+        path = root / "plans/test/meta.json"
+        before, after = b'"title": "Test"', b'"title": "Next"'
+    else:
+        path = root / "plan-topics.json"
+        path.write_bytes(b'{"topics":[{"name":"Before","words":["test"]}]}')
+        before, after = b'"Before"', b'"Modern"'
+    key = sync_server._file_key
+    original_key = key(path)
+    monkeypatch.setattr(sync_server, "_file_key", lambda candidate: original_key if candidate == path else key(candidate))
+    _, headers, _ = request(httpd, "/api/categories")
+    with path.open("r+b") as source, mmap.mmap(source.fileno(), 0) as mapped:
+        assert before in mapped[:]
+        mapped[:] = mapped[:].replace(before, after)
+        status, _, body = request(httpd, "/api/categories", headers={"If-None-Match": headers["ETag"]})
+    assert status == 200
+    result = json.loads(body)
+    if target == "plan":
+        assert result["plans"][0]["title"] == "Next"
+    else:
+        assert result["plan_topics"] == ["Modern"]
+
+
 def test_reopening_the_same_version_appends_no_seen_event(server):
     httpd, root, _, _ = server
     for _ in range(3):

@@ -98,6 +98,7 @@ import json
 import os
 import re
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -246,6 +247,25 @@ def _file_key(path: Path):
         return (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
     except OSError:
         return None
+
+
+def _metadata_stamp(path: Path):
+    from .categories import MAX_PLAN_BYTES
+
+    # A mapped JSON edit can leave the inode and timestamps unchanged.
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                with os.fdopen(fd, "rb", closefd=False) as source:
+                    return hashlib.sha256(source.read(MAX_PLAN_BYTES + 1)).digest()
+        finally:
+            os.close(fd)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        pass
+    return _file_key(path)
 
 
 def _asset_bytes(path: Path) -> bytes:
@@ -609,17 +629,24 @@ def _implicit_asks(source: str) -> tuple:
     return tuple(implicit_ask_anchors(source))
 
 
-def _plan_stamps(artifact_dir: Path) -> tuple:
-    """A plan publish moves its meta.json to the next revision without touching the comment store."""
+def _plan_stamps(artifact_dir: Path) -> tuple | None:
+    """Fingerprint plan metadata even when the comment store is unchanged."""
+    from .categories import safe_path
+
     stamps = []
     try:
-        entries = os.scandir(artifact_dir / "plans")  # a glob took ~20 ms on FLD's 194 plans
+        entries = os.scandir(safe_path(artifact_dir, "plans"))
+    except ValueError:
+        return None
     except OSError:
         return ()
     with entries:
         for entry in entries:
-            if (stamp := _file_key(Path(entry.path) / "meta.json")) is not None:
-                stamps.append((entry.name, stamp))
+            if entry.is_symlink():
+                stamps.append((entry.name, None))
+            elif entry.is_dir(follow_symlinks=False):
+                if (stamp := _metadata_stamp(Path(entry.path) / "meta.json")) is not None:
+                    stamps.append((entry.name, stamp))
     return tuple(sorted(stamps))
 
 
@@ -1089,7 +1116,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     _store_responses = {}
     _count_rows = (None, None, {})
     _plans_listed = (None, None)
-    _stamp_checked = None
+    _stamp_checked = {}
 
     def handle_one_request(self):
         from .page_names import resolution_scope
@@ -2136,22 +2163,26 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _ensure_content_stamp(self, version: str, html: str, content_path: Path) -> None:
         """Persist the displayed version's content stamp when its input changes."""
+        key = (str(self.artifact_dir), version)
+        cache = type(self)._stamp_checked
         meta_path = self._meta_path()
         # Mapped writes can change bytes without changing any stat field.
         try:
-            checked = (str(self.artifact_dir), version, _file_key(content_path),
-                       _file_key(meta_path), html, meta_path.read_bytes())
+            checked = (_file_key(content_path), _file_key(meta_path), html, meta_path.read_bytes())
         except OSError:
             checked = None
-        if checked is not None and type(self)._stamp_checked == checked:
+        if checked is not None and cache.get(key) == checked:
             return
         with _locked_store(self.artifact_dir):  # reuse the store lock; meta writes are rare & small
             meta = self._read_meta()
             existing = (meta.get("content_stamps") or {}).get(version)
             computed = compute_content_stamps(html)
             computed["_mtime"] = content_path.stat().st_mtime
-            if existing and all(existing.get(key) == value for key, value in computed.items()):
-                type(self)._stamp_checked = checked
+            if existing and all(existing.get(field) == value for field, value in computed.items()):
+                if checked is not None:
+                    if key not in cache and len(cache) >= 4:
+                        del cache[next(iter(cache))]
+                    cache[key] = checked
                 return
             try:
                 self._merge_content_stamp(version, computed)
@@ -4095,7 +4126,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         return result
 
     def _get_categories(self):
-        from .categories import CATEGORIES, category_counts, comment_category, list_plans, load_categories
+        from .categories import (
+            CATEGORIES,
+            category_counts,
+            comment_category,
+            list_plans,
+            load_categories,
+            safe_path,
+        )
         from .copy_state import load_copy
         from .plan_topics import file_plans
         from .project_state import linked_pages
@@ -4118,7 +4156,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         memo = type(self)._count_rows = (signature, raw, {})
                     rows = memo[2]
                 # uzd: ~60 plan metas and their topics took ~110 ms on FLD; they change only with these files.
-                topics_stamp = _file_key(self.artifact_dir / "plan-topics.json")
+                topics_stamp = _metadata_stamp(safe_path(self.artifact_dir, "plan-topics.json"))
                 plans_key = (self._store_signature(), self._agent_reader(), _plan_stamps(self.artifact_dir), topics_stamp)
                 cached = type(self)._plans_listed
                 if cached[0] == plans_key:
@@ -4615,7 +4653,7 @@ def make_handler(
     BoundHandler._store_snapshot = None
     BoundHandler._count_rows = (None, None, {})
     BoundHandler._plans_listed = (None, None)
-    BoundHandler._stamp_checked = None
+    BoundHandler._stamp_checked = {}
     BoundHandler._meta_snapshot = None
     BoundHandler._meta_responses = {}
     BoundHandler._meta_response_lock = threading.Lock()

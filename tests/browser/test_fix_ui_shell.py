@@ -345,6 +345,27 @@ def test_first_review_open_refreshes_meta_when_store_shows_a_new_publish(tmp_pat
         assert len(reads) >= 2
 
 
+def test_first_review_open_refreshes_store_when_meta_shows_a_new_publish(tmp_path, versions):
+    reads = []
+
+    def store(route):
+        reads.append(route.request.url)
+        if len(reads) == 1:
+            snapshot = route.fetch().json()
+            snapshot["current_version"] = "v1"
+            for anchor, cards in snapshot["anchors"].items():
+                snapshot["anchors"][anchor] = [card for card in cards if card["id"] != "ready-12"]
+            route.fulfill(json=snapshot)
+        else:
+            route.continue_()
+
+    with opened(tmp_path, versions, routes=[("**/comments.json?view=page", store)]) as (page, _, _):
+        assert frame_version(page) == "v2"
+        open_sections(page)
+        assert page.locator('#comment-list [data-comment-id="ready-12"]').count() == 1
+        assert len(reads) >= 2
+
+
 # ── UI-28: the version hint, and pages with one tab ────────────────────────
 def test_version_hint_shows_only_for_the_document_on_screen(tmp_path, workspace):  # noqa: F811
     with opened(tmp_path, workspace) as (page, _, _b):

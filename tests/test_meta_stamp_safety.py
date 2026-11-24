@@ -119,6 +119,28 @@ def test_stamp_changes_when_content_is_replaced_with_preserved_mtime(tmp_path):
     assert _meta(tmp_path)["content_stamps"]["v1"]["whole"] != old
 
 
+def test_alternating_versions_reuse_verified_content_stamps(tmp_path, monkeypatch):
+    markup = {f"v{i}": f"<body>Version {i}</body>" for i in (1, 2)}
+    paths = {version: tmp_path / f"{version}.html" for version in markup}
+    stamps = {}
+    for version, html in markup.items():
+        path = paths[version]
+        path.write_text(html)
+        stamps[version] = {**sync_server.compute_content_stamps(html), "_mtime": path.stat().st_mtime}
+    _write_meta(tmp_path, {"current": "v2", "content_stamps": stamps})
+    handler = _Handler(tmp_path)
+    for version, html in markup.items():
+        handler._ensure_content_stamp(version, html, paths[version])
+
+    def unexpected_hash(_):
+        raise AssertionError("unchanged version was rehashed")
+
+    monkeypatch.setattr(sync_server, "compute_content_stamps", unexpected_hash)
+    for _ in range(12):
+        for version, html in markup.items():
+            handler._ensure_content_stamp(version, html, paths[version])
+
+
 def test_new_fingerprint_is_persisted_and_available_to_a_fresh_handler(tmp_path):
     (tmp_path / "content").mkdir()
     doc = tmp_path / "content/v1.html"

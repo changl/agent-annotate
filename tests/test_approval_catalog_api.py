@@ -1,5 +1,6 @@
 import http.client
 import json
+import mmap
 import os
 import re
 import threading
@@ -18,7 +19,7 @@ def image_seal(tmp_path):
     comment = {"id": "card", "anchor_id": "design", "version": "v1",
                "decision_request": {"prompt": "Approve?", "evidence": [{"anchor": "design"}]}}
     store = {"anchors": {"design": [comment]}}
-    html = '<section id="design"><img src="a.png"><img src="b.png"></section>'
+    html = '<section id="design"><img src="a.png" alt="A"><img src="b.png" alt="B"></section>'
 
     def seal():
         return seal_review(tmp_path, html, "v1", store)[1]["card"]
@@ -40,6 +41,21 @@ def test_seal_invalidates_on_duplicate_source_change(tmp_path, image_seal):
     bundle = approve(refreshed)
     assert len(bundle["assets"]) == 2 and not bundle["incomplete"]
     assert approve(displayed)["incomplete"]
+
+
+@pytest.mark.parametrize("changed,unchanged", [("A", "B"), ("B", "A")])
+def test_approval_keeps_only_the_unchanged_duplicate_image(tmp_path, image_seal, changed, unchanged):
+    seal, approve = image_seal
+    for name in ("a.png", "b.png"):
+        (tmp_path / name).write_bytes(b"reviewed")
+    displayed = seal()
+    (tmp_path / f"{changed.lower()}.png").write_bytes(b"replacement")
+    bundle = approve(displayed)
+    pinned, = bundle["assets"]
+    assert (tmp_path / pinned).read_bytes() == b"reviewed"
+    assert f'<img src="./{pinned}" alt="{unchanged}">' in bundle["html"]
+    assert f'<img data-evidence-image-unavailable="" alt="{changed}">' in bundle["html"]
+    assert len(bundle["incomplete"]) == 1
 
 
 def test_seal_invalidates_when_missing_image_is_restored(tmp_path, image_seal):
@@ -120,6 +136,29 @@ def test_seal_revalidates_plan_predecessor_with_preserved_mtime(server):
     publish_plan_revision(directory, "design", "<h1>Second</h1>")
     os.utime(meta, ns=(original.st_atime_ns, original.st_mtime_ns))
     assert token(httpd, comment)["predecessor"] == "v2"
+
+
+def test_seal_refreshes_predecessor_after_same_stat_plan_edit(server, monkeypatch):
+    from agent_annotate import sync_server
+    from agent_annotate.categories import publish_plan_revision
+
+    httpd, directory, _ = server
+    comment = seed(server, item_id="design")
+    publish_plan_revision(directory, "design", "<h1>First</h1>")
+    publish_plan_revision(directory, "design", "<h1>Second</h1>")
+    path = directory / "plans/design/meta.json"
+    original = path.read_bytes().replace(b'"current": "v2"', b'"current": "v1"')
+    path.write_bytes(original)
+    key = sync_server._file_key
+    original_key = key(path)
+    monkeypatch.setattr(sync_server, "_file_key", lambda target: original_key if target == path else key(target))
+    assert token(httpd, comment)["predecessor"] == "v1"
+    with path.open("r+b") as source, mmap.mmap(source.fileno(), 0) as mapped:
+        mapped[:] = original.replace(b'"current": "v1"', b'"current": "v2"')
+        evidence = token(httpd, comment)
+    assert evidence["predecessor"] == "v2"
+    vote(httpd, comment, evidence)
+    assert plans(httpd)[0]["current"] == "v3"
 
 
 @pytest.mark.parametrize("path", ["immediate", "round", "single"])
