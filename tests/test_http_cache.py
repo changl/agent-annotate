@@ -128,7 +128,8 @@ def test_abandoned_polls_close_while_slow_client_still_receives(server, monkeypa
         assert slow_socket.fileno() == -1
 
 
-def test_blocked_noop_response_does_not_hold_page_store_lock(server, monkeypatch):
+@pytest.mark.parametrize(("on", "status"), [(False, 200), (True, 409)], ids=["noop", "rejected"])
+def test_blocked_early_response_does_not_hold_page_store_lock(server, monkeypatch, on, status):
     httpd, root, _ = server
     (root / "comments.json").write_text(json.dumps({
         "schema_version": 2, "archived": {}, "anchors": {"s:a": [
@@ -146,13 +147,13 @@ def test_blocked_noop_response_does_not_hold_page_store_lock(server, monkeypatch
             assert release.wait(5)
         return end_headers(self)
 
-    def send_noop():
+    def send_answer_later():
         with connection(server) as conn:
-            return request(conn, path, method="POST", body='{"on": false}')
+            return request(conn, path, method="POST", body=json.dumps({"on": on}))
 
     monkeypatch.setattr(httpd.RequestHandlerClass, "end_headers", pause_write)
     with ThreadPoolExecutor(max_workers=1) as pool:
-        pending = pool.submit(send_noop)
+        pending = pool.submit(send_answer_later)
         try:
             assert started.wait(5)
             with connection(server) as conn:
@@ -160,7 +161,9 @@ def test_blocked_noop_response_does_not_hold_page_store_lock(server, monkeypatch
         finally:
             release.set()
         response, body = pending.result(timeout=5)
-    assert response.status == 200 and json.loads(body)["id"] == "card"
+    assert response.status == status
+    expected = {"error": "only an unanswered question can be answered later"} if on else {"id": "card"}
+    assert expected.items() <= json.loads(body).items()
 
 
 def test_history_disconnect_closes_without_trying_a_500(server, monkeypatch):

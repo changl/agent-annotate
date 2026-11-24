@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Slow responses to unchanged Answer later, decision, and Send requests no longer hold the page-store lock.
+- Slow responses to unchanged or rejected Answer later, decision, and Send requests no longer hold the page-store lock.
 
 ## 2.32.10
 
