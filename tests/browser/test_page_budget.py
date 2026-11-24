@@ -10,10 +10,12 @@ import json
 import urllib.request
 
 import pytest
+from test_fix_ui_shell import MANUAL_REVIEW_POLL, _reissued_card, _stage_review
 from test_keep_drafts import _agent, _directory, _session
 
 from agent_annotate import store as page_storage
 from agent_annotate.categories import publish_plan_revision
+from agent_annotate.review_versions import activate
 
 playwright = pytest.importorskip("playwright.sync_api")
 
@@ -181,6 +183,46 @@ def test_cold_link_restores_draft_when_its_omitted_answer_changed(tmp_path):
         highlighted = linked.locator('#comment-list [data-comment-id="old-0"].hl')
         editor = highlighted.locator('[data-note-edit][data-key="decision"]')
         playwright.expect(editor).to_have_value("Unfinished answer edit")
+
+
+def test_expired_startup_full_read_holds_new_review_version_for_refresh(tmp_path):
+    directory = _directory(tmp_path)
+    _long_history(directory, 2)
+    _stage_review(tmp_path, directory, "v2")
+    path = directory / "comments.json"
+    store = json.loads(path.read_text())
+    store["anchors"]["d:q31"] = [_reissued_card("v2")]
+    path.write_text(json.dumps(store))
+
+    with _session(tmp_path, directory) as (first, base, restart):
+        page = first.context.new_page()
+        page.add_init_script(MANUAL_REVIEW_POLL)
+        page.add_init_script("""localStorage.setItem('annotate:drafts:/:review',
+            JSON.stringify({'say:old-0': 'Saved older draft'}));""")
+
+        def publish_during_full_read(route):
+            with page_storage.transaction(directory):
+                activate(directory, "v2")
+            restart()
+            route.continue_()
+
+        page.route("**/comments.json?view=poll", publish_during_full_read, times=1)
+        with page.expect_response(lambda r: r.url.endswith("comments.json?view=poll")) as loaded:
+            page.goto(base + "#view=review", wait_until="networkidle")
+        full = loaded.value.json()
+        assert full["snapshot_expired"] and full["current_version"] == "v2"
+        assert full["anchors"]["d:q31"][0]["id"] == "reissued-v2"
+
+        frame = page.locator("#content-frame")
+        question = page.locator('#comment-list [data-comment-id="reissued-v2"]')
+        playwright.expect(frame).to_have_attribute("data-version", "v1")
+        assert page.evaluate("window.AnnotateDocs.store().current_version") == "v1"
+        assert page.evaluate("!!window.AnnotateDocs.findComment('old-0')")
+        playwright.expect(question).to_have_count(0)
+        playwright.expect(page.locator("#aa-fresh .aa-fresh-v")).to_have_text("v2")
+        page.locator("#aa-fresh").click()
+        playwright.expect(frame).to_have_attribute("data-version", "v2")
+        playwright.expect(question).to_be_visible()
 
 
 def test_refresh_excludes_questions_withdrawn_during_earlier_load(tmp_path):

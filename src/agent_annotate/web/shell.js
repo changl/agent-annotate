@@ -476,15 +476,18 @@ function adoptLive(id) {
 // The whole store, read once when something needs it (see STORE_VIEW). It
 // joins the page as shown when we can compare the two snapshots.
 let fullStore = null;
-function wantFullStore() {
+function wantFullStore(startup = false) {
   if (!STORE.partial) return Promise.resolve(true);
   if (fullStore) return fullStore;
   STORE_VIEW = 'poll';
   fullStore = pollStore().then(() => {
     if (!LIVE || LIVE.partial) { STORE_VIEW = 'page'; fullStore = null; return false; }
     const held = heldFromPageRead();
-    if (STORE.partial && !held) applyLive();
-    else adoptFull(held);
+    if (held || !STORE.partial) adoptFull(held);
+    else if (startup && STORE.current_version && STORE.current_version !== LIVE.current_version) {
+      // The first frame still opens on the Review version selected from the partial read.
+      adoptFull(new Set());
+    } else applyLive();
     if (VIEW_DOC) withDoc(VIEW_DOC, renderAll);
     document.dispatchEvent(new CustomEvent('annotate:store'));
     if (window.AA) { window.AA.changed(); if (window.AA.rail && window.AA.rail.tab === 'history') window.AA.rail.renderHistory(); }
@@ -5398,7 +5401,7 @@ async function init() {
   // A link to an older card, an older version or text typed on an older card
   // needs the whole store before the first screen.
   const linkId = cardLinkId();
-  if (STORE.partial && ((linkId && !findCommentById(linkId)) || DOCS.some(doc => withDoc(doc, needsFullStore)))) await wantFullStore();
+  if (STORE.partial && ((linkId && !findCommentById(linkId)) || DOCS.some(doc => withDoc(doc, needsFullStore)))) await wantFullStore(true);
   takeCardLink();
   DOCS_LOADED_resolve();
   document.dispatchEvent(new CustomEvent('annotate:store'));
