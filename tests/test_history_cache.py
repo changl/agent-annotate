@@ -2,6 +2,7 @@
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -25,6 +26,42 @@ def test_unchanged_history_reuses_the_encoded_response(server, monkeypatch, enco
     monkeypatch.setattr("agent_annotate.sync_server.gzip.compress", unexpected)
     status, cached, body = request(httpd, "/api/history", headers={**headers, "If-None-Match": response["ETag"]})
     assert status == 304 and body == b"" and cached["ETag"] == response["ETag"]
+
+
+def test_latest_history_skips_document_and_store_work_and_reuses_warm_response(server, monkeypatch):
+    httpd, root, _, _ = server
+    round_ = {"id": "newest", "answers": [{"text": "Sent"}]}
+    (root / "rounds.ndjson").write_text(json.dumps(round_) + "\n")
+    read_bytes = Path.read_bytes
+
+    def read(path):
+        assert path not in (root / "comments.json", root / "current.meta.json")
+        return read_bytes(path)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("latest History must skip per-version availability checks")
+
+    monkeypatch.setattr(Path, "read_bytes", read)
+    monkeypatch.setattr(review_history, "_available", unexpected)
+    calls = []
+    original = review_history.review_history
+
+    def counted(*args, **kwargs):
+        calls.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(review_history, "review_history", counted)
+    route = "/api/history?latest=1"
+    status, headers, body = request(httpd, route)
+    assert status == 200 and json.loads(body) == {"rounds": [round_]}
+    (root / "versions").mkdir()
+    assert request(httpd, route, headers={"If-None-Match": headers["ETag"]})[0] == 304
+    assert len(calls) == 1
+    bus = root / "project/page.ndjson"
+    bus.parent.mkdir()
+    bus.write_text('{"event":"seen_updated"}\n')
+    assert request(httpd, route, headers={"If-None-Match": headers["ETag"]})[0] == 304
+    assert len(calls) == 2
 
 
 @pytest.mark.parametrize("change", ["meta", "store", "rounds", "bus", "archive", "availability"])
