@@ -1,5 +1,12 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Resumed owners come back by themselves after a restart (agent-annotate-dlj). The 2.28.3 re-bind required the same Orca terminal, but Orca relaunches each resumed pane under a new handle, so after the 2026-11-23 reboot no page re-bound and Sends queued until someone typed into the terminal. Re-binding now requires the same session and Orca worktree, and the old owner process must be gone.
+- The revive watchdog (every 60 s, and at login) re-binds from outside: it finds the one live `claude`/`codex` process resumed with the owner's session id, reads its Orca terminal, re-binds, and delivers queued Sends, which start a turn. An owner re-bound with no queued Send gets one wake-up asking it to re-arm its wait loop. Two copies of one session are never bound.
+- The SessionStart hook waits up to 1 s for its payload (was 10 ms), so a slow start after a reboot still passes the session id.
+- `sweep.py owners`: pages used in the last 7 days whose owner is not running, and any Sends waiting, in plain words.
+
 ## 2.32.8
 
 - A picture inside a Markdown table cell renders as a figure (asset copy, size, caption, viewer) like an own-line picture; it used to show its raw `![…](…)` reference and its file never reached `assets/`. A cell picture that can't be shown (missing, URL, wrong type, unreadable, too big) keeps its raw text and the publish warns with the reason, never refuses. FLD's live source has about 30 cell pictures.

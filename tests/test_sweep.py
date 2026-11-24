@@ -25,19 +25,20 @@ def sweep(tmp_path, monkeypatch):
     monkeypatch.delenv("ANNOTATE_OWNERSHIP_MANIFEST", raising=False)
     monkeypatch.setenv("ANNOTATE_SWEEP_DIR", str(tmp_path / "sweeps"))
     monkeypatch.setenv("ANNOTATE_BUS_ROOT", str(tmp_path / "bus"))
+    monkeypatch.setenv("ANNOTATE_STATE_DIR", str(tmp_path / "no-state"))
     return load("sweep")
 
 
 def test_unset_ownership_preserves_baseline_bytes(sweep, monkeypatch, capsys):
     monkeypatch.setattr(sweep.time, "time", lambda: NOW)
-    for name in ("beads", "disk", "sessions"):
+    for name in ("beads", "disk", "sessions", "owners"):
         monkeypatch.setattr(sweep, name, lambda *a, n=name: (f"{n}: baseline", [f"{n} item"]))
     assert sweep.main(["all"]) == 0
-    lines = b"beads: baseline\ndisk: baseline\nsessions: baseline\n"
+    lines = b"beads: baseline\ndisk: baseline\nsessions: baseline\nowners: baseline\n"
     assert capsys.readouterr().out.encode() == lines
     stamp = time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime(NOW)).encode()
     assert (sweep.OUT / "latest.txt").read_bytes() == (
-        b"sweep " + stamp + b"\n" + lines + b"\nbeads item\ndisk item\nsessions item\n")
+        b"sweep " + stamp + b"\n" + lines + b"\nbeads item\ndisk item\nsessions item\nowners item\n")
     assert not (sweep.OUT / "ownership-latest.json").exists()
 
 
@@ -87,6 +88,32 @@ def test_disk_counts_quiet_buses(sweep, tmp_path):
     line, items = sweep.disk(NOW)
     assert line.startswith("disk: ") and line.endswith("· 1 quiet buses over 30 days")
     assert items == ["bus reviews/old quiet 40 days (annotate prune-bus --apply archives it)"]
+
+
+def test_owners_names_recent_pages_whose_owner_stopped(sweep, tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    (state / "deliveries/proj").mkdir(parents=True)
+    pages = {}
+    for slug, hours, alive in (("stopped", 3, False), ("running", 3, True), ("old", 24 * 30, False),
+                               ("restarted-only", 24 * 30, False), ("unclaimed", 1, None)):
+        page = tmp_path / slug
+        page.mkdir()
+        (page / "current.meta.json").write_text(f'{{"name": "Page {slug}"}}')
+        bus = tmp_path / f"{slug}.ndjson"
+        bus.write_text(f'{{"ts": "{stamp(hours)}", "event": "comment_created"}}\n'
+                       + (f'{{"ts": "{stamp(1)}", "event": "page_revived"}}\n' if slug == "restarted-only" else ""))
+        pages[slug] = {"slug_dir": str(page), "bus_file": str(bus)}
+        if alive is not None:
+            pages[slug]["owner_target"] = {"pid": 1 if alive else 999999, "process_start": "start"}
+    (state / "proj.json").write_text(__import__("json").dumps({"project": "proj", "slugs": pages}))
+    (state / "deliveries/proj/stopped.json").write_text('{"deliveries": {"a": {"state": "pending"}}}')
+    monkeypatch.setattr(sweep, "STATE_DIR", state)
+    monkeypatch.setattr(sweep, "owner_running", lambda target: target["pid"] == 1)
+    line, items = sweep.owners(NOW)
+    assert line == "owners: 2 pages used in the last 7 days with no running owner · 1 Send waiting"
+    assert items[0].startswith("page Page stopped (proj/stopped), used 3 h ago: the agent that owns it has stopped")
+    assert "1 Send waiting" in items[0] and "annotate claim stopped" in items[0]
+    assert "Page unclaimed (proj/unclaimed)" in items[1] and "no agent has claimed it" in items[1]
 
 
 def test_bead_ids_from_branch_and_path():
@@ -145,13 +172,14 @@ def test_main_writes_latest_and_run_summary_shows_it(sweep, tmp_path, monkeypatc
     monkeypatch.setattr(sweep, "beads", lambda d, now: ("beads: 1 open · 0 ready · 0 in progress over 24 h · 0 closed without proof", ["bead x"]))
     monkeypatch.setattr(sweep, "sessions", lambda apply: ("sessions: 0 finished worktrees (PR merged, bead closed, clean tree) · 0 removed", []))
     assert sweep.main(["all"]) == 0
-    assert len(capsys.readouterr().out.splitlines()) == 3
+    assert len(capsys.readouterr().out.splitlines()) == 4
     latest = tmp_path / "sweeps/latest.txt"
     run_summary = load("run_summary")
     shown = run_summary.summary_lines(latest)
-    assert shown[0].startswith("sweep ") and shown[1].startswith("beads: ") and len(shown) == 4
+    assert shown[0].startswith("sweep ") and shown[1].startswith("beads: ") and len(shown) == 5
+    assert shown[4] == "owners: 0 pages used in the last 7 days with no running owner · 0 Sends waiting"
     lines = run_summary.render("run_t", {}, None, [], [], now=0, extra=[shown])
-    assert lines[-3].startswith("beads: ") and "bead x" not in "\n".join(lines)
+    assert lines[-4].startswith("beads: ") and "bead x" not in "\n".join(lines)
 
 
 def test_plist_is_hourly_report_only():

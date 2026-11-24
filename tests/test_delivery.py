@@ -137,7 +137,8 @@ def test_resumed_session_refreshes_all_owned_pages_and_delivers_once(estate, mon
     from agent_annotate.hooks import check_comment_bus, session_start
 
     old = {**_target(), "agent": agent}
-    new = {**old, "pid": 4343, "process_start": "new start"}
+    # Orca relaunches a resumed pane under a new handle (agent-annotate-dlj).
+    new = {**old, "pid": 4343, "process_start": "new start", "handle": "terminal-after-restart"}
     record = {**estate["record"], "owner_target": old, "owner_agent": agent,
               "owner_label": "Owner", "owner_claimed_at": "original claim"}
     estate["terminal"]["agentIdentity"] = agent
@@ -185,14 +186,85 @@ def test_resumed_session_refreshes_all_owned_pages_and_delivers_once(estate, mon
     assert not (estate["state_dir"] / "bus-offsets").exists()
 
 
-@pytest.mark.parametrize("case", ["different-session", "live", "different-terminal", "unverifiable", "no-target"])
+def _resumed_elsewhere(estate, monkeypatch, copies=1):
+    """The old owner is gone; Orca relaunched `claude --resume <session>` as pid 4343 in a new pane."""
+    old = {**_target(), "agent": "claude"}
+    record = {**estate["record"], "owner_target": old, "owner_agent": "claude"}
+    estate["record"].update(record)
+    estate["terminal"]["agentIdentity"] = "claude"
+    _write_registry(estate, record)
+
+    def kill(pid, signal):
+        if pid == old["pid"]:
+            raise ProcessLookupError()
+    claude = f"/Users/x/.npm-global/bin/claude --effort high --resume {_OWNER}\n"
+    commands = {str(4343 + i): claude for i in range(copies)} | {"5555": f"pgrep -fl -- --resume {_OWNER}\n"}
+
+    def run(argv, **kwargs):
+        if argv[:2] == ["pgrep", "-f"]:
+            out = "\n".join(commands) + "\n"
+        elif argv[:3] == ["ps", "-ww", "-p"]:
+            out = commands[argv[3]]
+        elif argv[:2] == ["ps", "eww"]:
+            out = f"/Users/x/claude --resume {_OWNER} ORCA_TERMINAL_HANDLE=term_after-restart HOME=/x\n"
+        else:
+            raise AssertionError(argv)
+        return subprocess.CompletedProcess(argv, 0, out, "")
+    monkeypatch.setattr(delivery.os, "kill", kill)
+    monkeypatch.setattr(delivery.subprocess, "run", run)
+    monkeypatch.setattr(delivery, "_process", lambda pid: ("new start", "/Users/x/.npm-global/bin/claude"))
+    return old, record
+
+
+def _sends(estate):
+    return [call for call in estate["calls"] if call[:2] == ("terminal", "send")]
+
+
+@pytest.mark.parametrize("queued", [True, False])
+def test_watchdog_rebinds_an_idle_resumed_owner_and_gives_it_one_turn(estate, monkeypatch, queued):
+    old, record = _resumed_elsewhere(estate, monkeypatch)
+    if queued:
+        _append(estate, _round(owner_target=old))
+        assert _dispatch(estate)["deliveries"][0]["state"] == "pending"
+    delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record}, via="watchdog")
+    saved = cli._load_state_for_project(_PROJECT)["slugs"][_SLUG]["owner_target"]
+    assert (saved["handle"], saved["pid"], saved["worktree"]) == ("term_after-restart", 4343, old["worktree"])
+    woken = delivery.wake_resumed()
+    sends = _sends(estate)
+    assert len(sends) == 1 and sends[0][3] == "term_after-restart"
+    if queued:  # the queued Send itself is the turn; no second prompt
+        assert "Round submitted" in sends[0][5] and woken[0]["state"] == "skipped"
+    else:
+        assert "resumed after a restart" in sends[0][5] and woken[0]["state"] == "sent"
+    assert delivery.wake_resumed() == [] and len(_sends(estate)) == 1
+
+
+def test_watchdog_never_rebinds_two_copies_of_one_session(estate, monkeypatch):
+    _old, record = _resumed_elsewhere(estate, monkeypatch, copies=2)
+    before = (estate["state_dir"] / f"{_PROJECT}.json").read_bytes()
+    delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record}, via="watchdog")
+    assert (estate["state_dir"] / f"{_PROJECT}.json").read_bytes() == before
+    assert delivery.wake_resumed() == [] and estate["calls"] == []
+
+
+def test_prompt_hook_rebind_needs_no_wake_up(estate, monkeypatch):
+    _old, record = _resumed_elsewhere(estate, monkeypatch)
+    new = delivery.resumed_target(_OWNER, "claude")
+    monkeypatch.setattr(delivery, "capture_target", lambda session, agent: new)
+    delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record})
+    assert cli._load_state_for_project(_PROJECT)["slugs"][_SLUG]["owner_target"] == new
+    assert delivery.wake_resumed() == [] and _sends(estate) == []
+
+
+@pytest.mark.parametrize("case", ["different-session", "live", "different-worktree", "unverifiable", "no-target"])
 def test_session_resume_preserves_other_or_live_owners(estate, monkeypatch, case):
     old = _target()
     record = {**estate["record"], "owner_target": None if case == "no-target" else old, "owner_agent": "codex"}
     _write_registry(estate, record)
     before = (estate["state_dir"] / f"{_PROJECT}.json").read_bytes()
     monkeypatch.setattr(delivery, "_target_exited", lambda target: case != "live")
-    new = {**old, "pid": 4343, "handle": "other" if case == "different-terminal" else old["handle"]}
+    new = {**old, "pid": 4343, "handle": "other",
+           "worktree": "elsewhere" if case == "different-worktree" else old["worktree"]}
     monkeypatch.setattr(delivery, "capture_target", lambda *args: None if case in ("unverifiable", "no-target") else new)
     delivery.refresh_session_owners("other-session" if case == "different-session" else _OWNER,
                                     {(_PROJECT, _SLUG): record})
