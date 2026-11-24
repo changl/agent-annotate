@@ -68,6 +68,8 @@ def test_latest_history_skips_document_and_store_work_and_reuses_warm_response(s
 @pytest.fixture
 def sqlite_history(server):
     httpd, root, _, _ = server
+    if any(root.glob("page.db*")):
+        pytest.skip("the SQLite rerun already imported this page; the plain run imports it with its bus")
     bus = root / "project/page.ndjson"
     bus.parent.mkdir()
     bus.write_text('{"event":"seen_updated"}\n')
