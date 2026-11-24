@@ -5,6 +5,7 @@ review page does not show. Settled feedback from older versions loads when the
 reviewer opens it (test_page_store); a Send carries only this round.
 """
 
+import gzip
 import json
 import urllib.request
 
@@ -65,6 +66,25 @@ def test_first_load_and_send_stay_under_a_tenth_of_the_store(tmp_path):
         assert not any("view=poll" in url for url, _ in send), send
         assert sum(size for _, size in send) * 10 < full, send
         assert posts and sum(posts) < 4096, posts
+
+
+def test_store_snapshot_metadata_does_not_scale_with_old_cards(tmp_path):
+    directory = _directory(tmp_path)
+    _long_history(directory)
+    with _session(tmp_path, directory) as (_, base, _):
+        for view in ("page", "poll"):
+            request = urllib.request.Request(base + "comments.json?view=" + view, headers={"Accept-Encoding": "gzip"})
+            with urllib.request.urlopen(request) as response:
+                wire = response.read()
+            body = gzip.decompress(wire)
+            baseline = json.loads(body)
+            for field in ("store_mark", "item_stamps", "omitted_stamps"):
+                baseline.pop(field, None)
+            plain = json.dumps(baseline, ensure_ascii=False, separators=(",", ":")).encode()
+            baseline_wire = gzip.compress(plain, compresslevel=6, mtime=0)
+            # A single fixed-size mark also has to fit this tiny projected fixture.
+            assert len(body) - len(plain) <= max(64, len(plain) * 0.02)
+            assert len(wire) - len(baseline_wire) <= max(64, len(baseline_wire) * 0.02)
 
 
 def test_opening_earlier_feedback_keeps_new_questions_behind_refresh(tmp_path):
@@ -140,6 +160,61 @@ def test_opening_earlier_feedback_holds_an_answer_edited_in_another_tab_for_refr
         page.reload(wait_until="networkidle")
         linked = page.locator(old_selector + ".hl")
         playwright.expect(linked.locator('[data-note-edit][data-key="decision"]')).to_have_value("Unfinished answer edit")
+
+
+def test_cold_link_restores_draft_when_its_omitted_answer_changed(tmp_path):
+    directory = _directory(tmp_path)
+    _long_history(directory, 2)
+    with _session(tmp_path, directory) as (page, base, _):
+        partial = page.request.get(base + "comments.json?view=page").json()
+        assert all(c["id"] != "old-0" for items in partial["anchors"].values() for c in items)
+        changed = page.request.post(base + "api/comments/old-0/decision", data={
+            "verdict": "accept", "text": "Edited answer note",
+        })
+        assert changed.ok, changed.text()
+        page.evaluate("""localStorage.setItem('annotate:drafts:' + location.pathname + ':review',
+                         JSON.stringify({'note:old-0|decision': 'Unfinished answer edit'}))""")
+        linked = page.context.new_page()
+        linked.route("**/comments.json?view=page", lambda route: route.fulfill(json=partial), times=1)
+        linked.goto(base + "#view=review&feedback=old-0", wait_until="networkidle")
+        highlighted = linked.locator('#comment-list [data-comment-id="old-0"].hl')
+        editor = highlighted.locator('[data-note-edit][data-key="decision"]')
+        playwright.expect(editor).to_have_value("Unfinished answer edit")
+
+
+def test_refresh_excludes_questions_withdrawn_during_earlier_load(tmp_path):
+    directory = _directory(tmp_path)
+    _long_history(directory, 2)
+
+    def question(cid):
+        return {
+            "id": cid, "anchor_id": "s:checks", "version": "v1", "author": "agent:late",
+            "status": "open", "text": cid, "replies": [],
+            "decision_request": {"prompt": cid, "options": [{"id": "yes", "label": "Yes"}]},
+        }
+
+    with _session(tmp_path, directory) as (page, base, _):
+        def update(route):
+            path = directory / "comments.json"
+            store = json.loads(path.read_text())
+            store["anchors"].setdefault("s:checks", []).extend([
+                question("superseded-question"), question("replacement-question"),
+            ])
+            path.write_text(json.dumps(store))
+            _agent(base, "api/comments/superseded-question", {
+                "decision_request": None, "withdraw_reason": "Superseded by a later question",
+            }, method="PUT")
+            route.continue_()
+
+        page.route("**/comments.json?view=poll", update, times=1)
+        rail = page.locator("#comment-list")
+        rail.locator('[data-section-toggle="earlier"]').click()
+        playwright.expect(rail.locator('[data-comment-id="old-0"]')).to_be_visible()
+        fresh = page.locator("#aa-fresh")
+        playwright.expect(fresh.locator(".aa-fresh-n")).to_have_text("1")
+        fresh.click()
+        playwright.expect(rail.locator('[data-comment-id="replacement-question"]')).to_be_visible()
+        playwright.expect(rail.locator('[data-comment-id="superseded-question"]')).to_have_count(0)
 
 
 def test_opening_earlier_feedback_keeps_plan_history_after_a_new_revision(tmp_path):
