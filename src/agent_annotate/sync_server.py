@@ -105,7 +105,7 @@ import tomllib
 import urllib.error
 import urllib.parse
 import uuid
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -1444,7 +1444,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                       extra_headers={"Location": url + "#" + tab_fragment(moved, parsed.query)})
         return True
 
-    def _refuse_moved_write(self, route_path: str) -> bool:
+    def _refuse_moved_write(self, route_path: str, *, respond=None) -> bool:
         # A reviewer session only issues a cookie, which the read-only view needs.
         if route_path == "/api/reviewer/session":
             return False
@@ -1455,7 +1455,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         body = {"error": ("this page is archived; it is read-only" if moved.get("archived") else
                           f"this page moved to {target.get('project')}/{target.get('slug')}; it is read-only"),
                 "moved_to": self._moved_to(moved)}
-        self._respond(410, json.dumps(body).encode(), "application/json", cache_control="no-store")
+        (respond or self._respond)(410, json.dumps(body).encode(), cache_control="no-store")
         return True
 
     # ── GET ──────────────────────────────────────────────────────────
@@ -1820,6 +1820,21 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         type(self)._store_snapshot = (self._store_signature(), store)
         type(self)._store_responses.clear()
 
+    @contextmanager
+    def _store_response(self):
+        """Prepare one early response and write it only after the store transaction exits successfully."""
+        response = None
+
+        def defer(*args, **kwargs):
+            nonlocal response
+            response = args, kwargs
+
+        with _locked_store(self.artifact_dir):
+            yield defer
+        if response is not None:
+            args, kwargs = response
+            self._respond(*args, **kwargs)
+
     def _v2_get_store(self, parsed=None):
         view = (urllib.parse.parse_qs(parsed.query).get("view") or [None])[0] if parsed else None
         poll = view in ("poll", "page")
@@ -1944,7 +1959,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _v2_history_representation(self, parsed):
         from .paths import BUS_ARCHIVE_ROOT
-        from .review_history import history_buses, latest_round, review_history
+        from .review_history import history_buses, review_history
+        from .store import backend
 
         bus = self.bus_dir / f"{self.slug}.ndjson" if self.bus_dir else None
         compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
@@ -1952,8 +1968,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
         def disk_signature():
             paths = [self._store_path(), self._meta_path(), self.artifact_dir / "rounds.ndjson",
-                     self.artifact_dir / "versions", self.artifact_dir / "content",
                      *history_buses(bus, BUS_ARCHIVE_ROOT)]
+            if not latest:
+                paths.extend(self.artifact_dir / kind for kind in ("versions", "content"))
             signature = []
             for path in paths:
                 try:
@@ -1962,9 +1979,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                       stat.st_mtime_ns, stat.st_ctime_ns))
                 except FileNotFoundError:
                     signature.append((str(path),))
-            return signature
+            # SQLite indexes the bus. The read transaction can update its WAL even when History inputs are unchanged.
+            return (backend(self.artifact_dir) if bus is not None else None, signature)
 
-        cache = type(self)._history_responses
+        responses = type(self)._history_responses
+        cache = responses.get(latest, {})
         for _ in range(3):
             # Check even cache hits under the transaction lock, so a
             # reader waiting on a writer cannot return its old revision.
@@ -1972,12 +1991,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 signature = disk_signature()
                 if cache.get("signature") == signature:
                     break
-                meta_bytes = self._meta_path().read_bytes()
-                store_bytes = self._store_path().read_bytes() if self._store_path().exists() else b"{}"
+                meta_bytes = store_bytes = None
+                if not latest:
+                    meta_bytes = self._meta_path().read_bytes()
+                    store_bytes = self._store_path().read_bytes() if self._store_path().exists() else b"{}"
             try:
                 history = review_history(self.artifact_dir, bus, BUS_ARCHIVE_ROOT,
                                          meta_bytes=meta_bytes, store_bytes=store_bytes,
-                                         bus_cache=type(self)._history_bus_cache)
+                                         bus_cache=type(self)._history_bus_cache, latest=latest)
             except (OSError, ValueError):
                 with _locked_store(self.artifact_dir, write=False):
                     if disk_signature() != signature:
@@ -1988,19 +2009,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             with _locked_store(self.artifact_dir, write=False):
                 if disk_signature() != signature:
                     continue
-            body = json.dumps(history, ensure_ascii=False).encode()
-            cache.clear()
-            cache.update(signature=signature, body=body,
-                         latest=json.dumps(latest_round(history), ensure_ascii=False).encode())
+            cache = responses[latest] = {"signature": signature, "body": json.dumps(history, ensure_ascii=False).encode()}
             break
         else:
             return None
-        key = (latest, compressed)
-        if key not in cache:
-            body = cache["latest" if latest else "body"]
+        if compressed not in cache:
+            body = cache["body"]
             packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
-            cache[key] = (packed, True) if len(packed) < len(body) else (body, False)
-        return cache[key]
+            cache[compressed] = (packed, True) if len(packed) < len(body) else (body, False)
+        return cache[compressed]
 
     def _v2_get_comments(self, parsed):
         params = urllib.parse.parse_qs(parsed.query)
@@ -3163,17 +3180,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if not isinstance(payload, dict) or not isinstance(payload.get("on"), bool):
             return self._respond(400, b'{"error":"expected {\"on\": true|false}"}')
         author = self._author(parsed)
-        with _locked_store(self.artifact_dir):
+        with self._store_response() as defer:
             store = self._v2_load()
             c = next((c for items in store["anchors"].values() for c in items if c.get("id") == comment_id), None)
             if c is None:
-                return self._respond(404, b'{"error":"not found"}')
+                return defer(404, b'{"error":"not found"}')
             if payload["on"]:
                 if not _is_set_aside({**c, "answer_later": True}) or c.get("status") in ("archived", "addressed_by_agent", "resolved_in_version"):
-                    return self._respond(409, b'{"error":"only an unanswered question can be answered later"}')
+                    return defer(409, b'{"error":"only an unanswered question can be answered later"}')
                 c["answer_later"] = {"ts": _now_iso(), "by": author}
             elif not c.get("answer_later"):
-                return self._respond(200, json.dumps(c, ensure_ascii=False).encode(), "application/json")
+                return defer(200, json.dumps(c, ensure_ascii=False).encode())
             else:
                 c["answer_later"] = False  # brought back on purpose: a later re-ask must not restore an older mark
             self._v2_save(store)
@@ -3556,7 +3573,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         identity = self._identity()
         author = identity["email"] or "anonymous"
 
-        with _locked_store(self.artifact_dir):
+        with self._store_response() as defer:
             store = self._v2_load()
             found = None
             for anchor_id, items in store.get("anchors", {}).items():
@@ -3567,8 +3584,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 if found:
                     break
             if not found:
-                self._respond(404, b'{"error":"not found"}')
-                return
+                return defer(404, b'{"error":"not found"}')
             anchor_id, c = found
             now = _now_iso()
             old_status = c.get("status")
@@ -3577,7 +3593,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             prior_decision = c.get("decision")
             if (isinstance(prior_decision, dict) and prior_decision.get("round_pending")
                     and prior_decision.get("by") not in self._reviewer_authors(author)):
-                return self._respond(403, b'{"error":"another reviewer owns the pending answer"}')
+                return defer(403, b'{"error":"another reviewer owns the pending answer"}')
             from .approval_catalog import bind_evidence, persist_evidence, promote
             evidence = bind_evidence(self.artifact_dir, store, c, payload.get("evidence"))
             prior_evidence = (prior_decision or {}).get("evidence") or {}
@@ -3590,8 +3606,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     and prior_evidence.get("view_revision") == incoming_revision
                     and prior_evidence.get("request") == evidence.get("request")
                     and prior_evidence.get("version") == evidence.get("version")):
-                return self._respond(200, json.dumps({**c, "delivery": "noop", "delivery_id": None,
-                    "monitor_count": 0, "monitor_owner": None}).encode(), "application/json")
+                return defer(200, json.dumps({**c, "delivery": "noop", "delivery_id": None,
+                    "monitor_count": 0, "monitor_owner": None}).encode())
             is_revision = prior_decision is not None
             if is_revision:
                 c.setdefault("decision_history", []).append(prior_decision)
@@ -3719,8 +3735,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         note = str(payload.get("note") or "").strip() or None
         author = self._author(parsed)
         reviewer_authors = self._reviewer_authors(author)
-        with _locked_store(self.artifact_dir):
-            if self._refuse_moved_write("/api/rounds/submit"):  # see push-session
+        with self._store_response() as defer:
+            if self._refuse_moved_write("/api/rounds/submit", respond=defer):  # see push-session
                 return
             store = self._v2_load()
             now = _now_iso()
@@ -3820,17 +3836,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if not comment_ids and not edits and not note:
                 if cleared_archived:
                     self._v2_save(store)
-                self._respond(200, json.dumps({"ok": True, "delivery": "noop", "comment_count": 0,
+                return defer(200, json.dumps({"ok": True, "delivery": "noop", "comment_count": 0,
                                               "comment_ids": [], "verdict_counts": verdict_counts,
                                               "undecided_count": len(undecided_ids),
                                               "edits": [], "edit_count": 0,
-                                              "undecided_ids": undecided_ids, **skipped}).encode(), "application/json")
-                return
+                                              "undecided_ids": undecided_ids, **skipped}).encode())
             owner = self._read_meta().get("owner") or {}
             version = payload.get("version") or self._read_meta().get("current")
             if version and (not isinstance(version, str) or not _VERSION_ID.fullmatch(version)
                             or version not in {h.get("version") for h in self._read_meta().get("history", [])}):
-                return self._respond(400, b'{"error":"unknown review version"}')
+                return defer(400, b'{"error":"unknown review version"}')
             fingerprint = {"answers": [(c["id"], c["decision"]) for c in pending],
                            "edits": edits, "reopens": [(c["id"], c["reopened"][-1]) for c in reopens],
                            "pushed": [{k: v for k, v in c.items() if k not in ("flagged_at", "flagged_by", "flagged_for_session")}

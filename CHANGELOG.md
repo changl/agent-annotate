@@ -1,5 +1,10 @@
 # agent-annotate — changelog
 
+## 2.32.11
+
+- Slow responses to unchanged or rejected Answer later, decision, and Send requests no longer hold the page-store lock.
+- `api/history?latest=1`, which every page open calls, builds only the last Send instead of the whole History. It was the slowest request on the 2026-11-24 all-page check (FLD 4.3 s cold). On a copy of the FLD page under heavy load: cold 15.6 s → 2.7 s, server CPU 976 ms → 107 ms, same response bytes. Its cache follows the store backend and source files, so archiving a SQLite page's bus or a read-state write during the read no longer matters.
+
 ## 2.32.10
 
 - A slow or abandoned download no longer holds up the page's other requests: the server releases the page-store lock before it writes a response, and closes cancelled connections quietly instead of answering them with a second, failing 500. A slow client used to keep every other reader of that page waiting; under load on 2026-11-24 the Rebex server logged about 380 dropped connections.

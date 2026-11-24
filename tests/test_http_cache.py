@@ -3,9 +3,11 @@
 import gzip
 import hashlib
 import http.client
+import json
 import socket
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from queue import Queue
 
@@ -124,6 +126,44 @@ def test_abandoned_polls_close_while_slow_client_still_receives(server, monkeypa
         slow.close()
         slow_thread.join(timeout=5)
         assert slow_socket.fileno() == -1
+
+
+@pytest.mark.parametrize(("on", "status"), [(False, 200), (True, 409)], ids=["noop", "rejected"])
+def test_blocked_early_response_does_not_hold_page_store_lock(server, monkeypatch, on, status):
+    httpd, root, _ = server
+    (root / "comments.json").write_text(json.dumps({
+        "schema_version": 2, "archived": {}, "anchors": {"s:a": [
+            {"id": "card", "anchor_id": "s:a", "version": "v1", "status": "open", "text": "Review", "replies": []},
+        ]},
+    }))
+    (root / ".comments.json.lock").touch()
+    path = "/review/api/comments/card/answer-later"
+    started, release = threading.Event(), threading.Event()
+    end_headers = httpd.RequestHandlerClass.end_headers
+
+    def pause_write(self):
+        if self.path == path:
+            started.set()
+            assert release.wait(5)
+        return end_headers(self)
+
+    def send_answer_later():
+        with connection(server) as conn:
+            return request(conn, path, method="POST", body=json.dumps({"on": on}))
+
+    monkeypatch.setattr(httpd.RequestHandlerClass, "end_headers", pause_write)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(send_answer_later)
+        try:
+            assert started.wait(5)
+            with connection(server) as conn:
+                assert request(conn, "/review/current.meta.json")[0].status == 200
+        finally:
+            release.set()
+        response, body = pending.result(timeout=5)
+    assert response.status == status
+    expected = {"error": "only an unanswered question can be answered later"} if on else {"id": "card"}
+    assert expected.items() <= json.loads(body).items()
 
 
 def test_history_disconnect_closes_without_trying_a_500(server, monkeypatch):
