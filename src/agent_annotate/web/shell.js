@@ -56,6 +56,7 @@ function docOf(c) {
 
 let STORE = { schema_version: 2, anchors: {}, archived: {} };
 let META = { current: null, history: [], content_stamps: {} };
+let reviewSnapshotVersion = null;
 let SEEN = {}; // { version: {ts, whole_hash} }
 let READ = {}; // { commentId: {ts, sig} } — this viewer's per-comment read state
 let NUM_MAP = {}; // { commentId: n } — canonical item number shared by rail, body and pin
@@ -1641,6 +1642,7 @@ function switchVersion(v) {
   if (!v || v === CURRENT_VERSION) return;
   applyLive(); // picking a version shows everything the polls brought
   CURRENT_VERSION = v;
+  if (DOC === 'review') reviewSnapshotVersion = projectedVersion();
   loadIframe(v);
   // final/: the version is part of the page's hash (#view=plans&v=v5), since
   // one URL holds several documents.
@@ -1883,6 +1885,14 @@ function sayDraft(c) {
 }
 function replyDraft(c) {
   return (DRAFTS[c.id] || '').trim();
+}
+// Reissued questions keep their number. Follow the draft forward within this document.
+function feedbackTarget(c) {
+  const current = projectedVersion();
+  const source = versionIndex(c.version);
+  if (!c.number || source < 0 || versionIndex(current) <= source) return c;
+  return flattenAll(false).find(next => next.number === c.number &&
+    next.version === current && !next.withdrawn && next.status !== 'archived') || c;
 }
 // Clear a card's comment draft everywhere it is shown (rail, summary, body
 // strip), so a re-render cannot read the old text back out of a box.
@@ -4523,12 +4533,13 @@ async function prepareDocCore() {
   let ok = true;
   const failed = [];
   for (const c of flattenAll(false).filter(c => hasSayDraft(c) || strandedSay(c))) {
-    const r = isUnresolvedDecision(c)
-      ? await apiDecision(c.id, 'comment', sayDraft(c)) : await apiReply(c.id, sayDraft(c));
+    const target = feedbackTarget(c);
+    const r = isUnresolvedDecision(target)
+      ? await apiDecision(target.id, 'comment', sayDraft(c)) : await apiReply(target.id, sayDraft(c));
     if (r) { clearSayDraft(c.id); delete decisionChanging[c.id]; } else { ok = false; failed.push(c.id); }
   }
   for (const c of flattenAll(false).filter(replyDraft)) {
-    if (await apiReply(c.id, replyDraft(c))) {
+    if (await apiReply(feedbackTarget(c).id, replyDraft(c))) {
       setDraft(c.id, '');
       document.querySelectorAll('[data-reply-for="' + cssEsc(c.id) + '"]').forEach(ta => { ta.value = ''; });
     } else { ok = false; failed.push(c.id); }
@@ -4567,8 +4578,8 @@ function pageRoundPending() {
 async function submitPage(alsoPending, receipt) {
   let sentCount = 0, delivered = false, last = null;
   const lines = Array.isArray(receipt) ? receipt : [];
-  const reviewVersion = VIEW_DOC === 'review' || lines.some(it => it.cat === 'review')
-    ? withDoc('review', () => CURRENT_VERSION) : null;
+  // Sending from a known historical version is intentional. Only pause for an unseen publication.
+  const seenPublish = VIEW_DOC === 'review' || lines.some(it => it.cat === 'review') ? reviewSnapshotVersion : null;
   const shownDrafts = withIdIndex(() => lines.flatMap(it => {
     if (!it.id || !DOCS.includes(it.cat)) return [];
     const keys = withDoc(it.cat, () => {
@@ -4580,7 +4591,7 @@ async function submitPage(alsoPending, receipt) {
     return keys.length ? [{ it, keys }] : [];
   }));
   if (!await pollStore()) return null;
-  if (reviewVersion && LIVE.current_version && LIVE.current_version !== reviewVersion) {
+  if (seenPublish && LIVE.current_version && LIVE.current_version !== seenPublish) {
     if (VIEW_DOC === 'review') withDoc('review', renderVersionBanner);
     return { refreshRequired: true };
   }
@@ -5112,6 +5123,7 @@ function projectedVersion() {
 async function loadDocState(doc) {
   return withDocAsync(doc, async () => {
     await loadMeta();
+    if (doc === 'review') reviewSnapshotVersion = projectedVersion();
     const want = window.AA ? window.AA.versionFor(doc) : null;
     if (!CURRENT_VERSION) CURRENT_VERSION = (want && (META.history || []).some(h => h.version === want)) ? want : projectedVersion();
     await loadSeen();
@@ -5145,8 +5157,12 @@ async function activateDoc(doc, version, switching) {
   if (!CURRENT_VERSION) {
     await loadMeta();
     CURRENT_VERSION = projectedVersion();
+    if (doc === 'review') reviewSnapshotVersion = CURRENT_VERSION;
   }
-  if (version && version !== CURRENT_VERSION && (META.history || []).some(h => h.version === version)) CURRENT_VERSION = version;
+  if (version && version !== CURRENT_VERSION && (META.history || []).some(h => h.version === version)) {
+    CURRENT_VERSION = version;
+    if (doc === 'review') reviewSnapshotVersion = projectedVersion();
+  }
   const frame = document.getElementById('content-frame');
   if (frame.dataset.doc !== doc || frame.dataset.version !== CURRENT_VERSION || frame.dataset.plan !== String(PLAN_ID)) {
     frameReady = { doc: null, version: null };
