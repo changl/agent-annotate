@@ -1,7 +1,8 @@
 # agent-annotate — changelog
 
-## Unreleased
+## 2.32.10
 
+- Pages open on the latest version's feedback. The first store read leaves out settled Review and plan feedback from older versions and sends counts in its place, so sections, badges and the unanswered warning read the same. The rest loads when the reviewer opens Earlier feedback, Not in this Send, History or an older version, follows a link to it, or has text typed on it. First read: FLD 16.2 MB → 298 KB, Rebex 2.9 MB → 196 KB; a FLD Send's traffic 49 MB → 742 KB (agent-annotate-uzd, part 1).
 - A page restart waits up to 10 s (was 1 s) for the running server to identify itself. Under heavy load on 2026-11-24 live servers took 1-17 s, so the 2.32.9 rollout refused a page as "unknown occupant" and rolled back.
 - `scripts/rollout.py`: the rollback restores the skills backup with tar's `tar` filter instead of `data`. The annotate skill's `state` is an absolute symlink, which `data` refuses, so the 2.32.9 rollback crashed after reinstalling the old wheel and left skills on the new version (agent-annotate-7os).
 
