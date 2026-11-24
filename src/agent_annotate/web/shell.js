@@ -393,10 +393,15 @@ async function pollJson(url, quiet) {
 // Polls read LIVE only (Chang, 2026-11-01: nothing changes under the reviewer).
 let LIVE = null;
 let storeAsked = 0, storeTaken = 0;
+// uzd: the page first reads `view=page`, what the latest version shows and a
+// Send needs (FLD: 140 of 9,178 comments). Earlier feedback, Not in this
+// Send, History, an older version or text typed on an old card read the
+// whole store (`view=poll`) once, and the page keeps it from then on.
+let STORE_VIEW = 'page';
 async function pollStore() {
   const asked = ++storeAsked;
   try {
-    const got = await pollJson('./comments.json?view=poll');
+    const got = await pollJson('./comments.json?view=' + STORE_VIEW);
     if (!got.ok) return false;
     // The 8 s poll and a read after Save can overlap; an older read that
     // answers last would put the card back as it was before the save.
@@ -447,6 +452,72 @@ function adoptLive(id) {
   }
   for (const apply of pendingEdits.values()) apply();
   computeNumbers();
+}
+// The whole store, read once when something needs it (see STORE_VIEW). It
+// joins the page as shown: cards on screen stay as they are, and cards that
+// came after the last refresh stay waiting behind the banner.
+let fullStore = null;
+function wantFullStore() {
+  if (!STORE.partial) return Promise.resolve(true);
+  if (fullStore) return fullStore;
+  STORE_VIEW = 'poll';
+  const before = LIVE;
+  fullStore = pollStore().then(ok => {
+    if (!ok || !LIVE || LIVE.partial) { STORE_VIEW = 'page'; fullStore = null; return false; }
+    adoptFull(before);
+    if (VIEW_DOC) withDoc(VIEW_DOC, renderAll);
+    document.dispatchEvent(new CustomEvent('annotate:store'));
+    if (window.AA) { window.AA.changed(); if (window.AA.rail && window.AA.rail.tab === 'history') window.AA.rail.renderHistory(); }
+    if (isRoundConfirmOpen()) renderSummary();
+    return true;
+  });
+  return fullStore;
+}
+function adoptFull(before) {
+  const where = new Map();
+  for (const area of ['anchors', 'archived']) {
+    for (const [aid, items] of Object.entries(STORE[area] || {})) for (const c of items) where.set(c.id, { area, aid, c });
+  }
+  const waitingNew = new Set();
+  if (before && before !== STORE) {
+    for (const area of ['anchors', 'archived']) {
+      for (const items of Object.values(before[area] || {})) for (const c of items) if (!where.has(c.id)) waitingNew.add(c.id);
+    }
+  }
+  const out = Object.assign({}, LIVE, { anchors: {}, archived: {} });
+  const placed = new Set();
+  for (const area of ['anchors', 'archived']) {
+    for (const [aid, items] of Object.entries(LIVE[area] || {})) {
+      const list = [];
+      for (const c of Array.isArray(items) ? items : []) {
+        const shown = where.get(c.id);
+        if (waitingNew.has(c.id) || (shown && (shown.area !== area || shown.aid !== aid))) continue;
+        list.push(shown ? shown.c : c);
+        if (shown) placed.add(c.id);
+      }
+      if (list.length) out[area][aid] = list;
+    }
+  }
+  for (const { area, aid, c } of where.values()) if (!placed.has(c.id)) (out[area][aid] = out[area][aid] || []).push(c);
+  waiting = null;
+  STORE = out;
+  for (const apply of pendingEdits.values()) apply();
+  computeNumbers();
+}
+// view=page leaves settled Review feedback from older versions out; these
+// count it for the headers that list it (Earlier feedback, Not in this Send).
+function omitted() {
+  return STORE.partial && DOC === 'review' && STORE.omitted ? STORE.omitted : { earlier: 0, rest: 0, rest_missing: 0 };
+}
+// What the reviewer is looking at needs comments view=page left out.
+function needsFullStore() {
+  if (!STORE.partial) return false;
+  if (DOC === 'review' && CURRENT_VERSION && CURRENT_VERSION !== latestVersion()) return true;
+  const known = new Set(flattenStore(true).map(c => c.id));
+  // Text typed on a card stays with it, however old the card is.
+  const cardOf = k => /^(say|edit):/.test(k) ? k.slice(k.indexOf(':') + 1) : k.startsWith('note:') ? k.slice(5).split('|')[0]
+    : k === 'gf' || k === 'pop' || k.startsWith('sending:') ? '' : k;
+  return Object.keys(DRAFTS).some(k => DRAFTS[k] && cardOf(k) && !known.has(cardOf(k)));
 }
 // What the banner says is waiting in LIVE for the document on screen
 // (worked out once per store read: it writes out every comment).
@@ -505,6 +576,12 @@ function computeNumbers() {
         }
       }
     }
+  }
+  // view=page: the labels the whole store gives (a reissued #12 reads 12·2), and no reuse of a left-out number.
+  if (STORE.partial && STORE.numbers) {
+    Object.assign(NUM_MAP, STORE.numbers);
+    for (const n of Object.values(STORE.numbers)) used.add(parseInt(n, 10));
+    if (STORE.number_max > 0) reserved.add(STORE.number_max);
   }
   let next = reserved.size ? Math.max(...reserved) + 1 : 1;
   all.sort((a, b) =>
@@ -1310,6 +1387,7 @@ function renderVersionRail(shown) {
   // Built when History is opened, never while it is hidden.
   if (body.closest('[hidden]')) { if (DOC === VIEW_DOC) renderVersionBanner(); return; }
   wantFullHistory();
+  wantFullStore(); // what each version's comments came to
   const doc = DOC;
   const focused = document.activeElement && document.activeElement.closest && document.activeElement.closest('#vrail-body-' + doc + ' .vitem');
   const focusedVersion = focused ? focused.dataset.version : null;
@@ -1885,6 +1963,14 @@ function renderDrawerNow(id, previousId) {
     cardExpanded[c.id] = true;
   }
 
+  if (needsFullStore()) {
+    wantFullStore();
+    drawerGroups = null;
+    empty.style.display = 'none';
+    listEl.style.display = 'block';
+    listEl.innerHTML = '<div class="vrail-empty" role="status">Loading feedback…</div>';
+    return;
+  }
   const groups = id ? drawerGroups.groups : { later: [], needs: [], ready: [], waiting: [], done: [], earlier: [], archived: [] };
   // Feedback given on earlier versions stays listed, collapsed under
   // "Earlier feedback", instead of vanishing when a version is published.
@@ -1914,7 +2000,8 @@ function renderDrawerNow(id, previousId) {
   drawerGroups = { doc: DOC, version: CURRENT_VERSION, groups };
   SECTION_ORDER.forEach(k => { if (!id || groups[k].some(c => c.id === id)) groups[k].sort(byContentOrder); });
 
-  const anything = SECTION_ORDER.some(k => groups[k].length);
+  const count = k => groups[k].length + (k === 'earlier' ? omitted().earlier : 0);
+  const anything = SECTION_ORDER.some(count);
   if (!anything) {
     empty.style.display = 'flex';
     listEl.style.display = 'none';
@@ -1928,18 +2015,21 @@ function renderDrawerNow(id, previousId) {
     const open = sectionOpen(k) || groups[k].some(hasUnsentText);
     const bodyId = 'sec-body-' + k;
     const badgeCls = k === 'needs' ? 'badge-error' : k === 'later' ? 'badge-ghost' : k === 'ready' ? 'is-orange' : 'badge-ghost';
+    // Earlier feedback reads the older versions' comments when it is opened.
+    const loading = open && k === 'earlier' && omitted().earlier > 0;
+    if (loading) wantFullStore();
     return `<section class="sec sec-${k}" data-section="${k}">
-      <button type="button" class="sec-hdr" data-section-toggle="${k}" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${bodyId}">${ico('chevDown')}<span>${SECTION_LABEL[k]}</span><span class="badge badge-sm ${badgeCls}">${groups[k].length}</span></button>
-      <div class="sec-body" id="${bodyId}"${open ? '' : ' hidden'}>${open && !id ? groups[k].map(renderCItem).join('') : ''}</div>
+      <button type="button" class="sec-hdr" data-section-toggle="${k}" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${bodyId}">${ico('chevDown')}<span>${SECTION_LABEL[k]}</span><span class="badge badge-sm ${badgeCls}">${count(k)}</span></button>
+      <div class="sec-body" id="${bodyId}"${open ? '' : ' hidden'}>${loading ? '<div class="vrail-empty" role="status">Loading earlier feedback…</div>' : open && !id ? groups[k].map(renderCItem).join('') : ''}</div>
     </section>`;
   };
-  if (!id) listEl.innerHTML = SECTION_ORDER.filter(k => groups[k].length).map(sectionHtml).join('');
+  if (!id) listEl.innerHTML = SECTION_ORDER.filter(count).map(sectionHtml).join('');
   else {
     const old = listEl.querySelector('[data-comment-id="' + cssEsc(previousId || id) + '"]');
     let patched = null;
     for (const key of SECTION_ORDER) {
       let section = listEl.querySelector('[data-section="' + key + '"]');
-      if (!groups[key].length) { if (section) section.remove(); continue; }
+      if (!count(key)) { if (section) section.remove(); continue; }
       if (!section) {
         const t = document.createElement('template');
         t.innerHTML = sectionHtml(key);
@@ -1947,7 +2037,7 @@ function renderDrawerNow(id, previousId) {
         const next = SECTION_ORDER.slice(SECTION_ORDER.indexOf(key) + 1).map(k => listEl.querySelector('[data-section="' + k + '"]')).find(Boolean);
         listEl.insertBefore(section, next || null);
       }
-      section.querySelector('.sec-hdr .badge').textContent = groups[key].length;
+      section.querySelector('.sec-hdr .badge').textContent = count(key);
       const index = groups[key].findIndex(c => c.id === id);
       if (index === -1) continue;
       const body = section.querySelector('.sec-body');
@@ -4189,7 +4279,7 @@ function summarySentence() {
 function summaryWarning() {
   const plan = sendPlan();
   const roundN = plan.round.length + plan.answers.length;
-  const undecided = flattenAll(false).filter(c => hasDecisionRequest(c) && !decisionAnswer(c) && !hasSayDraft(c) && !isSetAside(c)).length;
+  const undecided = flattenAll(false).filter(c => hasDecisionRequest(c) && !decisionAnswer(c) && !hasSayDraft(c) && !isSetAside(c)).length + omitted().rest_missing;
   if (undecided > 0 && roundN > 0) {
     return undecided + (undecided === 1 ? ' question is' : ' questions are') + ' still unanswered; the agent will see ' + (undecided === 1 ? 'it' : 'them') + ' as open.';
   }
@@ -4284,11 +4374,14 @@ function renderSummaryInto(list, editable) {
   // Collapsed by default and built only when opened, like the rail
   // sections (Chang 2026-10-31: "no need to constantly show this or even
   // load it"). The header keeps unanswered ones discoverable.
-  if (rest.length) {
+  const left = omitted();
+  if (rest.length + left.rest) {
     const open = sumRestOpen.has(doc) || rest.some(c => c.id === sumEditing);
-    const missing = rest.filter(c => !decisionAnswer(c) && !hasSayDraft(c)).length;
-    html += `<button type="button" class="sec-hdr sum-group sum-rest-hdr" data-sum-rest="${doc}" aria-expanded="${open ? 'true' : 'false'}">${ico('chevDown')}<span>Not in this Send</span><span class="badge badge-sm badge-ghost">${rest.length}</span>${missing ? `<span class="sum-rest-missing">· ${missing} not answered</span>` : ''}</button>`;
-    if (open) html += rest.map(decisionRow).join('');
+    const missing = rest.filter(c => !decisionAnswer(c) && !hasSayDraft(c)).length + left.rest_missing;
+    html += `<button type="button" class="sec-hdr sum-group sum-rest-hdr" data-sum-rest="${doc}" aria-expanded="${open ? 'true' : 'false'}">${ico('chevDown')}<span>Not in this Send</span><span class="badge badge-sm badge-ghost">${rest.length + left.rest}</span>${missing ? `<span class="sum-rest-missing">· ${missing} not answered</span>` : ''}</button>`;
+    // Its older questions are read when it is opened.
+    if (open && left.rest) { wantFullStore(); html += '<div class="vrail-empty" role="status">Loading…</div>'; }
+    else if (open) html += rest.map(decisionRow).join('');
   }
   list.innerHTML = html;
   list.querySelectorAll('[data-sum-rest]').forEach(btn => btn.addEventListener('click', () => {
@@ -5213,6 +5306,11 @@ async function init() {
   loadBoard();
   DRAFTS = loadDrafts(DOC);
   for (const doc of DOCS) await loadDocState(doc);
+  // A link to an older card, an older version or text typed on an older card
+  // needs the whole store before the first screen.
+  const link = new URLSearchParams(location.hash.slice(1));
+  const linkId = link.get('feedback') || link.get('c');
+  if (STORE.partial && ((linkId && !findCommentById(linkId)) || DOCS.some(doc => withDoc(doc, needsFullStore)))) await wantFullStore();
   takeCardLink();
   DOCS_LOADED_resolve();
   document.dispatchEvent(new CustomEvent('annotate:store'));

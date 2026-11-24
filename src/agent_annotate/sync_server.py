@@ -558,6 +558,87 @@ def _pin_item_numbers(store: dict) -> dict[str, int | str]:
     return numbers
 
 
+_LEADING_NUMBER = re.compile(r"^\s*(?:Q|#)\s*\d+[\s:.\-—–]*", re.IGNORECASE)
+
+
+def _prompt_keys(comment: dict) -> set[str]:
+    """shell.js promptKey, with and without a leading Q<n> (displayPrompt drops it when it matches the label)."""
+    prompt = str((comment.get("decision_request") or {}).get("prompt") or "")
+    norm = lambda s: re.sub(r"\s+", " ", s).strip().lower()  # noqa: E731  (shell.js normText)
+    doc = str(comment.get("doc") or "") + "\n"
+    return {doc + norm(p) for p in (prompt, _LEADING_NUMBER.sub("", prompt, count=1)) if norm(p)}
+
+
+def _card_anchors(artifact_dir: Path, version: str | None) -> set[str] | None:
+    """Anchors of the question cards baked into a version's body (adapter.js `.card[data-anchor-id]`); None if unreadable."""
+    try:
+        markup = _version_file(artifact_dir, version).read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return None
+    return {m for tag in re.findall(r"<[a-zA-Z][^>]*\bclass=['\"][^'\"]*\bcard\b[^>]*>", markup)
+            for m in re.findall(r"data-anchor-id=['\"]([^'\"]+)", tag)}
+
+
+def _page_store(store: dict, numbers: dict, history: list, card_anchors: set[str] | None = None) -> dict:
+    """The browser's first read (view=page): what the latest version shows and what a Send needs.
+
+    Review feedback from older versions that is settled stays out; the shell
+    reads the whole store (view=poll) when Earlier feedback, Not in this Send,
+    History or an older version is opened. `omitted` counts what was left out
+    for those headers. Everything else (Plans, Library, Findings) comes whole.
+    """
+    from .categories import comment_category
+    current = store.get("current_version")
+    order = {v: i for i, v in enumerate(history)}
+    newer = lambda c: c.get("version") in order and current in order and order[c["version"]] > order[current]  # noqa: E731
+
+    def hot(c):
+        if comment_category(c) != "review" or c.get("version") == current:
+            return True
+        d = c.get("decision") if isinstance(c.get("decision"), dict) else {}
+        if c.get("round_pending") or d.get("round_pending") or d.get("pending"):
+            return True
+        if c.get("decision_request") and not d.get("verdict") and c.get("status") not in ("archived", "resolved_in_version", "addressed_by_agent"):
+            return True  # shell.js isUnresolvedDecision: follows the reviewer to every version
+        replies = c.get("replies") if isinstance(c.get("replies"), list) else []
+        return any(isinstance(r, dict) and "sent_at" in r and not r["sent_at"] for r in replies) or _comment_needs_push(c)
+
+    areas = {area: [(aid, c) for aid, items in (store.get(area) or {}).items() if isinstance(items, list)
+                    for c in items if isinstance(c, dict)] for area in ("anchors", "archived")}
+    keep = {id(c) for items in areas.values() for _, c in items if hot(c)}
+    # "You answered this on …" reads earlier sent answers to the same prompt.
+    asked = set().union(*(_prompt_keys(c) for items in areas.values() for _, c in items if id(c) in keep and c.get("decision_request")))
+    # The body's question cards show the first live (else the last archived) question on their anchor.
+    first, last = {}, {}
+    for area, target in (("anchors", first), ("archived", last)):
+        for aid, c in areas[area]:
+            if (c.get("decision_request") and comment_category(c) == "review" and not newer(c)
+                    and (card_anchors is None or aid in card_anchors) and (area == "archived" or aid not in target)):
+                target[aid] = c
+    keep |= {id(c) for aid, c in first.items()} | {id(c) for aid, c in last.items() if aid not in first}
+    for items in areas.values():
+        for _, c in items:
+            d = c.get("decision") if isinstance(c.get("decision"), dict) else {}
+            answered = d.get("verdict") or any(isinstance(h, dict) and h.get("verdict") for h in c.get("decision_history") or [])
+            if id(c) not in keep and answered and c.get("decision_request") and _prompt_keys(c) & asked:
+                keep.add(id(c))
+    omitted = {"earlier": 0, "rest": 0, "rest_missing": 0}
+    out = {area: {} for area in areas}
+    for area, items in areas.items():
+        for aid, c in items:
+            if id(c) in keep:
+                out[area].setdefault(aid, []).append(c)
+            elif not newer(c) and not (area == "anchors" and c.get("withdrawn")):
+                omitted["earlier"] += 1
+                if area == "anchors" and c.get("decision_request") and c.get("status") not in ("archived", "resolved_in_version"):
+                    omitted["rest"] += 1
+                    omitted["rest_missing"] += not (c.get("decision") or {}).get("verdict")
+    shown = [c["id"] for items in out.values() for cs in items.values() for c in cs if c.get("id") in numbers]
+    return {**store, **out, "partial": True, "omitted": omitted,
+            "numbers": {cid: numbers[cid] for cid in shown},
+            "number_max": max((n for n in numbers.values() if type(n) is int), default=0)}
+
+
 def _assign_item_number(store: dict, comment: dict, number: int | None = None, *, existing=False) -> None:
     """Reserve labels under the store lock, including archived/legacy labels."""
     from .cli import _iter_comments
@@ -1684,7 +1765,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         type(self)._store_responses.clear()
 
     def _v2_get_store(self, parsed=None):
-        poll = bool(parsed and urllib.parse.parse_qs(parsed.query).get("view") == ["poll"])
+        view = (urllib.parse.parse_qs(parsed.query).get("view") or [None])[0] if parsed else None
+        poll = view in ("poll", "page")
         compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
         with _locked_store(self.artifact_dir, write=False):
             meta = self._read_meta()
@@ -1694,12 +1776,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             except FileNotFoundError:
                 draft_stamp = None
             published = tuple(h.get("version") for h in meta.get("history") or [] if isinstance(h, dict))
-            signature = (self._store_signature(), current_version, published, draft_stamp)
+            try:  # view=page reads the body's question cards; a republish rewrites them in place
+                body_stamp = _version_file(self.artifact_dir, current_version).stat().st_mtime_ns
+            except (OSError, ValueError):
+                body_stamp = None
+            signature = (self._store_signature(), current_version, published, draft_stamp, body_stamp)
             cache = type(self)._store_responses
             if cache.get("signature") != signature:
                 cache.clear()
                 cache["signature"] = signature
-            key = (poll, compressed, self._agent_reader())
+            key = (view if poll else None, compressed, self._agent_reader())
             if key not in cache:
                 from .review_versions import visible_store
                 store = visible_store(self.artifact_dir, self._v2_load(read_only=True), meta)
@@ -1713,7 +1799,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                                for anchor, items in store.get(area, {}).items()}
                                          for area in ("anchors", "archived")}}
                     # Label migration must not look like a content change to the shell.
-                    _pin_item_numbers(store)
+                    numbers = _pin_item_numbers(store)
+                    if view == "page":
+                        store = _page_store(store, numbers, [v for v in published if v], _card_anchors(self.artifact_dir, current_version))
                 body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
                 packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
                 cache[key] = (packed, compressed) if len(packed) < len(body) else (body, False)
