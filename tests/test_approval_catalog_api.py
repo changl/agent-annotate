@@ -1,5 +1,6 @@
 import http.client
 import json
+import os
 import re
 import threading
 
@@ -8,6 +9,70 @@ from test_decision_api import _call, _card, _events, _store
 from test_decision_api import server as server
 
 from agent_annotate.approval_catalog import item_id
+
+
+@pytest.fixture
+def image_seal(tmp_path):
+    from agent_annotate.approval_catalog import bind_evidence, persist_evidence, seal_review
+
+    comment = {"id": "card", "anchor_id": "design", "version": "v1",
+               "decision_request": {"prompt": "Approve?", "evidence": [{"anchor": "design"}]}}
+    store = {"anchors": {"design": [comment]}}
+    html = '<section id="design"><img src="a.png"><img src="b.png"></section>'
+
+    def seal():
+        return seal_review(tmp_path, html, "v1", store)[1]["card"]
+
+    def approve(token):
+        return persist_evidence(tmp_path, comment, bind_evidence(tmp_path, store, comment, token))
+
+    return seal, approve
+
+
+def test_seal_invalidates_on_duplicate_source_change(tmp_path, image_seal):
+    seal, approve = image_seal
+    (tmp_path / "a.png").write_bytes(b"original")
+    (tmp_path / "b.png").write_bytes(b"original")
+    displayed = seal()
+    (tmp_path / "a.png").write_bytes(b"replacement")
+    refreshed = seal()
+    assert displayed != refreshed
+    bundle = approve(refreshed)
+    assert len(bundle["assets"]) == 2 and not bundle["incomplete"]
+    assert approve(displayed)["incomplete"]
+
+
+def test_seal_invalidates_when_missing_image_is_restored(tmp_path, image_seal):
+    seal, approve = image_seal
+    (tmp_path / "b.png").write_bytes(b"present")
+    displayed = seal()
+    (tmp_path / "a.png").write_bytes(b"restored")
+    refreshed = seal()
+    assert displayed != refreshed
+    assert not approve(refreshed)["incomplete"]
+
+
+def test_seal_does_not_cache_a_digest_with_a_newer_file_stat(tmp_path, image_seal, monkeypatch):
+    from agent_annotate import approval_catalog
+
+    seal, approve = image_seal
+    a = tmp_path / "a.png"
+    a.write_bytes(b"original")
+    (tmp_path / "b.png").write_bytes(b"second")
+    image_hash = approval_catalog._image_hash
+
+    def replace_after_hash(path, **kwargs):
+        digest = image_hash(path, **kwargs)
+        if path == a:
+            a.write_bytes(b"replacement")
+            monkeypatch.setattr(approval_catalog, "_image_hash", image_hash)
+        return digest
+
+    monkeypatch.setattr(approval_catalog, "_image_hash", replace_after_hash)
+    displayed = seal()
+    refreshed = seal()
+    assert refreshed != displayed
+    assert not approve(refreshed)["incomplete"]
 
 
 def seed(server, text="First design", version="v1", **extra):
@@ -41,6 +106,20 @@ def vote(httpd, comment, evidence, verdict="accept", **extra):
 
 def plans(httpd):
     return _call(httpd, "GET", "/api/categories")[1]["plans"]
+
+
+def test_seal_revalidates_plan_predecessor_with_preserved_mtime(server):
+    from agent_annotate.categories import publish_plan_revision
+
+    httpd, directory, _ = server
+    comment = seed(server, item_id="design")
+    publish_plan_revision(directory, "design", "<h1>First</h1>")
+    meta = directory / "plans/design/meta.json"
+    original = meta.stat()
+    assert token(httpd, comment)["predecessor"] == "v1"
+    publish_plan_revision(directory, "design", "<h1>Second</h1>")
+    os.utime(meta, ns=(original.st_atime_ns, original.st_mtime_ns))
+    assert token(httpd, comment)["predecessor"] == "v2"
 
 
 @pytest.mark.parametrize("path", ["immediate", "round", "single"])

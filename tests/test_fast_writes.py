@@ -136,6 +136,29 @@ def test_categories_loads_the_comment_store_once_even_with_many_plans(server, mo
     assert len(loads) == 1
 
 
+def test_categories_revalidate_plan_and_topic_replacements_with_preserved_mtimes(server):
+    httpd, root, _, _ = server
+    meta = root / "plans/test/meta.json"
+    topics = root / "plan-topics.json"
+    topics.write_text('{"topics":[{"name":"Before","words":["test"]}]}')
+    old_meta, old_topics = meta.stat(), topics.stat()
+    _, first, body = request(httpd, "/api/categories")
+    assert json.loads(body)["plans"][0]["current"] == "v1"
+    assert json.loads(body)["plan_topics"] == ["Before"]
+
+    publish_plan_revision(root, "test", "<h1>Next plan</h1>")
+    os.utime(meta, ns=(old_meta.st_atime_ns, old_meta.st_mtime_ns))
+    status, second, body = request(httpd, "/api/categories", headers={"If-None-Match": first["ETag"]})
+    assert status == 200 and json.loads(body)["plans"][0]["current"] == "v2"
+
+    replacement = root / "topics.tmp"
+    replacement.write_text(topics.read_text().replace("Before", "Modern"))
+    os.utime(replacement, ns=(old_topics.st_atime_ns, old_topics.st_mtime_ns))
+    replacement.replace(topics)
+    status, _, body = request(httpd, "/api/categories", headers={"If-None-Match": second["ETag"]})
+    assert status == 200 and json.loads(body)["plan_topics"] == ["Modern"]
+
+
 def test_reopening_the_same_version_appends_no_seen_event(server):
     httpd, root, _, _ = server
     for _ in range(3):

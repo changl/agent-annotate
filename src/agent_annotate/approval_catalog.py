@@ -118,7 +118,7 @@ class _Anchors(HTMLParser):
             del self.stack[index:]
 
 
-def _pin_images(page_dir, html, base):
+def _pin_images(page_dir, html, base, dependencies=None):
     assets, incomplete, sources = {}, [], {}
 
     def pin(match):
@@ -145,13 +145,18 @@ def _pin_images(page_dir, html, base):
                         raise ValueError("image outside page")
                     relative = relative[len(prefix):]
                 relative = relative.removeprefix("./")
+                if dependencies is not None and relative not in dependencies:
+                    # Record the input before hashing, including paths a later request could restore.
+                    dependencies[relative] = _image_file_key(page_dir, relative)
                 path = safe_path(page_dir, relative)
                 if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif"}:
                     raise ValueError("unsupported image")
                 digest = _image_hash(path)
                 name = "attachments/approval-" + digest + path.suffix.lower()
                 assets[name] = digest
-                sources[name] = relative
+                paths = sources.setdefault(name, [])
+                if relative not in paths:
+                    paths.append(relative)
                 return attribute[1] + attribute[2] + "./" + name + attribute[2]
             except (OSError, ValueError):
                 incomplete.append("Image not sealed: " + url[:200])
@@ -235,15 +240,13 @@ _SEALS = OrderedDict()  # uzd: one live view per unchanged sealing input; a relo
 _SEALED_FIELDS = ("id", "anchor_id", "doc", "number", "origin_id", "origin_item_id", "decision_request", "text")
 
 
-def _file_stats(page_dir, relatives):
-    out = []
-    for relative in sorted(relatives):
-        try:
-            stat = safe_path(page_dir, relative).stat()
-            out.append((relative, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
-        except (OSError, ValueError):
-            out.append((relative,))
-    return tuple(out)
+def _image_file_key(page_dir, relative):
+    from .sync_server import _file_key
+
+    try:
+        return _file_key(safe_path(page_dir, relative))
+    except (OSError, ValueError):
+        return None
 
 
 def seal_review(page_dir, html, version, store, base=""):
@@ -261,17 +264,19 @@ def seal_review(page_dir, html, version, store, base=""):
                 _plan_stamps(Path(page_dir)))
     with _VIEW_LOCK:
         hit = _SEALS.get(seal_key)
-        if hit and (str(page_dir), hit[0]) in _VIEWS and hit[2] == _file_stats(page_dir, hit[3]):
+        if hit and (str(page_dir), hit[0]) in _VIEWS and all(
+            _image_file_key(page_dir, relative) == stamp for relative, stamp in hit[2].items()
+        ):
             _VIEWS.move_to_end((str(page_dir), hit[0]))
             _SEALS.move_to_end(seal_key)
             return html, hit[1]
     document_parts = _document_parts(html)
-    tokens, snapshots = {}, {}
+    tokens, snapshots, dependencies = {}, {}, {}
     view = uuid.uuid4().hex
     for comment in cards:
         try:
             bundle = _bundle(comment, version, html, document_parts=document_parts)
-            fragment, assets, incomplete, sources = _pin_images(page_dir, bundle["html"], base)
+            fragment, assets, incomplete, sources = _pin_images(page_dir, bundle["html"], base, dependencies)
             bundle.update(html=fragment, assets=assets, image_sources=sources, incomplete=bundle["incomplete"] + incomplete)
             snapshots[comment["id"]] = bundle
             tokens[comment["id"]] = {"view": view, "revision": _digest(bundle),
@@ -281,15 +286,13 @@ def seal_review(page_dir, html, version, store, base=""):
     key = (str(page_dir), view)
     entry = {"cards": snapshots, "predecessors": {cid: token["predecessor"] for cid, token in tokens.items()}}
     entry["size"] = _retained_size(entry)
-    images = {relative for bundle in snapshots.values() for relative in bundle["image_sources"].values()}
-    stats = _file_stats(page_dir, images)
     with _VIEW_LOCK:
         _VIEWS[key] = entry
         while len(_VIEWS) > _MAX_VIEWS or sum(v["size"] for v in _VIEWS.values()) > _MAX_VIEW_BYTES:
             _VIEWS.popitem(last=False)
         if key not in _VIEWS:
             return html, {}
-        _SEALS[seal_key] = (view, tokens, stats, images)
+        _SEALS[seal_key] = (view, tokens, dependencies)
         while len(_SEALS) > _MAX_VIEWS:
             _SEALS.popitem(last=False)
     return html, tokens
@@ -321,13 +324,16 @@ def persist_evidence(page_dir, comment, evidence):
         bundle = _bundle(frozen, evidence.get("version") or comment.get("version"), incomplete=["Displayed evidence unavailable"])
     for name in bundle["assets"]:
         try:
-            source = safe_path(page_dir, bundle["image_sources"][name])
+            relatives = bundle["image_sources"][name]
+            if isinstance(relatives, str):
+                relatives = [relatives]
+            sources = [safe_path(page_dir, relative) for relative in relatives]
             digest = bundle["assets"][name]
-            if _image_hash(source, fresh=True) != digest:
+            if any(_image_hash(source, fresh=True) != digest for source in sources):
                 raise ValueError("image changed since view")
             target = safe_path(page_dir, name)
             if not target.exists() or _image_hash(target, fresh=True) != digest:
-                body = source.read_bytes()
+                body = sources[0].read_bytes()
                 if hashlib.sha256(body).hexdigest() != digest:
                     raise ValueError("image changed while freezing")
                 _atomic_bytes(target, body)

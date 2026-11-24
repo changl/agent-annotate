@@ -373,8 +373,6 @@ const early = {};
 function prefetch(url, read = () => pollJson(url)) { early[url] = read(); early[url].catch(() => {}); }
 function takeEarly(url) { const p = early[url]; delete early[url]; return p; }
 async function pollJson(url, quiet) {
-  const first = takeEarly(url);
-  if (first) return first;
   const last = pollLast[url];
   // uzd: a page's first read revalidates the browser's copy (a 304 when the meta or categories are unchanged).
   const r = await fetch(apiUrl(url), { cache: last ? 'no-store' : 'no-cache', headers: last && last.etag ? { 'If-None-Match': last.etag } : {}, signal: AbortSignal.timeout(10000) });
@@ -610,7 +608,12 @@ async function loadMeta() {
   const doc = DOC;
   try {
     const url = doc === 'plans' ? './api/plans/' + encodeURIComponent(PLAN_ID) : './current.meta.json';
-    const got = await pollJson(url);
+    const earlyMeta = takeEarly(url);
+    let got = await (earlyMeta || pollJson(url));
+    // Review may have published between the early meta read and the store read.
+    if (earlyMeta && doc === 'review' && STORE.current_version && got.data?.current !== STORE.current_version) {
+      got = await pollJson(url);
+    }
     if (!got.ok) return false;
     if (doc !== DOC) return false;
     if (got.same && (META.current || (META.history || []).length)) return true;

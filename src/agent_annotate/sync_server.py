@@ -225,30 +225,25 @@ def _mtime_stamp(path) -> str:
     stamp every second, so any document referencing a missing asset came back
     byte-different on every request and HTTP caching was defeated entirely."""
     if path is not None:
-        path = Path(path)
-        # uzd: each open hashed every shell asset again (~60-90 ms); rehash only when a file changes.
-        key = (str(path), *map(_file_key, [path, *(path.with_name(n) for n in _FONTS if path.suffix == ".css")]))
-        if key[1] is not None and (stamp := _STAMPS.get(key)):
-            return stamp
         try:
-            stamp = str(int(hashlib.sha256(_asset_bytes(path)).hexdigest()[:16], 16))
+            return _asset_stamp(_asset_bytes(Path(path)))
         except OSError:
-            return "0"
-        if len(_STAMPS) > 256:
-            _STAMPS.clear()
-        _STAMPS[key] = stamp
-        return stamp
+            pass
     return "0"
 
 
-_STAMPS: dict = {}
+@functools.lru_cache(maxsize=32)
+def _asset_stamp(data: bytes) -> str:
+    return str(int(hashlib.sha256(data).hexdigest()[:16], 16))
+
+
 _FONTS = ("RobotoVariable.woff2", "RobotoVariable-Italic.woff2")
 
 
 def _file_key(path: Path):
     try:
         s = path.stat()
-        return (s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+        return (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
     except OSError:
         return None
 
@@ -259,8 +254,9 @@ def _asset_bytes(path: Path) -> bytes:
         # CSS and its fonts need independent immutable keys. Include the font
         # hashes in the served CSS bytes so changing a font also changes its key.
         for name in _FONTS:
-            data = data.replace(f"url({name})".encode(),
-                                f"url(../{_mtime_stamp(path.with_name(name))}/{name})".encode())
+            ref = f"url({name})".encode()
+            if ref in data:
+                data = data.replace(ref, f"url(../{_mtime_stamp(path.with_name(name))}/{name})".encode())
     return data
 
 
@@ -614,7 +610,7 @@ def _implicit_asks(source: str) -> tuple:
 
 
 def _plan_stamps(artifact_dir: Path) -> tuple:
-    """Each plan's meta.json mtime: a plan publish moves its current version without touching the store."""
+    """A plan publish moves its meta.json to the next revision without touching the comment store."""
     stamps = []
     try:
         entries = os.scandir(artifact_dir / "plans")  # a glob took ~20 ms on FLD's 194 plans
@@ -622,10 +618,8 @@ def _plan_stamps(artifact_dir: Path) -> tuple:
         return ()
     with entries:
         for entry in entries:
-            try:
-                stamps.append((entry.name, os.stat(os.path.join(entry.path, "meta.json")).st_mtime_ns))
-            except OSError:
-                pass
+            if (stamp := _file_key(Path(entry.path) / "meta.json")) is not None:
+                stamps.append((entry.name, stamp))
     return tuple(sorted(stamps))
 
 
@@ -2141,17 +2135,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self._respond(200, data, "text/html; charset=utf-8")
 
     def _ensure_content_stamp(self, version: str, html: str, content_path: Path) -> None:
-        """Compute-and-cache content_stamps[version] into current.meta.json
-        the first time this version is served (or whenever the content
-        file's mtime moves past what's recorded). Cheap enough to check on
-        every request; the hash recompute itself only runs on a stale/
-        missing stamp, not on every GET.
-        """
-        # uzd: the write lock and a 279 KB meta parse on every read; skip both for the version just checked.
+        """Persist the displayed version's content stamp when its input changes."""
+        meta_path = self._meta_path()
+        # Mapped writes can change bytes without changing any stat field.
         try:
-            meta_stat = self._meta_path().stat()
-            checked = (str(self.artifact_dir), version, content_path.stat().st_mtime_ns,
-                       meta_stat.st_ino, meta_stat.st_size, meta_stat.st_mtime_ns)
+            checked = (str(self.artifact_dir), version, _file_key(content_path),
+                       _file_key(meta_path), html, meta_path.read_bytes())
         except OSError:
             checked = None
         if checked is not None and type(self)._stamp_checked == checked:
@@ -2159,12 +2148,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         with _locked_store(self.artifact_dir):  # reuse the store lock; meta writes are rare & small
             meta = self._read_meta()
             existing = (meta.get("content_stamps") or {}).get(version)
-            mtime = content_path.stat().st_mtime
-            if existing and existing.get("_mtime") == mtime:
-                type(self)._stamp_checked = checked
-                return  # up to date
             computed = compute_content_stamps(html)
-            computed["_mtime"] = mtime
+            computed["_mtime"] = content_path.stat().st_mtime
+            if existing and all(existing.get(key) == value for key, value in computed.items()):
+                type(self)._stamp_checked = checked
+                return
             try:
                 self._merge_content_stamp(version, computed)
             except OSError:
@@ -2407,7 +2395,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     data = _asset_bytes(target)
                 except OSError:
                     continue
-                if stamp != str(int(hashlib.sha256(data).hexdigest()[:16], 16)):
+                if stamp != _asset_stamp(data):
                     return self._respond(404, b"Asset hash mismatch", cache_control="no-store")
                 self._respond(200, data, _mime(target.suffix), cache_control=_IMMUTABLE)
                 return
@@ -4130,11 +4118,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         memo = type(self)._count_rows = (signature, raw, {})
                     rows = memo[2]
                 # uzd: ~60 plan metas and their topics took ~110 ms on FLD; they change only with these files.
-                try:
-                    topics_stat = (self.artifact_dir / "plan-topics.json").stat()
-                    topics_stamp = (topics_stat.st_mtime_ns, topics_stat.st_size)
-                except OSError:
-                    topics_stamp = None
+                topics_stamp = _file_key(self.artifact_dir / "plan-topics.json")
                 plans_key = (self._store_signature(), self._agent_reader(), _plan_stamps(self.artifact_dir), topics_stamp)
                 cached = type(self)._plans_listed
                 if cached[0] == plans_key:
@@ -4526,8 +4510,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         digest = hashlib.sha256(data).hexdigest()
         hashed_name = re.search(r"(?:^|[-_.])([0-9a-f]{12,64})(?=[-_.]|$)", target.name, re.IGNORECASE)
         immutable = extra and hashed_name and digest.startswith(hashed_name[1].lower())
-        # A preview is named by its original's hash and never rewritten (long_pages._preview), uzd.
-        immutable = immutable or (extra and re.fullmatch(r"assets/preview/[0-9a-f]{16}\.(?:jpg|png)", resolved_rel))
         self._respond(200, data, content_type=mime,
                       cache_control=_IMMUTABLE if immutable else "no-cache", extra_headers=extra)
 

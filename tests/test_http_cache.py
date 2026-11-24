@@ -3,6 +3,7 @@
 import gzip
 import hashlib
 import http.client
+import mmap
 import threading
 from contextlib import contextmanager
 
@@ -117,17 +118,45 @@ def test_page_images_cache_without_losing_security_headers(server, directory, ha
         assert changed.getheader("Cache-Control") == "no-cache"
 
 
-def test_preview_images_are_immutable_only_under_their_hash_name(server):
-    _, root, _ = server
-    (root / "assets" / "preview").mkdir(parents=True)
-    for name in ("0123456789abcdef.jpg", "picture.jpg"):
-        (root / "assets" / "preview" / name).write_bytes(b"\xff\xd8 preview bytes")
+def test_asset_stamps_change_even_if_file_stats_match(server, monkeypatch):
+    from agent_annotate import sync_server
+
+    _, _, web = server
+    path = web / "RobotoVariable.woff2"
+    css = web / "daisyui.css"
+    # Model filesystems that leave timestamps unchanged across mapped writes.
+    file_key = sync_server._file_key
+    stamp = file_key(path)
+    monkeypatch.setattr(sync_server, "_file_key", lambda target: stamp if target == path else file_key(target))
+    before = _mtime_stamp(css)
+    with path.open("r+b") as source, mmap.mmap(source.fileno(), 0) as mapped:
+        mapped[-3:] = b"two"
+        after = _mtime_stamp(css)
+    assert after != before
     with connection(server) as conn:
-        hashed, _ = request(conn, "/review/assets/preview/0123456789abcdef.jpg")
-        plain, _ = request(conn, "/review/assets/preview/picture.jpg")
+        assert request(conn, f"/review/assets/{after}/daisyui.css")[0].status == 200
+        assert request(conn, f"/review/assets/{before}/daisyui.css")[0].status == 404
+
+
+def test_preview_images_revalidate_unless_the_name_matches_the_bytes(server):
+    _, root, _ = server
+    previews = root / "assets" / "preview"
+    previews.mkdir(parents=True)
+    data = b"\xff\xd8 preview bytes"
+    hashed_name = hashlib.sha256(data).hexdigest()[:16] + ".jpg"
+    mutable = previews / "0123456789abcdef.jpg"
+    (previews / hashed_name).write_bytes(data)
+    mutable.write_bytes(data)
+    with connection(server) as conn:
+        hashed, _ = request(conn, "/review/assets/preview/" + hashed_name)
+        url = "/review/assets/preview/" + mutable.name
+        first, _ = request(conn, url)
+        assert first.getheader("Cache-Control") == "no-cache"
+        mutable.write_bytes(data + b" changed")
+        changed, body = request(conn, url, headers={"If-None-Match": first.getheader("ETag")})
     assert hashed.getheader("Cache-Control") == "public, max-age=31536000, immutable"
     assert hashed.getheader("Content-Security-Policy") == "sandbox"
-    assert plain.getheader("Cache-Control") == "no-cache"
+    assert changed.status == 200 and body == data + b" changed"
 
 
 @pytest.mark.parametrize("accept,compressed", [

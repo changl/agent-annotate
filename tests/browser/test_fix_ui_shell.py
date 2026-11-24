@@ -328,6 +328,23 @@ def test_wrong_review_key_still_leaves_the_address(tmp_path, versions):
         assert "wrong-key" not in page.evaluate("window.__sessions")[0]["href"]
 
 
+def test_first_review_open_refreshes_meta_when_store_shows_a_new_publish(tmp_path, versions):
+    reads = []
+
+    def meta(route):
+        reads.append(route.request.url)
+        if len(reads) == 1:
+            route.fulfill(json={"current": "v1", "history": [{"version": "v1"}]})
+        else:
+            route.continue_()
+
+    # The early meta response is from before the publish, the real store and
+    # later meta responses come from the v2 already published in this fixture.
+    with opened(tmp_path, versions, routes=[("**/current.meta.json", meta)]) as (page, _, _):
+        assert frame_version(page) == "v2"
+        assert len(reads) >= 2
+
+
 # ── UI-28: the version hint, and pages with one tab ────────────────────────
 def test_version_hint_shows_only_for_the_document_on_screen(tmp_path, workspace):  # noqa: F811
     with opened(tmp_path, workspace) as (page, _, _b):
