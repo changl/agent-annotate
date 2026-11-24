@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Slow downloads of review pages or metadata no longer hold up other requests. The server closes cancelled connections quietly.
+
 ## 2.32.9
 
 - Resumed owners come back by themselves after a restart (agent-annotate-dlj). The 2.28.3 re-bind required the same Orca terminal, but Orca relaunches each resumed pane under a new handle, so after the 2026-11-23 reboot no page re-bound and Sends queued until someone typed into the terminal. Re-binding now requires the same session and Orca worktree, and the old owner process must be gone.
