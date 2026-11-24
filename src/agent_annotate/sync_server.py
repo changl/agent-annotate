@@ -1959,7 +1959,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _v2_history_representation(self, parsed):
         from .paths import BUS_ARCHIVE_ROOT
-        from .review_history import history_buses, latest_round, review_history
+        from .review_history import history_buses, review_history
+        from .store import backend
 
         bus = self.bus_dir / f"{self.slug}.ndjson" if self.bus_dir else None
         compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
@@ -1967,8 +1968,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
         def disk_signature():
             paths = [self._store_path(), self._meta_path(), self.artifact_dir / "rounds.ndjson",
-                     self.artifact_dir / "versions", self.artifact_dir / "content",
                      *history_buses(bus, BUS_ARCHIVE_ROOT)]
+            if not latest:
+                paths.extend(self.artifact_dir / kind for kind in ("versions", "content"))
             signature = []
             for path in paths:
                 try:
@@ -1977,9 +1979,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                       stat.st_mtime_ns, stat.st_ctime_ns))
                 except FileNotFoundError:
                     signature.append((str(path),))
-            return signature
+            # SQLite indexes the bus. The read transaction can update its WAL even when History inputs are unchanged.
+            return (backend(self.artifact_dir) if bus is not None else None, signature)
 
-        cache = type(self)._history_responses
+        responses = type(self)._history_responses
+        cache = responses.get(latest, {})
         for _ in range(3):
             # Check even cache hits under the transaction lock, so a
             # reader waiting on a writer cannot return its old revision.
@@ -1987,12 +1991,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 signature = disk_signature()
                 if cache.get("signature") == signature:
                     break
-                meta_bytes = self._meta_path().read_bytes()
-                store_bytes = self._store_path().read_bytes() if self._store_path().exists() else b"{}"
+                meta_bytes = store_bytes = None
+                if not latest:
+                    meta_bytes = self._meta_path().read_bytes()
+                    store_bytes = self._store_path().read_bytes() if self._store_path().exists() else b"{}"
             try:
                 history = review_history(self.artifact_dir, bus, BUS_ARCHIVE_ROOT,
                                          meta_bytes=meta_bytes, store_bytes=store_bytes,
-                                         bus_cache=type(self)._history_bus_cache)
+                                         bus_cache=type(self)._history_bus_cache, latest=latest)
             except (OSError, ValueError):
                 with _locked_store(self.artifact_dir, write=False):
                     if disk_signature() != signature:
@@ -2003,19 +2009,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             with _locked_store(self.artifact_dir, write=False):
                 if disk_signature() != signature:
                     continue
-            body = json.dumps(history, ensure_ascii=False).encode()
-            cache.clear()
-            cache.update(signature=signature, body=body,
-                         latest=json.dumps(latest_round(history), ensure_ascii=False).encode())
+            cache = responses[latest] = {"signature": signature, "body": json.dumps(history, ensure_ascii=False).encode()}
             break
         else:
             return None
-        key = (latest, compressed)
-        if key not in cache:
-            body = cache["latest" if latest else "body"]
+        if compressed not in cache:
+            body = cache["body"]
             packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
-            cache[key] = (packed, True) if len(packed) < len(body) else (body, False)
-        return cache[key]
+            cache[compressed] = (packed, True) if len(packed) < len(body) else (body, False)
+        return cache[compressed]
 
     def _v2_get_comments(self, parsed):
         params = urllib.parse.parse_qs(parsed.query)
