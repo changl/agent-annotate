@@ -89,6 +89,7 @@ USAGE (directory layout, version-pivot, comment lifecycle)
 
 import argparse
 import difflib
+import functools
 import gzip
 import hashlib
 import http.server
@@ -104,6 +105,7 @@ import tomllib
 import urllib.error
 import urllib.parse
 import uuid
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -558,6 +560,134 @@ def _pin_item_numbers(store: dict) -> dict[str, int | str]:
     return numbers
 
 
+_LEADING_NUMBER = re.compile(r"^\s*(?:Q|#)\s*\d+[\s:.\-—–]*", re.IGNORECASE)
+
+
+def _prompt_keys(comment: dict) -> set[str]:
+    """shell.js promptKey, with and without a leading Q<n> (displayPrompt drops it when it matches the label)."""
+    prompt = str((comment.get("decision_request") or {}).get("prompt") or "")
+    norm = lambda s: re.sub(r"\s+", " ", s).strip().lower()  # noqa: E731  (shell.js normText)
+    doc = str(comment.get("doc") or "") + "\n"
+    return {doc + norm(p) for p in (prompt, _LEADING_NUMBER.sub("", prompt, count=1)) if norm(p)}
+
+
+def _card_anchors(body) -> set[str] | None:
+    """Anchors of the question cards baked into a version's body (adapter.js `.card[data-anchor-id]`); None if unreadable.
+
+    `body` returns the version file's path (it may refuse with ValueError)."""
+    try:
+        markup = body().read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return None
+    return {m for tag in re.findall(r"<[a-zA-Z][^>]*\bclass=['\"][^'\"]*\bcard\b[^>]*>", markup)
+            for m in re.findall(r"data-anchor-id=['\"]([^'\"]+)", tag)}
+
+
+def _plan_stamps(artifact_dir: Path) -> tuple:
+    """Each plan's meta.json mtime: a plan publish moves its current version without touching the store."""
+    stamps = []
+    for path in (artifact_dir / "plans").glob("*/meta.json"):
+        try:
+            stamps.append((path.parent.name, path.stat().st_mtime_ns))
+        except OSError:
+            pass
+    return tuple(sorted(stamps))
+
+
+def _plan_docs(artifact_dir: Path, store: dict) -> dict:
+    """{"plan:<id>": (current, published versions in order, body card anchors)} for the plans the store has comments on."""
+    from .categories import _json, safe_path, validate_plan_id
+    docs = {c.get("doc") for area in ("anchors", "archived") for items in (store.get(area) or {}).values()
+            if isinstance(items, list) for c in items if isinstance(c, dict) and str(c.get("doc") or "").startswith("plan:")}
+    out = {}
+    for doc in docs:
+        try:
+            plan = validate_plan_id(doc[5:])
+            meta = _json(safe_path(artifact_dir, f"plans/{plan}/meta.json"), {})
+        except (OSError, ValueError):
+            continue
+        history = [h.get("version") for h in meta.get("history") or [] if isinstance(h, dict) and h.get("version")]
+        current = meta.get("current")
+        if current in history:
+            out[doc] = (current, history, _card_anchors(functools.partial(safe_path, artifact_dir, f"plans/{plan}/versions/{current}.html")))
+    return out
+
+
+def _page_store(store: dict, numbers: dict, docs: dict) -> dict:
+    """The browser's first read (view=page): what each document's latest version shows and what a Send needs.
+
+    `docs`: {"review" | "plan:<id>": (current version, published versions in
+    order, anchors of its body's question cards or None)}. Settled Review and
+    Plans feedback from older versions stays out; the shell reads the whole
+    store (view=poll) when Earlier feedback, Not in this Send, History or an
+    older version is opened. `omitted` counts what was left out per document
+    for those headers. Library, Findings and plans without a readable meta come whole.
+    """
+    from .categories import comment_category
+    orders = {key: {v: i for i, v in enumerate(versions)} for key, (_, versions, _) in docs.items()}
+
+    def doc_of(c):
+        category = comment_category(c)
+        return "review" if category == "review" else c.get("doc") if category == "plans" and c.get("doc") in docs else None
+
+    def newer(c):
+        key = doc_of(c)
+        order, current = orders.get(key, {}), docs.get(key, (None,))[0]
+        return c.get("version") in order and current in order and order[c["version"]] > order[current]
+
+    def hot(c):
+        key = doc_of(c)
+        if key is None or c.get("version") == docs[key][0]:
+            return True
+        d = c.get("decision") if isinstance(c.get("decision"), dict) else {}
+        if c.get("round_pending") or d.get("round_pending") or d.get("pending"):
+            return True
+        if c.get("decision_request") and not d.get("verdict") and c.get("status") not in ("archived", "resolved_in_version", "addressed_by_agent"):
+            return True  # shell.js isUnresolvedDecision: follows the reviewer to every version
+        replies = c.get("replies") if isinstance(c.get("replies"), list) else []
+        return any(isinstance(r, dict) and "sent_at" in r and not r["sent_at"] for r in replies) or _comment_needs_push(c)
+
+    areas = {area: [(aid, c) for aid, items in (store.get(area) or {}).items() if isinstance(items, list)
+                    for c in items if isinstance(c, dict)] for area in ("anchors", "archived")}
+    keep = {id(c) for items in areas.values() for _, c in items if hot(c)}
+    # "You answered this on …" reads earlier sent answers to the same prompt.
+    asked = set().union(*(_prompt_keys(c) for items in areas.values() for _, c in items if id(c) in keep and c.get("decision_request")))
+    # The body's question cards show the first live (else the last archived) question on their anchor.
+    first, last = {}, {}
+    for area, target in (("anchors", first), ("archived", last)):
+        for aid, c in areas[area]:
+            key = doc_of(c)
+            if key is None or not c.get("decision_request") or newer(c):
+                continue
+            anchors = docs[key][2]
+            if (anchors is None or aid in anchors) and (area == "archived" or (key, aid) not in target):
+                target[key, aid] = c
+    keep |= {id(c) for c in first.values()} | {id(c) for at, c in last.items() if at not in first}
+    for items in areas.values():
+        for _, c in items:
+            d = c.get("decision") if isinstance(c.get("decision"), dict) else {}
+            answered = d.get("verdict") or any(isinstance(h, dict) and h.get("verdict") for h in c.get("decision_history") or [])
+            if id(c) not in keep and answered and c.get("decision_request") and _prompt_keys(c) & asked:
+                keep.add(id(c))
+    omitted = {}
+    out = {area: {} for area in areas}
+    for area, items in areas.items():
+        for aid, c in items:
+            if id(c) in keep:
+                out[area].setdefault(aid, []).append(c)
+            elif not newer(c) and not (area == "anchors" and c.get("withdrawn")):
+                left = omitted.setdefault(doc_of(c), {"earlier": 0, "rest": 0, "rest_missing": 0})
+                left["earlier"] += 1
+                if area == "anchors" and c.get("decision_request") and c.get("status") not in ("archived", "resolved_in_version"):
+                    left["rest"] += 1
+                    left["rest_missing"] += not (c.get("decision") or {}).get("verdict")
+    shown = [c["id"] for items in out.values() for cs in items.values() for c in cs if c.get("id") in numbers]
+    # approved_plans is the server's approval catalog; the browser never reads it (FLD: 75 KB).
+    return {**{k: v for k, v in store.items() if k != "approved_plans"}, **out, "partial": True, "omitted": omitted,
+            "numbers": {cid: numbers[cid] for cid in shown},
+            "number_max": max((n for n in numbers.values() if type(n) is int), default=0)}
+
+
 def _assign_item_number(store: dict, comment: dict, number: int | None = None, *, existing=False) -> None:
     """Reserve labels under the store lock, including archived/legacy labels."""
     from .cli import _iter_comments
@@ -932,7 +1062,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def handle_one_request(self):
         from .page_names import resolution_scope
         with resolution_scope():
-            return super().handle_one_request()
+            try:
+                return super().handle_one_request()
+            except ConnectionError:
+                self.close_connection = True
 
     protocol_version = "HTTP/1.1"
     timeout = 15  # Bound idle keep-alive sockets, including abandoned browser connections.
@@ -1360,9 +1493,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             return self._respond(200, json.dumps(delivery_status(_monitor_project(self.bus_dir), self.slug)).encode(), "application/json")
         if route_path == "/api/project":
             try:
-                return self._respond(200, json.dumps(self._project_payload()).encode(), "application/json", cache_control="no-store")
+                body = json.dumps(self._project_payload()).encode()
             except (OSError, ValueError) as exc:
                 return self._respond(500, json.dumps({"error": str(exc)}).encode(), "application/json")
+            return self._respond(200, body, "application/json", cache_control="no-store")
         if route_path == "/api/board":
             from .board import board_status
             from .project_state import load_project
@@ -1374,9 +1508,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if route_path == "/api/copy":
             from .copy_state import load_copy
             try:
-                return self._respond(200, json.dumps(copy_view(load_copy(self.artifact_dir)) if self._agent_reader() else load_copy(self.artifact_dir), ensure_ascii=False).encode(), cache_control="no-store")
+                copy = load_copy(self.artifact_dir)
+                body = json.dumps(copy_view(copy) if self._agent_reader() else copy, ensure_ascii=False).encode()
             except (OSError, ValueError) as exc:
                 return self._respond(500, json.dumps({"error": str(exc)}).encode())
+            return self._respond(200, body, cache_control="no-store")
         if route_path == "/api/categories":
             return self._get_categories()
         if route_path.startswith("/api/plans/"):
@@ -1385,11 +1521,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 with _locked_store(self.artifact_dir, write=False):
                     meta = plan_meta(self.artifact_dir, urllib.parse.unquote(route_path[len("/api/plans/"):]),
                                      store=self._v2_load(read_only=True))
-                return self._respond(200, json.dumps(meta).encode(), cache_control="no-store", conditional=True)
+                body = json.dumps(meta).encode()
             except KeyError:
                 return self._respond(404, b'{"error":"plan not found"}')
             except (ValueError, OSError) as exc:
                 return self._respond(400, json.dumps({"error": str(exc)}).encode())
+            return self._respond(200, body, cache_control="no-store", conditional=True)
         if route_path.startswith("/plans/"):
             match = re.fullmatch(r"/plans/([^/]+)/(v[0-9]{1,10})\.html", urllib.parse.unquote(route_path))
             if not match:
@@ -1400,8 +1537,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if route_path == "/comments.json":
             return self._v2_get_store(parsed)
         if route_path == "/current.meta.json":
-            with _locked_store(self.artifact_dir, write=False):
-                return self._v2_get_meta()
+            return self._v2_get_meta()
         if route_path.lstrip("/") in _WEB_ASSETS:
             return self._serve_skill_asset(route_path.lstrip("/"))
         # A distinct path survives CDN configurations that strip query strings.
@@ -1413,15 +1549,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             with _locked_store(self.artifact_dir, write=False):
                 version = preview_version(self.artifact_dir, route_path)
                 if version:
-                    return self._respond(200, _version_file(self.artifact_dir, version).read_bytes(),
-                                         "text/html; charset=utf-8", cache_control=_NO_STORE)
+                    body = _version_file(self.artifact_dir, version).read_bytes()
+            if version:
+                return self._respond(200, body, "text/html; charset=utf-8", cache_control=_NO_STORE)
             return self._respond(404, b"Not found")
         if route_path == "/content":
-            with _locked_store(self.artifact_dir, write=False):
-                return self._v2_serve_content(parsed)
+            return self._v2_serve_content(parsed)
         if route_path == "/" or route_path == "":
             with _locked_store(self.artifact_dir, write=False):
-                return self._v2_serve_root(parsed)
+                response = self._v2_root_response(parsed)
+            return self._respond(*response)
         return self._serve_static(route_path)
 
     # ── POST ─────────────────────────────────────────────────────────
@@ -1684,7 +1821,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         type(self)._store_responses.clear()
 
     def _v2_get_store(self, parsed=None):
-        poll = bool(parsed and urllib.parse.parse_qs(parsed.query).get("view") == ["poll"])
+        view = (urllib.parse.parse_qs(parsed.query).get("view") or [None])[0] if parsed else None
+        poll = view in ("poll", "page")
         compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
         with _locked_store(self.artifact_dir, write=False):
             meta = self._read_meta()
@@ -1694,12 +1832,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             except FileNotFoundError:
                 draft_stamp = None
             published = tuple(h.get("version") for h in meta.get("history") or [] if isinstance(h, dict))
-            signature = (self._store_signature(), current_version, published, draft_stamp)
+            try:  # view=page reads the body's question cards; a republish rewrites them in place
+                body_stamp = _version_file(self.artifact_dir, current_version).stat().st_mtime_ns
+            except (OSError, ValueError):
+                body_stamp = None
+            signature = (self._store_signature(), current_version, published, draft_stamp, body_stamp,
+                         _plan_stamps(self.artifact_dir))
             cache = type(self)._store_responses
             if cache.get("signature") != signature:
                 cache.clear()
                 cache["signature"] = signature
-            key = (poll, compressed, self._agent_reader())
+            key = (view if poll else None, compressed, self._agent_reader())
             if key not in cache:
                 from .review_versions import visible_store
                 store = visible_store(self.artifact_dir, self._v2_load(read_only=True), meta)
@@ -1713,7 +1856,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                                for anchor, items in store.get(area, {}).items()}
                                          for area in ("anchors", "archived")}}
                     # Label migration must not look like a content change to the shell.
-                    _pin_item_numbers(store)
+                    numbers = _pin_item_numbers(store)
+                    if view == "page":
+                        review = (current_version, [v for v in published if v],
+                                  _card_anchors(lambda: _version_file(self.artifact_dir, current_version)))
+                        store = _page_store(store, numbers, {"review": review, **_plan_docs(self.artifact_dir, store)})
                 body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
                 packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
                 cache[key] = (packed, compressed) if len(packed) < len(body) else (body, False)
@@ -1721,6 +1868,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self._respond(200, b"", "application/json", conditional=True, representation=representation)
 
     def _v2_get_meta(self):
+        with _locked_store(self.artifact_dir, write=False):
+            representation = self._v2_meta_representation()
+        self._respond(200, b"", representation=representation)
+
+    def _v2_meta_representation(self):
         from .delivery import delivery_status
         from .workspace import owner_data
 
@@ -1778,9 +1930,19 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 if len(cache) >= 4:
                     del cache[next(iter(cache))]
                 cache[key] = representation
-        self._respond(200, b"", representation=representation)
+        return representation
 
     def _v2_get_history(self, parsed):
+        try:
+            with type(self)._history_response_lock:
+                representation = self._v2_history_representation(parsed)
+        except (OSError, ValueError) as exc:
+            return self._respond(500, json.dumps({"error": str(exc)}).encode())
+        if representation is None:
+            return self._respond(503, b'{"error":"history changed during reconstruction; retry"}')
+        return self._respond(200, b"", "application/json", representation=representation)
+
+    def _v2_history_representation(self, parsed):
         from .paths import BUS_ARCHIVE_ROOT
         from .review_history import history_buses, latest_round, review_history
 
@@ -1802,48 +1964,43 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     signature.append((str(path),))
             return signature
 
-        try:
-            with type(self)._history_response_lock:
-                cache = type(self)._history_responses
-                for _ in range(3):
-                    # Check even cache hits under the transaction lock, so a
-                    # reader waiting on a writer cannot return its old revision.
-                    with _locked_store(self.artifact_dir, write=False):
-                        signature = disk_signature()
-                        if cache.get("signature") == signature:
-                            break
-                        meta_bytes = self._meta_path().read_bytes()
-                        store_bytes = self._store_path().read_bytes() if self._store_path().exists() else b"{}"
-                    try:
-                        history = review_history(self.artifact_dir, bus, BUS_ARCHIVE_ROOT,
-                                                 meta_bytes=meta_bytes, store_bytes=store_bytes,
-                                                 bus_cache=type(self)._history_bus_cache)
-                    except (OSError, ValueError):
-                        with _locked_store(self.artifact_dir, write=False):
-                            if disk_signature() != signature:
-                                continue
-                        raise
-                    # Reconstruction stays outside the writer lock, but every
-                    # input must belong to the revision copied above.
-                    with _locked_store(self.artifact_dir, write=False):
-                        if disk_signature() != signature:
-                            continue
-                    body = json.dumps(history, ensure_ascii=False).encode()
-                    cache.clear()
-                    cache.update(signature=signature, body=body,
-                                 latest=json.dumps(latest_round(history), ensure_ascii=False).encode())
+        cache = type(self)._history_responses
+        for _ in range(3):
+            # Check even cache hits under the transaction lock, so a
+            # reader waiting on a writer cannot return its old revision.
+            with _locked_store(self.artifact_dir, write=False):
+                signature = disk_signature()
+                if cache.get("signature") == signature:
                     break
-                else:
-                    return self._respond(503, b'{"error":"history changed during reconstruction; retry"}')
-                key = (latest, compressed)
-                if key not in cache:
-                    body = cache["latest" if latest else "body"]
-                    packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
-                    cache[key] = (packed, True) if len(packed) < len(body) else (body, False)
-                representation = cache[key]
-            return self._respond(200, b"", "application/json", representation=representation)
-        except (OSError, ValueError) as exc:
-            return self._respond(500, json.dumps({"error": str(exc)}).encode())
+                meta_bytes = self._meta_path().read_bytes()
+                store_bytes = self._store_path().read_bytes() if self._store_path().exists() else b"{}"
+            try:
+                history = review_history(self.artifact_dir, bus, BUS_ARCHIVE_ROOT,
+                                         meta_bytes=meta_bytes, store_bytes=store_bytes,
+                                         bus_cache=type(self)._history_bus_cache)
+            except (OSError, ValueError):
+                with _locked_store(self.artifact_dir, write=False):
+                    if disk_signature() != signature:
+                        continue
+                raise
+            # Reconstruction stays outside the writer lock, but every
+            # input must belong to the revision copied above.
+            with _locked_store(self.artifact_dir, write=False):
+                if disk_signature() != signature:
+                    continue
+            body = json.dumps(history, ensure_ascii=False).encode()
+            cache.clear()
+            cache.update(signature=signature, body=body,
+                         latest=json.dumps(latest_round(history), ensure_ascii=False).encode())
+            break
+        else:
+            return None
+        key = (latest, compressed)
+        if key not in cache:
+            body = cache["latest" if latest else "body"]
+            packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
+            cache[key] = (packed, True) if len(packed) < len(body) else (body, False)
+        return cache[key]
 
     def _v2_get_comments(self, parsed):
         params = urllib.parse.parse_qs(parsed.query)
@@ -1905,18 +2062,18 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             version = self._read_meta().get("current")
         return self._extractable_version(version)
 
-    def _v2_serve_root(self, parsed):
+    def _v2_root_response(self, parsed):
         v = (urllib.parse.parse_qs(parsed.query).get("v") or [None])[0]
         if not v and not self._read_meta().get("current") and (self.artifact_dir / ".review-drafts").exists():
-            return self._respond(503, b'{"error":"no Review version is ready"}')
+            return 503, b'{"error":"no Review version is ready"}'
         try:
             target = self._version_path(v)
         except FileNotFoundError:
-            return self._respond(404, b'{"error":"review version is not ready"}')
+            return 404, b'{"error":"review version is not ready"}'
         except ValueError:
-            return self._respond(400, b'{"error":"invalid version"}')
+            return 400, b'{"error":"invalid version"}'
         except PermissionError:
-            return self._respond(403, b'{"error":"forbidden version path"}')
+            return 403, b'{"error":"forbidden version path"}'
         # Universal-shell slugs serve the shared shell.html at root; the shell
         # reads ?v= client-side and loads the right iframe src. A slug earns
         # that path either by having a content/ dir of chrome-free docs, or by
@@ -1929,8 +2086,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 try:
                     html = shell_path.read_text(encoding="utf-8")
                 except OSError:
-                    self._respond(500, b"Read error")
-                    return
+                    return 500, b"Read error"
                 # PATH-versioned chrome asset refs: new file mtime -> new URL
                 # PATH -> guaranteed edge cache miss. (?v= query stamps proved
                 # insufficient: some CDN configs strip query strings from the
@@ -1944,23 +2100,18 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                             f'{attribute}="{base}/assets/{_mtime_stamp(self.skill_dir / name)}/{name}"')
                 if gate := self._signin_gate():
                     html = html.replace("</head>", f'<meta name="annotate-signin" content="{gate}">\n</head>', 1)
-                self._respond(200, html.encode("utf-8"), "text/html; charset=utf-8",
-                              cache_control=_NO_STORE)
-                return
+                return 200, html.encode("utf-8"), "text/html; charset=utf-8", _NO_STORE
             # skill_dir/shell.html missing — fail loudly rather than silently
             # falling back, so a broken deploy is visible instead of masked.
-            self._respond(500, b'{"error":"shell.html not found next to sync_server.py"}')
-            return
+            return 500, b'{"error":"shell.html not found next to sync_server.py"}'
 
         if not target.exists() or not target.is_file():
-            self._respond(404, b"Not found")
-            return
+            return 404, b"Not found"
         try:
             data = target.read_bytes()
         except OSError:
-            self._respond(500, b"Read error")
-            return
-        self._respond(200, data, "text/html; charset=utf-8")
+            return 500, b"Read error"
+        return 200, data, "text/html; charset=utf-8"
 
     def _ensure_content_stamp(self, version: str, html: str, content_path: Path) -> None:
         """Compute-and-cache content_stamps[version] into current.meta.json
@@ -2008,6 +2159,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         update_meta(self.artifact_dir, mutate, read=self._read_meta, durable=True)
 
     def _v2_serve_content(self, parsed, *, plan_id=None, plan_version=None):
+        # Keep version selection and content reads atomic. A slow client must
+        # only hold up its own socket once the response is ready.
+        with _locked_store(self.artifact_dir, write=False) if plan_id is None else nullcontext():
+            response = self._v2_content_response(parsed, plan_id=plan_id, plan_version=plan_version)
+        return self._respond(*response)
+
+    def _v2_content_response(self, parsed, *, plan_id, plan_version):
         """GET /content?v=vN — serve the chrome-free extracted content doc
         for version vN, with adapter.js injected before </body>. Falls back
         to 'current' version from current.meta.json when ?v= is omitted.
@@ -2018,19 +2176,18 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             meta = self._read_meta()
             v = meta.get("current")
         if not v:
-            self._respond(400, b'{"error":"no version specified and no current.meta.json"}')
-            return
+            return 400, b'{"error":"no version specified and no current.meta.json"}'
         try:
             if plan_id is None:
                 from .review_versions import draft_path, shown
                 if draft_path(self.artifact_dir, v).exists() and not shown(self._read_meta(), v):
-                    return self._respond(404, b'{"error":"review version is not ready"}')
+                    return 404, b'{"error":"review version is not ready"}'
             if plan_id is not None:
                 from .categories import plan_meta, safe_path, validate_plan_id
                 validate_plan_id(plan_id)
                 meta = plan_meta(self.artifact_dir, plan_id)
                 if v not in {item.get("version") for item in meta.get("history", [])}:
-                    return self._respond(404, b'{"error":"plan version not found"}')
+                    return 404, b'{"error":"plan version not found"}'
                 entry = next(item for item in meta.get("history", []) if item.get("version") == v)
                 if meta.get("managed") and not entry.get("legacy"):
                     from .approval_catalog import render_plan
@@ -2041,19 +2198,18 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             else:
                 target = _version_file(self.artifact_dir, v, "content")
         except ValueError:
-            return self._respond(400, b'{"error":"invalid version"}')
+            return 400, b'{"error":"invalid version"}'
         except KeyError:
-            return self._respond(404, b'{"error":"plan not found"}')
+            return 404, b'{"error":"plan not found"}'
         except PermissionError:
-            return self._respond(403, b'{"error":"forbidden content path"}')
+            return 403, b'{"error":"forbidden content path"}'
         if target is None:
             pass  # Approval-managed Plans render immutable evidence, not manual files.
         elif target.exists() and target.is_file():
             try:
                 html = target.read_text(encoding="utf-8")
             except OSError:
-                self._respond(500, b"Read error")
-                return
+                return 500, b"Read error"
             if plan_id is None:
                 self._ensure_content_stamp(v, html, target)
             elif has_canvas_sentinels(html):
@@ -2066,7 +2222,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     pass
         else:
             if plan_id is not None:
-                return self._respond(404, b'{"error":"plan content not found"}')
+                return 404, b'{"error":"plan content not found"}'
             # No content/ doc: recover one from the baked legacy artifact.
             # Doing this at request time rather than as a one-off migration is
             # what keeps chrome fixes universal — a legacy page picks up the
@@ -2077,24 +2233,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             try:
                 baked = self._version_path(v)
             except PermissionError:
-                return self._respond(403, b'{"error":"forbidden version path"}')
+                return 403, b'{"error":"forbidden version path"}'
             if not baked.exists() or not baked.is_file():
-                self._respond(404, f'{{"error":"content not found for version {v}"}}'.encode())
-                return
+                return 404, f'{{"error":"content not found for version {v}"}}'.encode()
             try:
                 raw = baked.read_text(encoding="utf-8", errors="replace")
             except OSError:
-                self._respond(500, b"Read error")
-                return
+                return 500, b"Read error"
             try:
                 html = build_content_document(raw, title=page_name(self.artifact_dir)) if has_canvas_sentinels(raw) else raw
             except ExtractionError as exc:
-                self._respond(
-                    500,
-                    json.dumps({"error": f"could not extract content for {v}: {exc}"}).encode(),
-                    "application/json",
-                )
-                return
+                return 500, json.dumps({"error": f"could not extract content for {v}: {exc}"}).encode()
             self._ensure_content_stamp(v, html, baked)
 
         # Inject adapter.js (served from /adapter.js, which _strip_base +
@@ -2167,7 +2316,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         else:
             html = html.replace('<script src="../diagram-plot.js"></script>', "")
 
-        self._respond(200, html.encode("utf-8"), "text/html; charset=utf-8")
+        return 200, html.encode("utf-8"), "text/html; charset=utf-8"
 
     def _serve_skill_asset(self, rel: str):
         """Serve shell.js / shell.css / adapter.js — shared, version-stable
@@ -3963,10 +4112,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                       "library": {"groups": library.get("groups", []),
                                   **({"error": library["error"]} if "error" in library else {})},
                       "linked_pages": links, "read_only": self._moved() is not None}
-            return self._respond(200, json.dumps(result, ensure_ascii=False).encode(), cache_control="no-store", conditional=True)
+            body = json.dumps(result, ensure_ascii=False).encode()
         except (ValueError, OSError, LookupError, TypeError, AttributeError) as exc:
             # Unexpected page data is reported, never a dropped connection.
             return self._respond(400, json.dumps({"error": f"page data could not be read: {exc}"}).encode())
+        return self._respond(200, body, cache_control="no-store", conditional=True)
 
     def _bounded_json_body(self):
         try:
@@ -4034,7 +4184,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 else:
                     document = add_browser_revision(self.artifact_dir, block_id, payload["delta"], author,
                                                     base_revision=payload["base_revision"], request_id=payload["request_id"])
-            self._respond(200, json.dumps(document, ensure_ascii=False).encode(), cache_control="no-store")
+            body = json.dumps(document, ensure_ascii=False).encode()
         except StaleRevisionError as exc:
             self._respond(409, json.dumps({"error": str(exc)}).encode())
         except (ValueError, TypeError) as exc:
@@ -4044,6 +4194,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(404, b'{"error":"copy block or revision not found"}')
         except OSError:
             self._respond(500, b'{"error":"copy proposal could not be saved; retry with the same request id"}')
+        else:
+            self._respond(200, body, cache_control="no-store")
 
     def _post_plan_topics(self):
         """The reviewer's Move to…, rename or merge of a Plans topic (plan_topics.change)."""
@@ -4058,13 +4210,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         try:
             with _locked_store(self.artifact_dir, write=False):
                 config = change(self.artifact_dir, list_plans(self.artifact_dir, store=self._v2_load(read_only=True)), payload)
-            self._respond(200, json.dumps(config, ensure_ascii=False).encode(), cache_control="no-store")
+            body = json.dumps(config, ensure_ascii=False).encode()
         except KeyError as exc:
             self._respond(404, json.dumps({"error": f"unknown plan or topic: {exc.args[0]}"}).encode())
         except (ValueError, TypeError) as exc:
             self._respond(400, json.dumps({"error": str(exc)}).encode())
         except OSError:
             self._respond(500, b'{"error":"topics could not be saved; retry"}')
+        else:
+            self._respond(200, body, cache_control="no-store")
 
     # ── Seen / last-visit tracking ────────────────────────────────────
     def _v2_get_seen(self, parsed):
@@ -4258,8 +4412,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             self._respond(403, b"Forbidden")
             return
         if target == self._meta_path().resolve():
-            with _locked_store(self.artifact_dir, write=False):
-                return self._v2_get_meta()  # Aliases share the publication lock and filtered API.
+            return self._v2_get_meta()  # Aliases share the publication lock and filtered API.
         from .review_versions import draft_path, shown
         if target.parent.name in ("versions", "content") and _VERSION_ID.fullmatch(target.stem):
             if draft_path(self.artifact_dir, target.stem).exists() and not shown(self._read_meta(), target.stem):
@@ -4382,9 +4535,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if name != "Vary":
                 for item in value if isinstance(value, (list, tuple)) else (value,):
                     self.send_header(name, item)
-        self.end_headers()
-        if self.command != "HEAD" and code not in (204, 304):
-            self.wfile.write(body)
+        try:
+            self.end_headers()
+            if self.command != "HEAD" and code not in (204, 304):
+                self.wfile.write(body)
+        except (ConnectionError, TimeoutError):
+            self.close_connection = True
 
     def log_message(self, fmt, *args):
         # Suppress default access log for static files to reduce noise

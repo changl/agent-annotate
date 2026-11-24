@@ -208,7 +208,7 @@ def test_round_recovery_save_cannot_publish_later_uncommitted_mutations(server):
 def test_external_same_size_store_edits_invalidate_all_representations(server, replacement):
     httpd, root, _, _ = server
     path = root / "comments.json"
-    variants = [(route, encoding) for route in ("/comments.json", "/comments.json?view=poll")
+    variants = [(route, encoding) for route in ("/comments.json", "/comments.json?view=poll", "/comments.json?view=page")
                 for encoding in ("identity", "gzip")]
     before = {(route, encoding): request(httpd, route, headers={"Accept-Encoding": encoding})[1]["ETag"]
               for route, encoding in variants}
@@ -232,15 +232,16 @@ def test_external_same_size_store_edits_invalidate_all_representations(server, r
     assert json.loads(request(httpd, "/comments.json")[2])["anchors"]["s:test"][0]["text"] == "Newest"
 
 
-def test_encoded_store_cache_retains_only_four_current_representations(server):
+def test_encoded_store_cache_retains_only_current_representations(server):
     httpd, root, _, _ = server
     for index in range(8):
         assert request(httpd, "/api/comments/card", "PUT", {"text": f"Revision {index}"})[0] == 200
-        for route in ("/comments.json", "/comments.json?view=poll"):
+        for route in ("/comments.json", "/comments.json?view=poll", "/comments.json?view=page"):
             for encoding in ("identity", "gzip"):
                 assert request(httpd, route, headers={"Accept-Encoding": encoding})[0] == 200
         cache = httpd.RequestHandlerClass._store_responses
-        assert set(cache) == {"signature", (False, False, False), (False, True, False), (True, False, False), (True, True, False)}
+        assert set(cache) == {"signature"} | {(view, zipped, False) for view in (None, "poll", "page")
+                                              for zipped in (False, True)}
         assert httpd.RequestHandlerClass._store_snapshot[0] == cache["signature"][0]
 
 
@@ -256,7 +257,7 @@ def test_poll_validators_never_bypass_review_key_authentication(server, monkeypa
     first = review_access.issue_cookie(root, key, "First reviewer")
     second = review_access.issue_cookie(root, key, "Second reviewer")
     headers = {"Host": "review.example.ts.net", "Cookie": review_access.cookie_name(root) + "=" + first}
-    for route in ("/comments.json", "/comments.json?view=poll", "/api/categories", "/api/read-state",
+    for route in ("/comments.json", "/comments.json?view=poll", "/comments.json?view=page", "/api/categories", "/api/read-state",
                   "/api/session-monitor", "/api/board", "/api/plans/test", "/current.meta.json",
                   "/api/delivery", "/api/history", "/api/project"):
         status, cached, _ = request(httpd, route, headers=headers)

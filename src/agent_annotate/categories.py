@@ -543,15 +543,17 @@ def category_counts(page_dir: Path | str, author: str | None = None, *, read_sta
             if category == "library" and _mapping(comment.get("target")).get("copy_revision"):
                 continue
             counts[category][section] += 1
-            if (author and comment_can_be_unread(comment)
-                    and read.get(comment.get("id"), {}).get("sig") != comment_sig(comment)):
-                # Review and Plans: unread on the document's current version (the
-                # rail's scope), plus cards that follow the viewer to it.
-                if category in ("review", "plans"):
-                    doc = comment.get("doc") if category == "plans" else "review"
-                    current = versions.get(doc)
-                    if current and comment.get("version") != current and not _follows_viewer(comment):
-                        continue
+            if not (author and comment_can_be_unread(comment)):
+                continue
+            # Review and Plans: unread on the document's current version (the
+            # rail's scope), plus cards that follow the viewer to it. Checked
+            # before the hash: most comments of a long page are out of scope.
+            if category in ("review", "plans"):
+                doc = comment.get("doc") if category == "plans" else "review"
+                current = versions.get(doc)
+                if current and comment.get("version") != current and not _follows_viewer(comment):
+                    continue
+            if read.get(comment.get("id"), {}).get("sig") != comment_sig(comment):
                 counts[category]["unread"] += 1
     try:
         blocks = load_copy(page_dir)["blocks"]

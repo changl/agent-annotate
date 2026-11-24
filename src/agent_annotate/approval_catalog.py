@@ -182,6 +182,7 @@ def _save_bundle(page_dir, bundle):
     return digest
 
 
+@lru_cache(maxsize=4)  # uzd: every /content load re-parsed the same version (~0.2 s on FLD); callers only read it
 def _document_parts(html):
     styles = "\n".join(re.findall(r"<style\b[^>]*>.*?</style>", html, re.I | re.S))
     registry = re.search(r'<script\b[^>]*id=[\"\']anchor-registry-data[\"\'][^>]*>.*?</script>', html, re.I | re.S)

@@ -3,12 +3,22 @@
 import gzip
 import hashlib
 import http.client
+import socket
 import threading
+import time
 from contextlib import contextmanager
+from queue import Queue
 
 import pytest
 
-from agent_annotate.sync_server import ReviewHTTPServer, _asset_bytes, _mtime_stamp, make_handler
+from agent_annotate import review_versions, store
+from agent_annotate.sync_server import (
+    ReviewHTTPServer,
+    _asset_bytes,
+    _mtime_stamp,
+    find_free_port,
+    make_handler,
+)
 
 
 @pytest.fixture
@@ -22,7 +32,7 @@ def server(tmp_path):
     (tmp_path / "current.meta.json").write_text('{"current":"v1","history":[]}')
     (tmp_path / "current.html").write_text("<html><body>Review</body></html>")
     handler = make_handler(tmp_path, skill_dir=web, public_base_path="/review", slug="review")
-    httpd = ReviewHTTPServer(("127.0.0.1", 0), handler)
+    httpd = ReviewHTTPServer(("127.0.0.1", find_free_port(18760)), handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     yield httpd, tmp_path, web
@@ -50,6 +60,94 @@ def request(conn, path, *, method="GET", headers=None, body=None):
     if method != "HEAD" and response.status not in (204, 304):
         assert int(response.getheader("Content-Length")) == len(data)
     return response, data
+
+
+@pytest.mark.parametrize("path", ["current.meta.json", "meta-alias.json", "content", "__review_preview", ""])
+def test_abandoned_polls_close_while_slow_client_still_receives(server, monkeypatch, path):
+    httpd, root, _ = server
+    large_body = "x" * (4 * 1024 * 1024)
+    if path.endswith(".json"):
+        meta = root / "current.meta.json"
+        meta.write_text('{"current":"v1","history":[],"padding":"' + large_body + '"}')
+        if path == "meta-alias.json":
+            (root / path).symlink_to(meta)
+    else:
+        target = root / "current.html"
+        if path == "content":
+            target = root / "content/v1.html"
+        elif path == "__review_preview":
+            target = root / "versions/v2.html"
+            draft = review_versions.stage(root, "v2", "", None, {})
+            path += f"/v2/{draft['preview']}"
+        if target.parent != root:
+            target.parent.mkdir()
+        target.write_text("<html><body>" + large_body + "</body></html>")
+    store.import_page(root)
+    (root / ".comments.json.lock").touch()
+
+    workers = Queue()
+    run_request = httpd.process_request_thread
+
+    def observe(accepted, address):
+        # Force backpressure without relying on the machine's TCP defaults.
+        accepted.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+        workers.put((threading.current_thread(), accepted))
+        run_request(accepted, address)
+
+    monkeypatch.setattr(httpd, "process_request_thread", observe)
+
+    def send(client, route):
+        client.sendall(
+            f"GET /review/{route} HTTP/1.1\r\nHost: 127.0.0.1:{httpd.server_port}\r\nConnection: close\r\n\r\n".encode()
+        )
+        return workers.get(timeout=5)
+
+    with socket.socket() as slow:
+        slow.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        slow.settimeout(5)
+        slow.connect(httpd.server_address)
+        slow_thread, slow_socket = send(slow, path)
+        assert slow.recv(1) == b"H"  # The server has started the response.
+
+        abandoned = []
+        for _ in range(8):
+            with socket.create_connection(httpd.server_address, timeout=5) as client:
+                abandoned.append(send(client, "comments.json?view=poll"))
+
+        deadline = time.monotonic() + 4
+        for thread, _ in abandoned:
+            thread.join(max(0, deadline - time.monotonic()))
+        assert slow_thread.is_alive() and slow_socket.fileno() >= 0
+        retained = (sum(thread.is_alive() for thread, _ in abandoned),
+                    sum(accepted.fileno() >= 0 for _, accepted in abandoned))
+        assert retained == (0, 0), f"retained request threads and accepted sockets: {retained}"
+        slow.close()
+        slow_thread.join(timeout=5)
+        assert slow_socket.fileno() == -1
+
+
+def test_history_disconnect_closes_without_trying_a_500(server, monkeypatch):
+    httpd, _, _ = server
+    attempts = []
+    errors = []
+    handler = httpd.RequestHandlerClass
+    send_response = handler.send_response
+
+    def record_status(self, code, *args):
+        attempts.append(code)
+        send_response(self, code, *args)
+
+    def disconnected(self):
+        raise BrokenPipeError
+
+    monkeypatch.setattr(handler, "send_response", record_status)
+    monkeypatch.setattr(handler, "end_headers", disconnected)
+    monkeypatch.setattr(httpd, "handle_error", lambda *_: errors.append("handler error"))
+    with connection(server) as conn, pytest.raises(http.client.RemoteDisconnected):
+        request(conn, "/review/api/history")
+
+    assert attempts == [200]
+    assert not errors
 
 
 def test_stamped_assets_validate_bytes_and_keep_immutable_policy_on_304(server):

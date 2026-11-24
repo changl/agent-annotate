@@ -109,7 +109,9 @@ def test_wide_document_text_size_earlier_feedback_and_plan_contrast(tmp_path):
             head = page.locator('#comment-list [data-section-toggle="earlier"]')
             assert head.get_attribute("aria-expanded") == "false"
             head.click()
-            assert page.locator('#comment-list .sec[data-section="earlier"] .citem[data-comment-id="old-1"]').count() == 1
+            old = page.locator('#comment-list .sec[data-section="earlier"] .citem[data-comment-id="old-1"]')
+            old.wait_for()  # older feedback loads when the section opens
+            assert old.count() == 1
 
             # One control scales every text, in the shell and the document; it persists.
             assert frame.locator(".aa p").first.evaluate("e => getComputedStyle(e).fontSize") == "11px"

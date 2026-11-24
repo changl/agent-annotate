@@ -229,6 +229,17 @@ def test_each_step_fails_once_and_rolls_back(rollout, tmp_path, capsys, step):
     assert json.loads((tmp_path / "rollout/log.ndjson").read_text())["result"] == "failed"
 
 
+def test_rollback_restores_a_skill_with_an_absolute_symlink(rollout, tmp_path, capsys):
+    mac = FakeMac(tmp_path, rollout, fail="restart p1")
+    target = tmp_path / "state-target"
+    target.mkdir()
+    (mac.skills[0] / "state").symlink_to(target)  # the live annotate skill links its state dir absolutely
+    assert rollout.main(["apply", "2.29.0", "--mac", "M1"]) == 1
+    assert capsys.readouterr().out.strip() == "M1 FAILED at restart p1 (injected) · rolled back to 2.28.2 · doctor ok"
+    mac.assert_old()
+    assert os.readlink(mac.skills[0] / "state") == str(target)
+
+
 def test_check_fails_when_a_page_stays_old(rollout, tmp_path, capsys):
     mac = FakeMac(tmp_path, rollout)
     real = mac.restart

@@ -64,7 +64,8 @@ def _identity(record: dict, *, listening: bool = True) -> dict:
         raise DeploymentError("page registry lacks a valid directory, current document or port")
     processes = cli._running_servers(strict=True).get(str(directory), [])
     try:
-        capabilities = cli._server_capabilities(port, record.get("public_base_path") or "")
+        # 10 s, not 1 s: under heavy load a live server took 1-17 s and the restart refused it as "unknown occupant".
+        capabilities = cli._server_capabilities(port, record.get("public_base_path") or "", timeout=10.0)
     except RuntimeError as exc:
         raise DeploymentError(str(exc)) from exc
     if len(processes) > 1:
