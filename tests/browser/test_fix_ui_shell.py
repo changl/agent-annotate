@@ -15,6 +15,7 @@ from test_card_layout import CHROME, _serve
 from test_single_page_acceptance import workspace  # noqa: F401
 from test_workspace_intent import _page
 
+from agent_annotate.categories import publish_plan_revision
 from agent_annotate.pagegen import generate
 from agent_annotate.review_versions import activate
 from agent_annotate.store import transaction, write_json
@@ -556,6 +557,31 @@ def test_startup_withdrawal_pauses_send_and_keeps_the_shown_draft(tmp_path, vers
         expect(page.locator("#round-confirm-backdrop")).to_be_hidden()
         card = json.loads(path.read_text())["anchors"]["d:q31"][0]
         assert any(reply["text"] == text for reply in card["replies"])
+
+
+def test_stale_review_send_from_plans_points_to_review_refresh(tmp_path, versions):
+    publish_plan_revision(versions, "launch", '<html><body><h1>Launch</h1></body></html>', title="Launch")
+    _stage_review(tmp_path, versions, "v3")
+    with opened(tmp_path, versions, init=[MANUAL_REVIEW_POLL]) as (page, _, _):
+        go(page, "plans", plan="launch")
+        with transaction(versions):
+            activate(versions, "v3")
+        _try_send(page)
+
+        modal = page.locator("#round-confirm-backdrop")
+        expect(modal).to_be_visible()
+        expect(page.locator("#round-confirm-sub")).to_contain_text("Open Review")
+        modal.locator('[data-sum-open="review"]').click()
+        expect(page.locator("#content-frame")).to_have_attribute("data-doc", "review")
+        expect(page.locator("#aa-fresh .aa-fresh-v")).to_have_text("v3")
+        page.locator("#aa-fresh").click()
+        expect(page.locator("#content-frame")).to_have_attribute("data-version", "v3")
+
+        go(page, "plans", plan="launch")
+        _try_send(page)
+        expect(modal).to_be_hidden()
+        store = json.loads((versions / "comments.json").read_text())
+        assert not store["anchors"]["s:checks:p1"][0]["decision"].get("round_pending")
 
 
 # ── UI-28: the version hint, and pages with one tab ────────────────────────

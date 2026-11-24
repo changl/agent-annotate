@@ -794,7 +794,9 @@
     sending = false;
     if (r?.refreshRequired) {
       btns.forEach(b => { b.disabled = false; });
-      $('#round-confirm-sub').textContent = 'Review has a newer version. Close this summary and use Refresh before sending.';
+      const action = AA.view === 'review' ? 'Close this summary and use Refresh'
+        : 'Use Open Review in this summary, then Refresh';
+      $('#round-confirm-sub').textContent = 'Review has a newer version. ' + action + ' before sending.';
       return;
     }
     // UI-2: the receipt lists only what was sent; what failed stays pending.
