@@ -268,7 +268,7 @@
       document.getElementById('frame-area').classList.toggle('is-plans-index', plansIndex);
       AA.plansIndex.show(plansIndex);
       renderPlanPicker();
-      await DOCS().activate(next, p.get('v') || versions[next] || null);
+      await DOCS().activate(next, p.get('v') || versions[next] || null, !!prev);
       if (view !== next) return;
     } else {
       DOCS().park();
@@ -792,6 +792,11 @@
     try { r = await docs.submitPage(libraryPending, items); } catch (e) { console.error('[annotate] send', e); }
     submitBtn.innerHTML = submitHtml;
     sending = false;
+    if (r?.refreshRequired) {
+      btns.forEach(b => { b.disabled = false; });
+      $('#round-confirm-sub').textContent = 'Review has a newer version. Close this summary and use Refresh before sending.';
+      return;
+    }
     // UI-2: the receipt lists only what was sent; what failed stays pending.
     const sent = r ? (r.sent || []).map(it => ({ cat: it.cat, label: it.label, answer: it.answer || '', doc: it.doc })) : [];
     const failed = r ? (r.failed || []).length : items.length;

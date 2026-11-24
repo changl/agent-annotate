@@ -479,6 +479,8 @@ function wantFullStore() {
   return fullStore;
 }
 function adoptFull(before) {
+  const snapshotVersion = STORE.current_version;
+  const snapshotNumber = Number(snapshotVersion?.slice(1));
   const where = new Map();
   for (const area of ['anchors', 'archived']) {
     for (const [aid, items] of Object.entries(STORE[area] || {})) for (const c of items) where.set(c.id, { area, aid, c });
@@ -490,13 +492,17 @@ function adoptFull(before) {
     }
   }
   const out = Object.assign({}, LIVE, { anchors: {}, archived: {} });
+  if (snapshotVersion) out.current_version = snapshotVersion;
   const placed = new Set();
   for (const area of ['anchors', 'archived']) {
     for (const [aid, items] of Object.entries(LIVE[area] || {})) {
       const list = [];
       for (const c of Array.isArray(items) ? items : []) {
         const shown = where.get(c.id);
-        if (waitingNew.has(c.id) || (shown && (shown.area !== area || shown.aid !== aid))) continue;
+        // A full read can finish after a publish. Its new Review cards wait for Refresh.
+        const laterReview = !shown && docOf(c) === 'review' && typeof c.version === 'string'
+          && Number(c.version.slice(1)) > snapshotNumber;
+        if (laterReview || waitingNew.has(c.id) || (shown && (shown.area !== area || shown.aid !== aid))) continue;
         list.push(shown ? shown.c : c);
         if (shown) placed.add(c.id);
       }
@@ -1563,7 +1569,7 @@ function setFresh(n, newer, fix) {
   btn.dataset.state = n ? 'new' : newer ? 'newer' : 'idle';
 }
 function renderVersionBanner() {
-  const latest = latestVersion();
+  const latest = (DOC === 'review' && LIVE?.current_version) || latestVersion();
   const newer = latest && CURRENT_VERSION !== latest ? latest : '';
   const w = waitingChanges();
   const fix = !!newer && (META.history || []).some(h => h.fixes === CURRENT_VERSION);
@@ -1842,11 +1848,6 @@ function sayDraft(c) {
 }
 function replyDraft(c) {
   return (DRAFTS[c.id] || '').trim();
-}
-// Publication gives a reissued question a new id; typed words follow its number.
-function feedbackTarget(c) {
-  return flattenAll(false).find(next => next.number && next.number === c.number &&
-    next.version === latestVersion() && !next.withdrawn && next.status !== 'archived') || c;
 }
 // Clear a card's comment draft everywhere it is shown (rail, summary, body
 // strip), so a re-render cannot read the old text back out of a box.
@@ -4489,13 +4490,12 @@ async function prepareDocCore() {
   let ok = true;
   const failed = [];
   for (const c of flattenAll(false).filter(c => hasSayDraft(c) || strandedSay(c))) {
-    const target = feedbackTarget(c);
-    const r = isUnresolvedDecision(target)
-      ? await apiDecision(target.id, 'comment', sayDraft(c)) : await apiReply(target.id, sayDraft(c));
+    const r = isUnresolvedDecision(c)
+      ? await apiDecision(c.id, 'comment', sayDraft(c)) : await apiReply(c.id, sayDraft(c));
     if (r) { clearSayDraft(c.id); delete decisionChanging[c.id]; } else { ok = false; failed.push(c.id); }
   }
   for (const c of flattenAll(false).filter(replyDraft)) {
-    if (await apiReply(feedbackTarget(c).id, replyDraft(c))) {
+    if (await apiReply(c.id, replyDraft(c))) {
       setDraft(c.id, '');
       document.querySelectorAll('[data-reply-for="' + cssEsc(c.id) + '"]').forEach(ta => { ta.value = ''; });
     } else { ok = false; failed.push(c.id); }
@@ -4534,13 +4534,34 @@ function pageRoundPending() {
 async function submitPage(alsoPending, receipt) {
   let sentCount = 0, delivered = false, last = null;
   const lines = Array.isArray(receipt) ? receipt : [];
+  const reviewVersion = VIEW_DOC === 'review' || lines.some(it => it.cat === 'review')
+    ? withDoc('review', () => CURRENT_VERSION) : null;
+  const shownDrafts = withIdIndex(() => lines.flatMap(it => {
+    if (!it.id || !DOCS.includes(it.cat)) return [];
+    const keys = withDoc(it.cat, () => {
+      if (it.id === 'gf:' + DOC) return gfDraft() ? ['gf'] : [];
+      const c = findCommentById(it.id);
+      if (!c) return [];
+      return [(hasSayDraft(c) || strandedSay(c)) && 'say:' + c.id, replyDraft(c) && c.id].filter(Boolean);
+    });
+    return keys.length ? [{ it, keys }] : [];
+  }));
+  if (!await pollStore()) return null;
+  if (reviewVersion && LIVE.current_version && LIVE.current_version !== reviewVersion) {
+    if (VIEW_DOC === 'review') withDoc('review', renderVersionBanner);
+    return { refreshRequired: true };
+  }
   const sendId = lines.length ? newSendId() : null;
   const failedIds = new Set();
   // Text typed on a card the agent has since withdrawn goes as a reply to it.
-  await loadStore();
+  applyLive();
   for (const doc of DOCS) {
     const r = await withDocAsync(doc, prepareDocCore);
     (r.failed || []).forEach(id => failedIds.add(doc + '|' + id));
+  }
+  // A refreshed projection can omit a card whose draft was in the summary.
+  for (const { it, keys } of shownDrafts) {
+    if (withDoc(it.cat, () => keys.some(key => DRAFTS[key]?.trim()))) failedIds.add(it.cat + '|' + it.id);
   }
   const failed = lines.filter(it => it.id && failedIds.has(it.cat + '|' + it.id));
   const sent = [];
@@ -5079,11 +5100,11 @@ function whenFrameReady() {
   return new Promise(res => { frameWaiters.push(res); setTimeout(res, 8000); });
 }
 // Show a document: its rail, its frame and its History section.
-async function activateDoc(doc, version) {
+async function activateDoc(doc, version, switching) {
   await DOCS_LOADED;
   await docQueue;
   if (!DOCS.includes(doc)) doc = 'review';
-  if (VIEW_DOC !== doc) applyLive(); // opening a tab shows what the polls brought
+  if (switching && VIEW_DOC !== doc) applyLive(); // Keep the startup snapshot on first open.
   if (DOC !== doc) enterDoc(doc);
   ownDrafts();
   VIEW_DOC = doc;

@@ -16,7 +16,9 @@ from test_single_page_acceptance import workspace  # noqa: F401
 from test_workspace_intent import _page
 
 from agent_annotate.pagegen import generate
-from agent_annotate.store import transaction
+from agent_annotate.review_versions import activate
+from agent_annotate.store import transaction, write_json
+from agent_annotate.sync_server import _withdraw_decision
 
 playwright = pytest.importorskip("playwright.sync_api")
 expect = playwright.expect
@@ -25,6 +27,11 @@ pytestmark = pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is no
 
 LONG = ("Long comment " + "x" * 7) * 1000  # 20,000 characters
 OUTSIDE = "https://example.test/outside"
+# Drive the poll explicitly so a slow Chrome run cannot heal startup first.
+MANUAL_REVIEW_POLL = """(() => {
+    const timeout = window.setTimeout;
+    window.setTimeout = (fn, ms, ...args) => timeout(fn, fn.name === 'refresh' ? 120000 : ms, ...args);
+})();"""
 
 
 @pytest.fixture
@@ -405,15 +412,10 @@ def test_startup_publish_keeps_draft_and_refresh_on_the_reissued_version(tmp_pat
         else:
             route.continue_()
 
-    # Drive the poll explicitly so a slow Chrome run cannot heal startup first.
-    manual_poll = """(() => {
-        const timeout = window.setTimeout;
-        window.setTimeout = (fn, ms, ...args) => timeout(fn, fn.name === 'refresh' ? 120000 : ms, ...args);
-    })();"""
     routes = [("**/comments.json?view=page", store)]
     if later_meta:
         routes.append(("**/current.meta.json", meta))
-    with opened(tmp_path, versions, routes=routes, init=[manual_poll]) as (page, _, _):
+    with opened(tmp_path, versions, routes=routes, init=[MANUAL_REVIEW_POLL]) as (page, _, _):
         assert frame_version(page) == "v3"
         assert len(reads) >= 2
         urls = page.evaluate("performance.getEntriesByType('resource').map(e => e.name)")
@@ -442,6 +444,118 @@ def test_startup_publish_keeps_draft_and_refresh_on_the_reissued_version(tmp_pat
             for route in paused:
                 route.continue_()
             page.unroute(pattern)
+
+
+def _stage_review(tmp_path, directory, version):
+    source = tmp_path / f"{version}.md"
+    source.write_text(f"---\ntitle: Review {version}\nversion: {version}\nfull_plan: true\nother_files_required: none\n---\n\n## Checks\n\nPublished {version}.\n")
+    generate(source, directory)
+
+
+def _reissued_card(version):
+    return {"id": f"reissued-{version}", "number": 31, "anchor_id": "d:q31", "version": version,
+            "text": "Keep the check?", "author": "agent:review-test", "status": "open", "replies": [],
+            "decision_request": {"prompt": "Keep the check?", "options": ["accept", "reject"]}}
+
+
+def _try_send(page):
+    page.locator("#send-btn").click()
+    page.locator("#round-submit-btn").click()
+    page.wait_for_function("""() => !document.getElementById('round-confirm-backdrop').classList.contains('vis')
+        || !document.getElementById('round-submit-btn').disabled""")
+
+
+def test_full_store_startup_publish_keeps_new_questions_behind_refresh(tmp_path, versions):
+    _stage_review(tmp_path, versions, "v3")
+    path = versions / "comments.json"
+    store = json.loads(path.read_text())
+    store["anchors"]["s:old"] = [{"id": "old-draft", "anchor_id": "s:old", "version": "v1",
+                                   "status": "addressed_by_agent", "author": "agent:test", "text": "Settled earlier."}]
+    store["anchors"]["d:q31"] = [_reissued_card("v2"), _reissued_card("v3")]
+    write_json(path, store)
+    published = []
+
+    def full_store(route):
+        if not published:
+            with transaction(versions):
+                activate(versions, "v3")
+            published.append(True)
+        route.continue_()
+
+    draft = """localStorage.setItem('annotate:drafts:' + location.pathname + ':review',
+                                    JSON.stringify({'say:old-draft': 'A saved older draft'}));"""
+    routes = [("**/comments.json?view=poll", full_store)]
+    with opened(tmp_path, versions, routes=routes, init=[draft, MANUAL_REVIEW_POLL]) as (page, _, _):
+        assert published and frame_version(page) == "v2"
+        page.evaluate("() => window.AA.rail.reveal()")
+        new_question = page.locator('#comment-list [data-decision-say-ta="reissued-v3"]')
+        visible = new_question.is_visible()
+        box = new_question if visible else page.locator('#comment-list [data-decision-say-ta="reissued-v2"]')
+        box.fill("Draft typed on the shown question")
+        _try_send(page)
+        cards = json.loads(path.read_text())["anchors"]["d:q31"]
+        decisions = {card["id"]: (card.get("decision") or {}).get("text") for card in cards}
+        assert not visible and all(text is None for text in decisions.values()), (visible, decisions)
+        expect(page.locator("#round-confirm-backdrop")).to_be_visible()
+        expect(page.locator("#round-confirm-sub")).to_contain_text("Refresh")
+        expect(page.locator("#aa-fresh .aa-fresh-v")).to_have_text("v3")
+
+
+def test_startup_withdrawal_pauses_send_and_keeps_the_shown_draft(tmp_path, versions):
+    for version in ("v3", "v4"):
+        _stage_review(tmp_path, versions, version)
+    path = versions / "comments.json"
+    snapshot = json.loads(path.read_text())
+    snapshot["anchors"]["d:q31"] = [_reissued_card("v3")]
+    write_json(path, snapshot)
+    reads, published = [], []
+
+    def store(route):
+        reads.append(route.request.url)
+        if len(reads) == 1:
+            older = route.fetch().json()
+            older["current_version"] = "v1"
+            route.fulfill(json=older)
+            return
+        if len(reads) == 2:
+            with transaction(versions):
+                activate(versions, "v3")
+            published.append("v3")
+        route.continue_()
+
+    def meta(route):
+        if published == ["v3"]:
+            with transaction(versions):
+                latest = json.loads(path.read_text())
+                _withdraw_decision(latest["anchors"]["d:q31"][0], "not asked again in v4", "agent:review-test")
+                write_json(path, latest)
+                activate(versions, "v4")
+            published.append("v4")
+        route.continue_()
+
+    routes = [("**/comments.json?view=page", store), ("**/current.meta.json", meta)]
+    with opened(tmp_path, versions, routes=routes, init=[MANUAL_REVIEW_POLL]) as (page, _, _):
+        assert published == ["v3", "v4"] and frame_version(page) == "v3", (published, frame_version(page))
+        page.evaluate("() => window.AA.rail.reveal()")
+        text = "Unsaved text from the displayed v3 question"
+        page.locator('#comment-list [data-decision-say-ta="reissued-v3"]').fill(text)
+        posts = []
+        page.on("request", lambda req: posts.append(urlsplit(req.url).path) if req.method == "POST" else None)
+        _try_send(page)
+        assert "/api/rounds/submit" not in posts, posts
+        expect(page.locator("#round-confirm-backdrop")).to_be_visible()
+        expect(page.locator("#round-confirm-sub")).to_contain_text("Refresh")
+        expect(page.locator("#aa-fresh .aa-fresh-v")).to_have_text("v4")
+        assert page.evaluate("JSON.parse(localStorage.getItem('annotate:drafts:/:review'))['say:reissued-v3']") == text
+        page.locator("#round-cancel-btn").click()
+        page.locator("#aa-fresh").click()
+        expect(page.locator("#content-frame")).to_have_attribute("data-version", "v4")
+        saved = page.locator('#comment-list .decision-stranded [data-decision-say-ta="reissued-v3"]')
+        expect(saved).to_have_value(text)
+        _try_send(page)
+        expect(page.locator("#round-confirm-backdrop")).to_be_hidden()
+        card = json.loads(path.read_text())["anchors"]["d:q31"][0]
+        assert any(reply["text"] == text for reply in card["replies"])
 
 
 # ── UI-28: the version hint, and pages with one tab ────────────────────────
