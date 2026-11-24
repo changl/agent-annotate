@@ -223,7 +223,8 @@ def restore_skills(folder, skills):
     shutil.rmtree(staging, ignore_errors=True)
     with tarfile.open(folder / "skills.tar.gz") as tar:
         if hasattr(tarfile, "data_filter"):
-            tar.extractall(staging, filter="data")
+            # "tar", not "data": our own backup, and the annotate skill's `state` is an absolute symlink.
+            tar.extractall(staging, filter="tar")
         else:  # shortcut: pre-3.12 Pythons lack the data filter; the tarball is our own backup
             tar.extractall(staging)
     for i, path in enumerate(skills):

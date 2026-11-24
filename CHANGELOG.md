@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A page restart waits up to 10 s (was 1 s) for the running server to identify itself. Under heavy load on 2026-11-24 live servers took 1-17 s, so the 2.32.9 rollout refused a page as "unknown occupant" and rolled back.
+- `scripts/rollout.py`: the rollback restores the skills backup with tar's `tar` filter instead of `data`. The annotate skill's `state` is an absolute symlink, which `data` refuses, so the 2.32.9 rollback crashed after reinstalling the old wheel and left skills on the new version (agent-annotate-7os).
+
 ## 2.32.9
 
 - Resumed owners come back by themselves after a restart (agent-annotate-dlj). The 2.28.3 re-bind required the same Orca terminal, but Orca relaunches each resumed pane under a new handle, so after the 2026-11-23 reboot no page re-bound and Sends queued until someone typed into the terminal. Re-binding now requires the same session and Orca worktree, and the old owner process must be gone.
