@@ -407,9 +407,9 @@ let storeAsked = 0, storeTaken = 0;
 // Send, History, an older version or text typed on an old card read the
 // whole store (`view=poll`) once, and the page keeps it from then on.
 let STORE_VIEW = 'page';
-async function pollStore() {
+async function pollStore(usePageScope = false) {
   const asked = ++storeAsked;
-  const baseMark = STORE.partial ? STORE.store_mark : null;
+  const baseMark = STORE.partial ? (!usePageScope && STORE.store_mark) || 'unknown' : null;
   try {
     const got = await pollJson('./comments.json?view=' + STORE_VIEW, false,
       baseMark ? { 'X-Annotate-Store-Mark': baseMark } : {});
@@ -476,9 +476,15 @@ function wantFullStore() {
   if (!STORE.partial) return Promise.resolve(true);
   if (fullStore) return fullStore;
   STORE_VIEW = 'poll';
-  fullStore = pollStore().then(() => {
-    if (!LIVE || LIVE.partial) { STORE_VIEW = 'page'; fullStore = null; return false; }
-    adoptFull();
+  fullStore = pollStore().then(async () => {
+    let held = heldFromPageRead();
+    // Refresh can replace the partial snapshot while the full read is in flight.
+    if (STORE.partial && LIVE && !LIVE.partial && !held) {
+      await pollStore(true);
+      held = heldFromPageRead();
+    }
+    if (!LIVE || LIVE.partial || (STORE.partial && !held)) { STORE_VIEW = 'page'; fullStore = null; return false; }
+    adoptFull(held);
     if (VIEW_DOC) withDoc(VIEW_DOC, renderAll);
     document.dispatchEvent(new CustomEvent('annotate:store'));
     if (window.AA) { window.AA.changed(); if (window.AA.rail && window.AA.rail.tab === 'history') window.AA.rail.renderHistory(); }
@@ -487,17 +493,18 @@ function wantFullStore() {
   });
   return fullStore;
 }
-function changesSincePageRead() {
-  if (!STORE.partial || !STORE.store_mark || liveBaseMark !== STORE.store_mark || LIVE.snapshot_expired) return null;
+function heldFromPageRead() {
+  if (!STORE.partial || !LIVE) return null;
+  if (LIVE.page_scope) return new Set(LIVE.page_scope);
+  if (!STORE.store_mark || liveBaseMark !== STORE.store_mark || LIVE.snapshot_expired) return null;
   return new Set(LIVE.changed_after);
 }
-function adoptFull() {
+function adoptFull(held) {
   const where = new Map();
   for (const area of ['anchors', 'archived']) {
     for (const [aid, items] of Object.entries(STORE[area] || {})) for (const c of items) where.set(c.id, { area, aid, c });
   }
   const out = Object.assign({}, LIVE, { anchors: {}, archived: {} });
-  const changed = changesSincePageRead();
   const targeted = new Set(DOCS.flatMap(doc => withDoc(doc, draftCardIds)));
   targeted.add(cardLinkId());
   const placed = new Set();
@@ -514,7 +521,7 @@ function adoptFull() {
         if (shown) {
           if (shown.area !== area || shown.aid !== aid) continue;
           placed.add(c.id);
-        } else if (!changed || changed.has(c.id)) continue;
+        } else if (!held || held.has(c.id)) continue;
         list.push(shown ? shown.c : c);
       }
       if (list.length) out[area][aid] = list;
@@ -556,12 +563,12 @@ function waitingChanges() {
   waiting = { live: LIVE, doc: DOC, out };
   const all = (store) => { const s = STORE; STORE = store; try { return flattenStore(true).filter(c => docOf(c) === DOC); } finally { STORE = s; } };
   const shown = new Map(all(STORE).filter(c => !c.pending).map(c => [c.id, JSON.stringify(c)]));
-  const changed = changesSincePageRead();
+  const held = heldFromPageRead();
   for (const c of all(LIVE)) {
     const was = shown.get(c.id);
     shown.delete(c.id);
     if (was === undefined) {
-      if (c.withdrawn || c.status === 'archived' || (changed && !changed.has(c.id))) continue;
+      if (c.withdrawn || c.status === 'archived' || (held && !held.has(c.id))) continue;
       if (c.decision_request) out.questions++; else out.cards++;
     }
     else if (was !== JSON.stringify(c)) out.changed++;

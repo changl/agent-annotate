@@ -12,6 +12,7 @@ import urllib.request
 import pytest
 from test_keep_drafts import _agent, _directory, _session
 
+from agent_annotate import store as page_storage
 from agent_annotate.categories import publish_plan_revision
 
 playwright = pytest.importorskip("playwright.sync_api")
@@ -349,3 +350,51 @@ def test_unchanged_multi_plan_full_store_revalidates_after_restart(tmp_path, mon
         restart()
         response = page.request.get(url, headers={"If-None-Match": etag})
         assert response.status == 304
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+@pytest.mark.parametrize("archived_only", [False, True], ids=["new-note", "archived-only"])
+def test_earlier_feedback_keeps_history_when_a_restart_expires_its_mark(tmp_path, backend, archived_only):
+    directory = _directory(tmp_path)
+    _long_history(directory, 2)
+    if archived_only:
+        path = directory / "comments.json"
+        store = json.loads(path.read_text())
+        del store["anchors"]["s:old0"]
+        path.write_text(json.dumps(store))
+    if backend == "sqlite":
+        page_storage.import_page(directory, project="bus", slug="items-model", state_dir=tmp_path / "state")
+    assert page_storage.backend(directory) == backend
+
+    with _session(tmp_path, directory) as (page, base, restart):
+        restart()
+        note_url = base + "api/comments"
+        assert page.request.post(note_url, data={
+            "id": "restart-note", "anchor_id": "s:checks", "text": "Note after restart", "version": "v1",
+        }).status == 201
+        if archived_only:
+            assert page.request.delete(note_url + "/restart-note").ok
+
+        rail = page.locator("#comment-list")
+        earlier = rail.locator('[data-section-toggle="earlier"]')
+        archived = rail.locator('[data-comment-id="old-1"]')
+        note = rail.locator('[data-comment-id="restart-note"]')
+        badge = page.locator("#aa-fresh .aa-fresh-n")
+        with page.expect_response(lambda r: r.url.endswith("comments.json?view=poll")) as loaded:
+            earlier.click()
+        assert loaded.value.json()["snapshot_expired"]
+        playwright.expect(archived).to_be_visible()
+        if archived_only:
+            playwright.expect(badge).to_be_hidden()
+        else:
+            playwright.expect(rail.locator('[data-comment-id="old-0"]')).to_be_visible()
+            playwright.expect(note).to_have_count(0)
+            playwright.expect(badge).to_have_text("1")
+
+        with page.expect_response(lambda r: r.url.endswith("comments.json?view=poll")):
+            page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        playwright.expect(archived).to_be_visible()
+        if not archived_only:
+            playwright.expect(badge).to_have_text("1")
+            page.locator("#aa-fresh").click()
+            playwright.expect(note).to_be_visible()
