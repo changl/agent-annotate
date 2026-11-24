@@ -354,6 +354,11 @@ def test_late_full_response_keeps_the_newer_etag(tmp_path):
         page.route("**/" + full_url, lambda route: held.append((route, route.fetch())), times=1)
         page.locator('#comment-list [data-section-toggle="earlier"]').click()
         page.wait_for_function("() => document.querySelector('#sec-body-earlier')?.textContent.includes('Loading earlier feedback')")
+        # The handler appends only after its own fetch returns, which can trail the loading text under load.
+        for _ in range(100):
+            if held:
+                break
+            page.wait_for_timeout(100)
         route, initial = held.pop()
         comment_url = base + "api/comments"
         assert page.request.post(comment_url, data={
