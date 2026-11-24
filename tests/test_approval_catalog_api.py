@@ -1,5 +1,7 @@
 import http.client
 import json
+import mmap
+import os
 import re
 import threading
 
@@ -8,6 +10,106 @@ from test_decision_api import _call, _card, _events, _store
 from test_decision_api import server as server
 
 from agent_annotate.approval_catalog import item_id
+
+
+@pytest.fixture
+def image_seal(tmp_path):
+    from agent_annotate.approval_catalog import bind_evidence, persist_evidence, seal_review
+
+    comment = {"id": "card", "anchor_id": "design", "version": "v1",
+               "decision_request": {"prompt": "Approve?", "evidence": [{"anchor": "design"}]}}
+    store = {"anchors": {"design": [comment]}}
+    html = '<section id="design"><img src="a.png" alt="A"><img src="b.png" alt="B"></section>'
+
+    def seal():
+        return seal_review(tmp_path, html, "v1", store)[1]["card"]
+
+    def approve(token):
+        return persist_evidence(tmp_path, comment, bind_evidence(tmp_path, store, comment, token))
+
+    return seal, approve
+
+
+def test_seal_invalidates_on_duplicate_source_change(tmp_path, image_seal):
+    seal, approve = image_seal
+    (tmp_path / "a.png").write_bytes(b"original")
+    (tmp_path / "b.png").write_bytes(b"original")
+    displayed = seal()
+    (tmp_path / "a.png").write_bytes(b"replacement")
+    refreshed = seal()
+    assert displayed != refreshed
+    bundle = approve(refreshed)
+    assert len(bundle["assets"]) == 2 and not bundle["incomplete"]
+    assert approve(displayed)["incomplete"]
+
+
+@pytest.mark.parametrize("changed,unchanged", [("A", "B"), ("B", "A")])
+def test_approval_keeps_only_the_unchanged_duplicate_image(tmp_path, image_seal, changed, unchanged):
+    seal, approve = image_seal
+    for name in ("a.png", "b.png"):
+        (tmp_path / name).write_bytes(b"reviewed")
+    displayed = seal()
+    (tmp_path / f"{changed.lower()}.png").write_bytes(b"replacement")
+    bundle = approve(displayed)
+    pinned, = bundle["assets"]
+    assert (tmp_path / pinned).read_bytes() == b"reviewed"
+    assert f'<img src="./{pinned}" alt="{unchanged}">' in bundle["html"]
+    assert f'<img data-evidence-image-unavailable="" alt="{changed}">' in bundle["html"]
+    assert len(bundle["incomplete"]) == 1
+
+
+def test_seal_invalidates_when_missing_image_is_restored(tmp_path, image_seal):
+    seal, approve = image_seal
+    (tmp_path / "b.png").write_bytes(b"present")
+    displayed = seal()
+    (tmp_path / "a.png").write_bytes(b"restored")
+    refreshed = seal()
+    assert displayed != refreshed
+    assert not approve(refreshed)["incomplete"]
+
+
+def test_new_seal_captures_same_stat_mapped_image_edit(tmp_path, image_seal, monkeypatch):
+    from agent_annotate import sync_server
+
+    seal, approve = image_seal
+    path = tmp_path / "a.png"
+    path.write_bytes(b"original")
+    (tmp_path / "b.png").write_bytes(b"second image")
+    file_key = sync_server._file_key
+    original_key = file_key(path)
+    monkeypatch.setattr(sync_server, "_file_key", lambda p: original_key if p == path else file_key(p))
+    with path.open("r+b") as source, mmap.mmap(source.fileno(), 0) as mapped:
+        mapped[:] = b"original"
+        displayed = seal()
+        mapped[:] = b"updated!"
+        refreshed = seal()
+    assert refreshed != displayed
+    bundle = approve(refreshed)
+    assert {(tmp_path / name).read_bytes() for name in bundle["assets"]} == {b"updated!", b"second image"}
+    assert not bundle["incomplete"]
+
+
+def test_seal_does_not_cache_a_digest_with_a_newer_file_stat(tmp_path, image_seal, monkeypatch):
+    from agent_annotate import approval_catalog
+
+    seal, approve = image_seal
+    a = tmp_path / "a.png"
+    a.write_bytes(b"original")
+    (tmp_path / "b.png").write_bytes(b"second")
+    image_hash = approval_catalog._image_hash
+
+    def replace_after_hash(path, **kwargs):
+        digest = image_hash(path, **kwargs)
+        if path == a:
+            a.write_bytes(b"replacement")
+            monkeypatch.setattr(approval_catalog, "_image_hash", image_hash)
+        return digest
+
+    monkeypatch.setattr(approval_catalog, "_image_hash", replace_after_hash)
+    displayed = seal()
+    refreshed = seal()
+    assert refreshed != displayed
+    assert not approve(refreshed)["incomplete"]
 
 
 def seed(server, text="First design", version="v1", **extra):
@@ -41,6 +143,81 @@ def vote(httpd, comment, evidence, verdict="accept", **extra):
 
 def plans(httpd):
     return _call(httpd, "GET", "/api/categories")[1]["plans"]
+
+
+def test_warm_seals_skip_managed_and_absent_predecessor_lookups(tmp_path, monkeypatch):
+    from agent_annotate import approval_catalog
+    from agent_annotate.categories import publish_plan_revision
+
+    (tmp_path / "plans/empty").mkdir(parents=True)
+    publish_plan_revision(tmp_path, "unrelated", "<h1>Not cited</h1>")
+    ids = ["managed", "absent", "empty"]
+    cards = [{"id": identifier, "anchor_id": "design", "version": "v1",
+              "decision_request": {"prompt": "Approve?", "item_id": identifier}}
+             for identifier in ids]
+    store = {"anchors": {"design": cards}, "approved_plans": {"managed": {"current": "v5"}}}
+    html = '<section id="design">Design</section>'
+    _, first = approval_catalog.seal_review(tmp_path, html, "v1", store)
+    assert {key: first[key]["predecessor"] for key in ids} == {"managed": "v5", "absent": None, "empty": None}
+
+    lookups, reads = [], []
+    current, read_json = approval_catalog._current, approval_catalog._json
+
+    def count_lookup(page_dir, values, identifier):
+        lookups.append(identifier)
+        return current(page_dir, values, identifier)
+
+    def count_read(path, default):
+        reads.append(path)
+        return read_json(path, default)
+
+    monkeypatch.setattr(approval_catalog, "_current", count_lookup)
+    monkeypatch.setattr(approval_catalog, "_json", count_read)
+    for _ in range(12):
+        assert approval_catalog.seal_review(tmp_path, html, "v1", store)[1] == first
+    assert lookups == reads == []
+
+    publish_plan_revision(tmp_path, "empty", "<h1>Now cited</h1>")
+    assert approval_catalog.seal_review(tmp_path, html, "v1", store)[1]["empty"]["predecessor"] == "v1"
+    assert lookups == ["empty"]
+    assert reads == [tmp_path / "plans/empty/meta.json"]
+
+
+def test_seal_revalidates_plan_predecessor_with_preserved_mtime(server):
+    from agent_annotate.categories import publish_plan_revision
+
+    httpd, directory, _ = server
+    comment = seed(server, item_id="design")
+    publish_plan_revision(directory, "design", "<h1>First</h1>")
+    meta = directory / "plans/design/meta.json"
+    original = meta.stat()
+    assert token(httpd, comment)["predecessor"] == "v1"
+    publish_plan_revision(directory, "design", "<h1>Second</h1>")
+    os.utime(meta, ns=(original.st_atime_ns, original.st_mtime_ns))
+    assert token(httpd, comment)["predecessor"] == "v2"
+
+
+def test_seal_refreshes_predecessor_after_same_stat_plan_edit(server, monkeypatch):
+    from agent_annotate import sync_server
+    from agent_annotate.categories import publish_plan_revision
+
+    httpd, directory, _ = server
+    comment = seed(server, item_id="design")
+    publish_plan_revision(directory, "design", "<h1>First</h1>")
+    publish_plan_revision(directory, "design", "<h1>Second</h1>")
+    path = directory / "plans/design/meta.json"
+    original = path.read_bytes().replace(b'"current": "v2"', b'"current": "v1"')
+    path.write_bytes(original)
+    key = sync_server._file_key
+    original_key = key(path)
+    monkeypatch.setattr(sync_server, "_file_key", lambda target: original_key if target == path else key(target))
+    assert token(httpd, comment)["predecessor"] == "v1"
+    with path.open("r+b") as source, mmap.mmap(source.fileno(), 0) as mapped:
+        mapped[:] = original.replace(b'"current": "v1"', b'"current": "v2"')
+        evidence = token(httpd, comment)
+    assert evidence["predecessor"] == "v2"
+    vote(httpd, comment, evidence)
+    assert plans(httpd)[0]["current"] == "v3"
 
 
 @pytest.mark.parametrize("path", ["immediate", "round", "single"])
@@ -276,7 +453,7 @@ def test_manual_publish_checks_managed_identity_under_the_store_lock(server, mon
 @pytest.mark.parametrize("loss", ["restart", "eviction"])
 @pytest.mark.parametrize("verdict", ["accept", "select"])
 def test_vote_evidence_survives_restart_or_eviction_before_send(server, loss, verdict):
-    from agent_annotate.approval_catalog import _VIEWS, read_bundle
+    from agent_annotate.approval_catalog import _SEALS, _VIEWS, read_bundle
     httpd, directory, _ = server
     comment = seed(server)
     (directory / "assets").mkdir()
@@ -294,6 +471,7 @@ def test_vote_evidence_survives_restart_or_eviction_before_send(server, loss, ve
     original.write_bytes(b"changed-after-vote")
     if loss == "eviction":
         for _ in range(17):
+            _SEALS.clear()  # an unchanged page reuses its view; each read must mint one to evict
             token(httpd, comment)
     else:
         _VIEWS.clear()

@@ -224,7 +224,12 @@ def _unique_object(pairs: list) -> dict:
     return result
 
 
+# uzd: (copy.json bytes, its validated form as JSON). Validating Rebex's took ~75 ms, three times per page open.
+_LOADED: tuple = (None, "")
+
+
 def load_copy(slug_dir: Path | str) -> dict:
+    global _LOADED
     path = Path(slug_dir) / "copy.json"
     try:
         with path.open("rb") as source:
@@ -233,11 +238,16 @@ def load_copy(slug_dir: Path | str) -> dict:
         return {"schema_version": 1, "blocks": []}
     if len(raw) > MAX_PAYLOAD_BYTES:
         raise ValueError("copy document exceeds 4 MB")
+    cached = _LOADED
+    if cached[0] == raw:
+        return json.loads(cached[1])  # fresh objects: callers edit what they load
     try:
         data = json.loads(raw, object_pairs_hook=_unique_object)
     except (json.JSONDecodeError, UnicodeDecodeError, RecursionError) as exc:
         raise ValueError("copy.json is invalid JSON") from exc
-    return validate_copy(data)
+    result = validate_copy(data)
+    _LOADED = (raw, json.dumps(result, ensure_ascii=False))
+    return result
 
 
 def _write(directory: Path, data: dict) -> None:

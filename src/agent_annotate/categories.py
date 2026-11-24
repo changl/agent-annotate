@@ -522,8 +522,23 @@ def block_can_be_unread(block: dict) -> bool:
     return bool(block.get("held_note")) or later_agent
 
 
+def _count_row(comment: dict) -> list | None:
+    """What category_counts needs from one comment; None when it is not counted. The sig (last) fills in when first read."""
+    section = comment_section(comment)
+    if section is None:
+        return None
+    category = comment_category(comment)
+    # Copy proposals are counted as their block, never again as a comment.
+    if category == "library" and _mapping(comment.get("target")).get("copy_revision"):
+        return None
+    return [section, category, comment_can_be_unread(comment), comment.get("doc") if category == "plans" else "review",
+            _follows_viewer(comment), None]
+
+
 def category_counts(page_dir: Path | str, author: str | None = None, *, read_state: dict | None = None,
-                    store: dict | None = None, plans: list | None = None, submitted_only: bool = False) -> dict:
+                    store: dict | None = None, plans: list | None = None, submitted_only: bool = False,
+                    rows: dict | None = None) -> dict:
+    """`rows` memoizes _count_row by id(comment): pass one only while every comment object is unchanged and alive."""
     from .consolidate import marker
     from .sync_server import _author_key
     counts = {c: dict.fromkeys(("needs_you", "later", "ready", "waiting", "done", "unread"), 0) for c in CATEGORIES}
@@ -535,25 +550,26 @@ def category_counts(page_dir: Path | str, author: str | None = None, *, read_sta
     versions = _current_versions(page_dir, plans if plans is not None else list_plans(page_dir, store=store)) if author else {}
     for items in store["anchors"].values():
         for comment in items:
-            section = comment_section(comment)
-            if section is None:
+            if rows is None:
+                row = _count_row(comment)
+            elif (row := rows.get(id(comment), False)) is False:
+                row = rows[id(comment)] = _count_row(comment)
+            if row is None:
                 continue
-            category = comment_category(comment)
-            # Copy proposals are counted as their block, never again as a comment.
-            if category == "library" and _mapping(comment.get("target")).get("copy_revision"):
-                continue
+            section, category, can_be_unread, doc, follows, sig = row
             counts[category][section] += 1
-            if not (author and comment_can_be_unread(comment)):
+            if not (author and can_be_unread):
                 continue
             # Review and Plans: unread on the document's current version (the
             # rail's scope), plus cards that follow the viewer to it. Checked
             # before the hash: most comments of a long page are out of scope.
             if category in ("review", "plans"):
-                doc = comment.get("doc") if category == "plans" else "review"
                 current = versions.get(doc)
-                if current and comment.get("version") != current and not _follows_viewer(comment):
+                if current and comment.get("version") != current and not follows:
                     continue
-            if read.get(comment.get("id"), {}).get("sig") != comment_sig(comment):
+            if sig is None:
+                sig = row[5] = comment_sig(comment)
+            if read.get(comment.get("id"), {}).get("sig") != sig:
                 counts[category]["unread"] += 1
     try:
         blocks = load_copy(page_dir)["blocks"]

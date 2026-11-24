@@ -29,7 +29,7 @@
 
   // ── Data ───────────────────────────────────────────────────────────────
   async function loadCopy() {
-    try { setData(await UI.api('./api/copy')); } catch (e) { console.warn('[annotate] copy', e); setData(DATA || { blocks: [], groups: [] }); }
+    try { setData(await UI.api('./api/copy')); } catch (e) { console.warn('[annotate] copy', e); }
     AA.changed();
   }
   function setData(data) {
@@ -780,16 +780,17 @@
 
   // ── The tab's part of the page ─────────────────────────────────────────
   $('#sp-search').addEventListener('input', (e) => { query = e.target.value; renderList(); });
-  // The page's store changed (an action, a Send or the 8 s poll).
+  // The first store event starts the copy read after the reviewer session.
+  let storeSeen = false;
   document.addEventListener('annotate:store', async () => {
-    await loadCopy();
+    if (storeSeen) await loadCopy(); else { storeSeen = true; await ready(); }
     if (shown && !UI.isTyping(document.activeElement)) { renderList(); renderRail(); }
     if (shown) syncEditor();
   });
   // The shell's refresh watches comments, not copy: while the Library is
   // open, look for new revisions (another browser, the agent) every 8 s.
   async function checkCopy() {
-    if (!shown || document.hidden || saving || !DATA) return;
+    if (!shown || document.hidden || saving) return;
     let data;
     try { data = await UI.api('./api/copy'); } catch { return; }
     if (JSON.stringify(data) === copySig || saving) return;
@@ -801,7 +802,7 @@
   }
   setInterval(checkCopy, 8000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) checkCopy(); });
-  const ready = () => loading || (loading = loadCopy());
+  const ready = () => DATA ? Promise.resolve() : (loading ||= loadCopy().finally(() => { loading = null; }));
   AA.provider('library', {
     pending: () => (DATA ? pendingItems() : []),
     roundPending: () => ITEMS.some(it => myPendingRevs(it).length),
@@ -811,5 +812,4 @@
     history(el) { if (DATA) { const title = document.getElementById('hist-library-title'); if (title) title.textContent = 'This item'; renderHistory(el); } },
     shortcut,
   });
-  ready();
 })();
