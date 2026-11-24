@@ -117,7 +117,8 @@
     out: n => { NK.settle(n); return !n.closed && !NK.reoQ(n) && (!n.sent || !!n.edited || (n.replies || []).some(r => r.unsent) || n.id in NK.loc()); },
     // a Send took it, with its edit and replies; another reviewer's stays pending, as the server leaves it (r12 audit22 frame 2)
     // and a peer's reply or edit on it stays pending too (r12 audit25 running 1)
-    gone: n => { if (!NK.mine(n)) return; Object.assign(n, {sent: true, edited: !!n.edited && !NK.own(n.ed || n), flagged: true}); (n.replies || []).forEach(r => { if (NK.own(r)) r.unsent = false; });
+    // a closed note's edit waits for its Re-open, as the server's round skips an archived one (r12 audit42 running 2)
+    gone: n => { if (!NK.mine(n) || n.closed) return; Object.assign(n, {sent: true, edited: !!n.edited && !NK.own(n.ed || n), flagged: true}); (n.replies || []).forEach(r => { if (NK.own(r)) r.unsent = false; });
       if (n.id in NK.loc()) { delete NK.L[n.id]; if (P.ctx) P.ctx.prefs.set('draft:nkput', NK.L); } },
     // what a saved Send row keeps of a note, so it lists and offers Remove as the loaded one does before any read is in
     // rm: whether its row offers Remove (rowRm), as the loaded note decides it, since the row keeps no author or replies
@@ -169,6 +170,17 @@
         + (NK.resolves(n) && !NK.isReo(c, n) ? ibw('rerun', 'Re-open', 'Re-open: the agent looks at it again with your next Send', `data-nreopen="${id}"`) : '')
         + ibw('archive', 'Close', 'Close this note: nothing more to do. Undo until you leave', `data-nclose="${id}"`); },
     closedActs: n => ibw('rerun', 'Re-open', 'Re-open this note', `data-nopen="${esc(n.id)}"`),
+    // his Close, Re-open and their Undo in this visit, by note id ({closed, st}). A reader's note on screen and the feed's copy
+    // Send lists from are separate objects, and a read can answer after the write: every feed read (frame data()) and every
+    // feed already read takes it, so the reader, the sheet, the top count and the round read one state (r12 audit42 reference 1, frame 1)
+    life: {}, feeds: [],
+    lc(d) { const ns = d && Array.isArray(d.notes) ? d.notes : null; if (!ns) return d;
+      if (!NK.feeds.includes(d)) { NK.feeds.push(d); if (NK.feeds.length > 12) NK.feeds.shift(); }
+      for (const n of ns) { const p = NK.life[n.id]; if (!p) continue;
+        if ('closed' in p) n.closed = p.closed;
+        if ('st' in p) n['status' in n ? 'status' : 'st'] = p.st; }
+      return d; },
+    setLife(n, p) { NK.life[n.id] = {...NK.life[n.id], ...p}; NK.feeds.forEach(NK.lc); },
     // Close and a closed note's Re-open: today's archive and restore; Re-open on a resolved one: a draft Send writes; each with Undo (#138, catalog 64)
     async set(c, n, how, api, redraw, quiet) {
       // Close (or taking back a Re-open) on a note the round carries is a take-back: refused, the note stays as it goes (r12 audit35 running 4)
@@ -182,12 +194,12 @@
         const to = how === 'reopen' ? 'open' : prev, rec = how === 'reopen' ? NK.rec(n) : null;
         if (to && to !== stOf(n)) {
           try { await api(u, {status: to}, 'PUT'); } catch (e) { c.toast('Not changed: ' + e.message); return null; }
-          n['status' in n ? 'status' : 'st'] = to;
+          n['status' in n ? 'status' : 'st'] = to; NK.setLife(n, {st: to});
         }
         NK.put(c, n.id, rec);
       } else {
         try { await api(u + (how === 'close' ? (NK.resolves(n) ? '/accept' : '/archive') : '/restore'), {}); } catch (e) { c.toast('Not changed: ' + e.message); return null; }
-        n.closed = how === 'close';
+        n.closed = how === 'close'; NK.setLife(n, {closed: n.closed});
         if (was) NK.put(c, n.id, null);  // Close ends a pending Re-open: nothing goes with Send; its Undo brings it back (r12 audit17 frame 1)
       }
       await redraw(n.id);

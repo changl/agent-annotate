@@ -113,7 +113,7 @@
     delete pre[area];
     const p = cache[area] = Promise.race([got, late()])
       // a copy's read waits for the tab scripts: one landing before questions.js would be cached without the copy's notes (r12 audit22 questions 2)
-      .then(d => COPY && !P.copyData ? scriptsIn.then(() => d) : d).then(d => unTaken(COPY && P.copyData ? P.copyData(area, d) : d)).catch(e => { if (cache[area] === p) failed.add(area); throw e; });  // a stalled read failing late never marks the fresh one Try again started
+      .then(d => COPY && !P.copyData ? scriptsIn.then(() => d) : d).then(d => unTaken(COPY && P.copyData ? P.copyData(area, d) : d)).then(d => P.notes ? P.notes.lc(d) : d).catch(e => { if (cache[area] === p) failed.add(area); throw e; });  // a stalled read failing late never marks the fresh one Try again started
     // a failed read stays cached, failed: every later data(area) from any tab gets that failure, and only Try again
     // (reread, or a fresh read) reads again, so a down server is never asked on its own (r12 audit30 questions 4)
     failed.delete(area);

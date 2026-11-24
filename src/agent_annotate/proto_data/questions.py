@@ -77,7 +77,10 @@ def note_thread(c: dict) -> dict:
     stamp = lambda v: datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp() if v else 0.0
     sent = was_sent(c)
     try:
-        edited = sent and _mine(c.get("edited_by") or c.get("author")) and stamp(c.get("edited_at")) > stamp(c.get("flagged_at"))
+        # an edit un-flags it, and the round takes any un-flagged one: stamps are whole seconds, so an edit in the second of
+        # its Send would otherwise read as sent (r12 audit42 reference 1)
+        edited = sent and _mine(c.get("edited_by") or c.get("author")) and bool(c.get("edited_at")) and (
+            not c.get("flagged_for_session") or stamp(c.get("edited_at")) > stamp(c.get("flagged_at")))
     except ValueError:
         edited = False
 
