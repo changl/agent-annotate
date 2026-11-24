@@ -594,7 +594,7 @@ def _plan_stamps(artifact_dir: Path) -> tuple:
     return tuple(sorted(stamps))
 
 
-def _plan_docs(artifact_dir: Path, store: dict) -> dict:
+def _plan_docs(artifact_dir: Path, store: dict, *, with_anchors: bool = True) -> dict:
     """{"plan:<id>": (current, published versions in order, body card anchors)} for the plans the store has comments on."""
     from .categories import _json, safe_path, validate_plan_id
     docs = {c.get("doc") for area in ("anchors", "archived") for items in (store.get(area) or {}).values()
@@ -609,7 +609,10 @@ def _plan_docs(artifact_dir: Path, store: dict) -> dict:
         history = [h.get("version") for h in meta.get("history") or [] if isinstance(h, dict) and h.get("version")]
         current = meta.get("current")
         if current in history:
-            out[doc] = (current, history, _card_anchors(functools.partial(safe_path, artifact_dir, f"plans/{plan}/versions/{current}.html")))
+            anchors = None
+            if with_anchors:
+                anchors = _card_anchors(functools.partial(safe_path, artifact_dir, f"plans/{plan}/versions/{current}.html"))
+            out[doc] = (current, history, anchors)
     return out
 
 
@@ -1861,6 +1864,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         review = (current_version, [v for v in published if v],
                                   _card_anchors(lambda: _version_file(self.artifact_dir, current_version)))
                         store = _page_store(store, numbers, {"review": review, **_plan_docs(self.artifact_dir, store)})
+                    elif view == "poll":
+                        # Classify newly loaded history against this snapshot's plan revisions.
+                        store["plan_versions"] = {
+                            doc: current for doc, (current, _, _) in
+                            _plan_docs(self.artifact_dir, store, with_anchors=False).items()
+                        }
                 body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
                 packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
                 cache[key] = (packed, compressed) if len(packed) < len(body) else (body, False)

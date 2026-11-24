@@ -461,10 +461,9 @@ function wantFullStore() {
   if (!STORE.partial) return Promise.resolve(true);
   if (fullStore) return fullStore;
   STORE_VIEW = 'poll';
-  const before = LIVE;
   fullStore = pollStore().then(ok => {
     if (!ok || !LIVE || LIVE.partial) { STORE_VIEW = 'page'; fullStore = null; return false; }
-    adoptFull(before);
+    adoptFull();
     if (VIEW_DOC) withDoc(VIEW_DOC, renderAll);
     document.dispatchEvent(new CustomEvent('annotate:store'));
     if (window.AA) { window.AA.changed(); if (window.AA.rail && window.AA.rail.tab === 'history') window.AA.rail.renderHistory(); }
@@ -473,18 +472,11 @@ function wantFullStore() {
   });
   return fullStore;
 }
-function adoptFull(before) {
+function adoptFull() {
   const where = new Map();
   for (const area of ['anchors', 'archived']) {
     for (const [aid, items] of Object.entries(STORE[area] || {})) for (const c of items) where.set(c.id, { area, aid, c });
   }
-  const waitingNew = new Set();
-  if (before && before !== STORE) {
-    for (const area of ['anchors', 'archived']) {
-      for (const items of Object.values(before[area] || {})) for (const c of items) if (!where.has(c.id)) waitingNew.add(c.id);
-    }
-  }
-  const planVersions = new Map(PLANS.map(p => ['plan:' + p.id, p.current]));
   const out = Object.assign({}, LIVE, { anchors: {}, archived: {} });
   const placed = new Set();
   for (const area of ['anchors', 'archived']) {
@@ -492,18 +484,16 @@ function adoptFull(before) {
       const list = [];
       for (const c of Array.isArray(items) ? items : []) {
         const shown = where.get(c.id);
-        if (waitingNew.has(c.id) || (shown && (shown.area !== area || shown.aid !== aid))) continue;
-        if (!shown) {
-          // The partial view already included current feedback, even if a poll never saw this arrival.
+        if (shown) {
+          if (shown.area !== area || shown.aid !== aid) continue;
+          placed.add(c.id);
+        } else {
+          // A historical answer can become pending after the partial read left it out.
           const category = commentCategory(c);
-          const planVersion = planVersions.get(c.doc);
-          const historical = category === 'review'
-            ? c.version !== STORE.current_version && c.version !== LIVE.current_version
-            : category === 'plans' && planVersion && c.version !== planVersion;
-          if (!historical || followsViewer(c)) continue;
+          const current = category === 'review' ? LIVE.current_version : LIVE.plan_versions?.[c.doc];
+          if ((category !== 'review' && category !== 'plans') || (current && c.version === current)) continue;
         }
         list.push(shown ? shown.c : c);
-        if (shown) placed.add(c.id);
       }
       if (list.length) out[area][aid] = list;
     }
