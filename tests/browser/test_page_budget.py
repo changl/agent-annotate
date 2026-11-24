@@ -63,34 +63,3 @@ def test_first_load_and_send_stay_under_a_tenth_of_the_store(tmp_path):
         assert not any("view=poll" in url for url, _ in send), send
         assert sum(size for _, size in send) * 10 < full, send
         assert posts and sum(posts) < 4096, posts
-
-
-def test_opening_earlier_feedback_keeps_new_questions_behind_refresh(tmp_path):
-    directory = _directory(tmp_path)
-    _long_history(directory, 2)
-    with _session(tmp_path, directory) as (page, _base, _):
-        rail = page.locator("#comment-list")
-        new_question = rail.locator('[data-comment-id="new-question"]')
-        old_question = rail.locator('[data-comment-id="old-0"]')
-        assert old_question.count() == 0
-
-        def add_question(route):
-            # The first full read sees a question the last partial poll could not see.
-            path = directory / "comments.json"
-            store = json.loads(path.read_text())
-            store["anchors"].setdefault("s:checks", []).append({
-                "id": "new-question", "anchor_id": "s:checks", "version": "v1", "author": "agent:late",
-                "status": "open", "text": "Did the new build pass?", "replies": [],
-                "decision_request": {"prompt": "Did the new build pass?", "options": [{"id": "yes", "label": "Yes"}]},
-            })
-            path.write_text(json.dumps(store))
-            route.continue_()
-
-        page.route("**/comments.json?view=poll", add_question, times=1)
-        rail.locator('[data-section-toggle="earlier"]').click()
-        old_question.wait_for()
-        assert new_question.count() == 0
-        playwright.expect(page.locator("#aa-fresh .aa-fresh-n")).to_have_text("1")
-
-        page.locator("#aa-fresh").click()
-        new_question.wait_for()

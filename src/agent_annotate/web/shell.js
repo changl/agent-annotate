@@ -484,7 +484,6 @@ function adoptFull(before) {
       for (const items of Object.values(before[area] || {})) for (const c of items) if (!where.has(c.id)) waitingNew.add(c.id);
     }
   }
-  const planVersions = new Map(PLANS.map(p => ['plan:' + p.id, p.current]));
   const out = Object.assign({}, LIVE, { anchors: {}, archived: {} });
   const placed = new Set();
   for (const area of ['anchors', 'archived']) {
@@ -493,15 +492,6 @@ function adoptFull(before) {
       for (const c of Array.isArray(items) ? items : []) {
         const shown = where.get(c.id);
         if (waitingNew.has(c.id) || (shown && (shown.area !== area || shown.aid !== aid))) continue;
-        if (!shown) {
-          // The partial view already included current feedback, even if a poll never saw this arrival.
-          const category = commentCategory(c);
-          const planVersion = planVersions.get(c.doc);
-          const historical = category === 'review'
-            ? c.version !== STORE.current_version && c.version !== LIVE.current_version
-            : category === 'plans' && planVersion && c.version !== planVersion;
-          if (!historical || followsViewer(c)) continue;
-        }
         list.push(shown ? shown.c : c);
         if (shown) placed.add(c.id);
       }
