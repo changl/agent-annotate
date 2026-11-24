@@ -20,7 +20,7 @@ Proto.tab({key: 'questions',                     // questions|reference|running|
 **Added in round 12, fix7 (frame):** Send opens over the tab on screen. The desk Send opens at zero drafts. `open(ctx, key)` gets `key` true from ⌘↵ on any tab but Questions (the frame handles that press and stops it); a second ⌘↵ sends. Off Questions the sheet is drawn in `div.qhost` on `body`, and `body.qsheet-open` pauses the frame's keys. `ctx.queueSent(n)` also makes that round the header's and the phone menu's last Send, marked "prototype: not sent". `reference.json` notes carry `sent`, so an unsent Reference note stays in the next Send after a reload.
 - `Proto.bar({render: (el, ctx) => {...}})`: one top-bar slot beside the version (Running's worker squares).
 - `ctx.remember('folds'|'tab'|'drafts')`: the settings switches; keep folds or drafts across reloads only when true.
-- Settings also set `prefs.get('optsFirst')` (and `body.opts-first`) and `prefs.get('zoomDef', 75)`, the width full-size pictures open at.
+- Settings also set `prefs.get('optsFirst')` (and `body.opts-first`) and `prefs.get('zoomDef', 50)`, the width full-size pictures open at.
 - Home (`#home`) reads `proto/data/frame.json`. On this project's row it shows `running.json`'s `workers: [{name, state}]` and `jobs: [{name, failing}]` when present.
 - Use `.p-primary` for question context; textareas and text inputs are already 16 px at 100% (`--fs-primary`).
 

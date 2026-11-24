@@ -459,7 +459,7 @@
     return `<span class="chip ${cls} sentchip ${tone}" title="Your last Send, ${esc(t.toLocaleString())}: ${esc(word)}. On this copy nothing reaches an agent.">Sent ${esc(at)} · ${esc(word)}</span>`;
   }
   function settingsBody() {
-    const fs = prefs.get('fs', 100), theme = themeMode(), rem = {...REM, ...prefs.get('rem', {})}, z = prefs.get('zoomDef', 75);
+    const fs = prefs.get('fs', 100), theme = themeMode(), rem = {...REM, ...prefs.get('rem', {})}, z = prefs.get('zoomDef', 50);
     const th = [['light', 'sun', 'Light'], ['dark', 'moon', 'Dark'], ['system', 'sys', 'System: follows your Mac, iPad or phone']];
     const tg = (attr, t, tip, on) => `<label class="tgl"${tip ? ` title="${esc(tip)}"` : ''}><span>${t}</span><input type="checkbox" role="switch" ${attr}${on ? ' checked' : ''}><i aria-hidden="true"></i></label>`;
     const n = S.people ? S.people.length : 1;

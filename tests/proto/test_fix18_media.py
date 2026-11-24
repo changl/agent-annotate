@@ -42,7 +42,7 @@ const B = M.blocks("{FIXTURE}"), line = i => `<n:${{i}}>`;
 const fig = blockHtml(B[2], 2, esc, line);
 assert.match(fig, /<b class="qpicn">Picture 1<\\/b>/);
 assert.strictEqual((fig.match(/data-zoom="(25|50|75|100)" data-lzoom/g) || []).length, 4);
-assert.match(fig, /<a class="aa-full" href="proto\\/doc\\/design\\/a.png"[^>]* data-lzoom="75" data-pk="~2" data-nk="~2">⤢ Full size<\\/a>/);  // its key: the document (none here) and its place
+assert.match(fig, /<a class="aa-full" href="proto\\/doc\\/design\\/a.png"[^>]* data-lzoom="50" data-pk="~2" data-nk="~2">⤢ Full size<\\/a>/);  // the 50% default (r12 audit41 frame 1); its key: the document (none here) and its place
 assert.match(fig, /data-zcap="Picture 1 · Audit PNG"/);
 const t = blockHtml(B[5], 5, esc, line);
 assert.match(t, /<tr><th>A/);  // the header row notes the whole table

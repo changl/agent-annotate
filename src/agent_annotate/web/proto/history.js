@@ -159,7 +159,7 @@
     }
     // as in the mock: the sizes open the full-size viewer at that share of the screen width and this picture keeps it;
     // the picture on the page stays as published (#38, #118)
-    const all = ctx.prefs.get('picsize', {}), def = () => ctx.prefs.get('zoomDef', 75);
+    const all = ctx.prefs.get('picsize', {}), def = () => ctx.prefs.get('zoomDef', 50);
     // each picture by its place, never its file (Proto.media.pk: its anchor and its order there), and its version's address,
     // so two copies of one file, or one spot in two versions, keep their own sizes (r12 audit18 frame 3)
     const keyOf = img => { if (!img.getAttribute('src')) return '';

@@ -32,6 +32,6 @@ def test_top_count_follows_a_noop_and_go_to_it_waits_for_its_target():
 def test_copy_send_takes_every_saved_copy_note():
     q = (WEB / "questions.js").read_text()
     sub = q[q.index("async function submitSim()"):q.index("P.copyWrite = fake;")]
-    assert "for (const n of NOTES.add) if (!NOTES.sent.has(n.id)) ids.add(n.id);" in sub
+    assert "for (const n of NOTES.add) if (!NOTES.sent.has(n.id) && !(SIM[n.id] || {}).closed) ids.add(n.id);" in sub
     # Discard's Undo re-reads, so the feed every Send count reads has the note again
     assert "if (D) await refresh();  // another tab's note put back" in q

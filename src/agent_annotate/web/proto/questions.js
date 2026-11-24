@@ -113,7 +113,8 @@
     // goes with the next Send: never sent, or his edit or reply since (today's needs-push rule counts edited_at and reply times)
     // a re-opened one is listed once, as the kit's Re-open row: its status PUT reads as an edit in the feed, never a second row (r12 audit22 running 2)
     reoQ: n => { const r = P.ctx && NK.reo(P.ctx)[n.id]; return !!r && typeof r === 'object'; },
-    out: n => { NK.settle(n); return !NK.reoQ(n) && (!n.sent || !!n.edited || (n.replies || []).some(r => r.unsent) || n.id in NK.loc()); },
+    // a closed note never goes, as the server's round skips an archived one: every sheet, count and round read this (r12 audit41 questions 1)
+    out: n => { NK.settle(n); return !n.closed && !NK.reoQ(n) && (!n.sent || !!n.edited || (n.replies || []).some(r => r.unsent) || n.id in NK.loc()); },
     // a Send took it, with its edit and replies; another reviewer's stays pending, as the server leaves it (r12 audit22 frame 2)
     // and a peer's reply or edit on it stays pending too (r12 audit25 running 1)
     gone: n => { if (!NK.mine(n)) return; Object.assign(n, {sent: true, edited: !!n.edited && !NK.own(n.ed || n), flagged: true}); (n.replies || []).forEach(r => { if (NK.own(r)) r.unsent = false; });
@@ -498,8 +499,8 @@
     const ids = new Set(Object.keys(NK.reo(P.ctx)));
     for (const n of [D.notes, ...feeds].flat()) if (NK.out(n) && NK.mine(n)) ids.add(n.id);
     // and every note the copy saved, from its own store: one put back by Discard's Undo may be missing from D.notes (r12 audit23 frame 3)
-    for (const n of NOTES.add) if (!NOTES.sent.has(n.id)) ids.add(n.id);
-    for (const [id, s] of Object.entries(SIM)) { if (s.edited) ids.add(id); s.edited = false; }
+    for (const n of NOTES.add) if (!NOTES.sent.has(n.id) && !(SIM[n.id] || {}).closed) ids.add(n.id);
+    for (const [id, s] of Object.entries(SIM)) if (s.edited && !s.closed) { ids.add(id); s.edited = false; }  // a closed one's edit waits for its Re-open
     ids.forEach(id => NOTES.sent.add(id));
     simSave();
     return {ok: true, comment_ids: [...ids]};
@@ -1007,7 +1008,7 @@
     // a row's first picture also shows the point notes saved on the row, before its pictures had keys of their own
     was: k => /~r\d+~p1$/.test(k) ? k.replace(/~p1$/, '') : '',
     // the size each picture was last opened at, by its key; the settings menu's default before that
-    zoom: k => { const p = P.ctx && P.ctx.prefs; return (p && k && p.get('ref-zoom', {})[k]) || (p && p.get('zoomDef', 75)) || 75; },
+    zoom: k => { const p = P.ctx && P.ctx.prefs; return (p && k && p.get('ref-zoom', {})[k]) || (p && p.get('zoomDef', 50)) || 50; },
     setZoom: (k, z) => { const p = P.ctx && P.ctx.prefs; if (p && k) p.set('ref-zoom', {...p.get('ref-zoom', {}), [k]: z}); },
     // a reader with no picture notes of its own (Pages & links) opens Full size here: the picture at 25-100% of the screen width;
     // with its key `k`, the size picked is remembered for that picture and shows pressed on its caption line (r12 audit17 reference 6)
