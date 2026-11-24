@@ -552,22 +552,23 @@ def _wake_one(row: dict, marker: Path, *, capped: bool) -> int:
 
 
 @contextmanager
-def _page_lock(project: str, slug: str, suffix: str):
-    journal = STATE_DIR / "deliveries" / project / f"{slug}.json"
-    journal.parent.mkdir(parents=True, exist_ok=True)
-    with journal.with_suffix(suffix).open("a") as lock:
+def _page_lock(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        yield journal
+        yield path
 
 
 def journal_lock(project: str, slug: str):
     """The page journal lock: dispatch_record holds it, Orca send included."""
-    return _page_lock(project, slug, ".lock")
+    return _page_lock((STATE_DIR / "deliveries" / project / f"{slug}.json").with_suffix(".lock"))
 
 
 def outbox_lock(project: str, slug: str):
-    """A short leaf lock: Send enqueue, and the wake-up's outbox check plus reservation."""
-    return _page_lock(project, slug, ".outbox.lock")
+    """A short leaf lock: Send enqueue, and the wake-up's outbox check plus reservation.
+
+    Its own tree: under deliveries/, page `x.outbox`'s journal lock would be this file."""
+    return _page_lock(STATE_DIR / "outbox-locks" / project / f"{slug}.lock")
 
 
 def _outbox_waiting(record: dict, project: str, slug: str, session: str) -> bool:

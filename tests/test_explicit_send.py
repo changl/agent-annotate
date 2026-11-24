@@ -82,8 +82,8 @@ def test_send_reaches_the_outbox_under_the_page_outbox_lock(server, monkeypatch,
 
     def append(bus_dir, slug, event):
         if event.get("automatic_delivery"):
-            journal = delivery.STATE_DIR / "deliveries" / sync_server._monitor_project(bus_dir) / f"{slug}.json"
-            with journal.with_suffix(".outbox.lock").open("a") as probe:
+            lock = delivery.STATE_DIR / "outbox-locks" / sync_server._monitor_project(bus_dir) / f"{slug}.lock"
+            with lock.open("a") as probe:
                 try:
                     fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     held.append(False)

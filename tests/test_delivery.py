@@ -376,6 +376,28 @@ def test_wake_up_waits_for_a_send_already_in_the_outbox(estate, monkeypatch):
     assert [send[5][:26] for send in _sends(estate)] == ["[annotate] Round submitted"]
 
 
+def test_outbox_locks_never_share_a_file_with_a_journal_lock(estate, monkeypatch):
+    import threading
+    _old, record = _resumed_elsewhere(estate, monkeypatch)
+    # Dots are valid in slugs: page "review.outbox" must not own page "review"'s outbox lock.
+    records = {(_PROJECT, slug): {**record} for slug in ("review", "review.outbox")}
+    (estate["state_dir"] / f"{_PROJECT}.json").write_text(json.dumps(
+        {"project": _PROJECT, "slugs": {slug: value for (_p, slug), value in records.items()}}))
+    delivery.refresh_session_owners(_OWNER, records, via="watchdog")
+    assert len(_marker(estate)["pages"]) == 2
+    done = []
+
+    def run():  # in a thread: a shared lock file would hang here, not fail
+        with delivery.outbox_lock(_PROJECT, "review"), delivery.journal_lock(_PROJECT, "review.outbox"):
+            done.append("both locks")
+        done.append(delivery.wake_resumed())
+    wake = threading.Thread(target=run, daemon=True)
+    wake.start()
+    wake.join(10)
+    assert len(done) == 2, "deadlocked on a lock file shared by two pages"
+    assert done[1][0]["state"] == "sent" and len(_sends(estate)) == 1
+
+
 def test_prompt_hook_never_waits_on_marker_locks(estate, monkeypatch):
     import fcntl
     import threading
