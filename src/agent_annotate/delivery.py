@@ -14,7 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -114,18 +114,11 @@ def capture_target(session: str, agent: str) -> dict | None:
     if not handle:
         return None
     try:
-        terminal = _orca("terminal", "show", "--terminal", handle)["terminal"]
-        if terminal.get("agentIdentity") != expected or not terminal.get("connected"):
-            return None
-        display = describe_terminal({**terminal, "handle": handle})
         pid = os.getppid()
         for _ in range(12):
             proc = _process(pid)
             if proc and re.search(rf"(?:^|/){expected}(?:$|[.-])", proc[1]):
-                return {"session": session, "handle": handle,
-                        "incarnation": terminal["incarnationId"],
-                        "worktree": terminal["worktreeId"], "agent": expected,
-                        "pid": pid, "process_start": proc[0], **display}
+                return _bind(session, expected, handle, pid, proc)
             parent = subprocess.run(["ps", "-p", str(pid), "-o", "ppid="],
                                     capture_output=True, text=True, timeout=3, cwd=Path.home())
             pid = int(parent.stdout.strip())
@@ -134,6 +127,130 @@ def capture_target(session: str, agent: str) -> dict | None:
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired):
         pass
     return None
+
+
+def _bind(session: str, expected: str, handle: str, pid: int, proc: tuple[str, str]) -> dict | None:
+    terminal = _orca("terminal", "show", "--terminal", handle)["terminal"]
+    if terminal.get("agentIdentity") != expected or not terminal.get("connected"):
+        return None
+    return {"session": session, "handle": handle, "incarnation": terminal["incarnationId"],
+            "worktree": terminal["worktreeId"], "agent": expected, "pid": pid, "process_start": proc[0],
+            **describe_terminal({**terminal, "handle": handle})}
+
+
+def _claude_session(pid: int) -> dict | None:
+    """Claude's own record of the session a live process runs: sessionId, procStart (UTC), status."""
+    root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    try:
+        data = json.loads((root / "sessions" / f"{pid}.json").read_text())
+        start = subprocess.run(["ps", "-p", str(pid), "-o", "lstart="], capture_output=True, text=True,
+                               timeout=3, cwd=Path.home(), env={**os.environ, "TZ": "UTC"}).stdout.strip()
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    # A leftover file from an exited process can name a reused pid.
+    return data if isinstance(data, dict) and start and data.get("procStart") == start else None
+
+
+def _resumed_pids(session: str, expected: str) -> list[int]:
+    if expected == "claude":
+        # `claude --resume ID --fork-session` carries ID in argv but runs another session.
+        root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "sessions"
+        found = []
+        for path in root.glob("*.json"):
+            try:
+                if path.stem.isdigit() and json.loads(path.read_text()).get("sessionId") == session:
+                    found.append(int(path.stem))
+            except (OSError, ValueError, AttributeError):
+                continue
+        return [pid for pid in found if (_claude_session(pid) or {}).get("sessionId") == session]
+    # A full `ps` listing took over 10 s on the busy M1Max; pgrep returns only candidates.
+    found = subprocess.run(["pgrep", "-f", session], capture_output=True, text=True,
+                           timeout=10, cwd=Path.home()).stdout.split()
+    pids = []
+    for pid in found:
+        # Exact argv, not `ps` text: a prompt argument can mention the id or the word resume.
+        argv = _argv(int(pid)) or []
+        if argv and re.search(r"(?:^|/)codex(?:$|[.-])", argv[0]) and _codex_resumes(argv[1:], session):
+            pids.append(int(pid))
+    return pids
+
+
+# `codex resume --help` (Codex CLI, 2026-11): options that take one value, and plain flags.
+_CODEX_VALUE = {"-c", "--config", "-m", "--model", "-p", "--profile", "-s", "--sandbox", "-a",
+                "--ask-for-approval", "-C", "--cd", "--add-dir", "--enable", "--disable", "--remote",
+                "--remote-auth-token-env", "--local-provider"}
+_CODEX_FLAG = {"--oss", "--search", "--no-alt-screen", "--no-daemon", "--strict-config", "--approve-for-me",
+               "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", "--worktree"}
+
+
+def _codex_resumes(args: list[str], session: str) -> bool:
+    """`codex [options] resume [options] ID ...`, parsed the way Codex does.
+
+    shortcut: Codex keeps no per-process session file, so the argv decides. Any option not
+    listed above (including -i, --last and fork) fails closed; extend the lists when Codex
+    adds options, or switch to the live thread id once Codex exposes it."""
+    i, positionals = 0, []
+    while i < len(args):
+        arg = args[i]
+        if arg.startswith("-"):
+            name = arg.split("=", 1)[0]
+            if name in _CODEX_VALUE:
+                i += 1 if "=" in arg else 2  # the value is never the subcommand or the id
+                continue
+            if arg not in _CODEX_FLAG:
+                return False
+        else:
+            positionals.append(arg)
+        i += 1
+    # `resume`, then its first positional is the session id; anything else is a fresh session.
+    return positionals[:2] == ["resume", session] and i == len(args)
+
+
+def _argv(pid: int) -> list[str] | None:
+    """A process's exact argument vector (macOS KERN_PROCARGS2, Linux /proc)."""
+    if sys.platform != "darwin":
+        try:
+            return Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace").split("\0")[:-1]
+        except OSError:
+            return None
+    import ctypes
+    import ctypes.util
+    try:
+        libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+        argmax, size = ctypes.c_int(0), ctypes.c_size_t(ctypes.sizeof(ctypes.c_int))
+        if libc.sysctl((ctypes.c_int * 2)(1, 8), 2, ctypes.byref(argmax), ctypes.byref(size), None, 0):
+            return None  # CTL_KERN, KERN_ARGMAX
+        buffer, size = ctypes.create_string_buffer(argmax.value), ctypes.c_size_t(argmax.value)
+        if libc.sysctl((ctypes.c_int * 3)(1, 49, pid), 3, buffer, ctypes.byref(size), None, 0):
+            return None  # CTL_KERN, KERN_PROCARGS2
+        raw = buffer.raw[:size.value]
+        argc = int.from_bytes(raw[:4], sys.byteorder)
+        rest = raw[4:]
+        rest = rest[rest.index(b"\0"):].lstrip(b"\0")  # skip the exec path and its padding
+        args = rest.split(b"\0")[:argc]
+        return [arg.decode(errors="replace") for arg in args] if len(args) == argc else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def resumed_target(session: str, agent: str) -> dict | None:
+    """From outside: the one live provider process running this session id, in its Orca terminal."""
+    if not re.fullmatch(r"[A-Za-z0-9-]{8,}", session or ""):
+        return None
+    expected = "codex" if agent == "codex" else "claude"
+    try:
+        pids = _resumed_pids(session, expected)
+        if len(pids) != 1:  # none, or two copies of one session: nothing provable
+            return None
+        proc = _process(pids[0])
+        if not proc or not re.search(rf"(?:^|/){expected}(?:$|[.-])", proc[1]):
+            return None
+        env = subprocess.run(["ps", "eww", "-p", str(pids[0]), "-o", "command="],
+                             capture_output=True, text=True, timeout=3, cwd=Path.home()).stdout
+        match = re.search(r"(?:^|\s)ORCA_TERMINAL_HANDLE=(term_[A-Za-z0-9_-]+)(?:\s|$)", env)
+        return _bind(session, expected, match[1], pids[0], proc) if match else None
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired):
+        return None
 
 
 def _target_exited(target: dict | None) -> bool:
@@ -156,10 +273,26 @@ def _target_exited(target: dict | None) -> bool:
         return False
 
 
-def refresh_session_owners(session: str, records: dict) -> None:
-    """Rebind a resumed session only after its recorded process provably ended."""
+def refresh_session_owners(session: str, records: dict, *, via: str = "prompt") -> None:
+    """Rebind a resumed session only after its recorded process provably ended.
+
+    via: "prompt" (prompt hook, in the session), "start" (SessionStart hook, in
+    the session) or "watchdog" (revive, from outside). A resume rebound without
+    a prompt leaves the agent idle, so those get one wake-up from the watchdog.
+    """
     if not session or session == "unknown":
         return
+    if via == "prompt":  # this prompt is the turn a pending wake-up was for
+        def settle(row):
+            if row and row.get("state") == "pending" and row["target"].get("session") == session:
+                row.update(state="skipped", detail="The owner took a turn before its wake-up")
+        for marker in _markers():
+            try:  # lock only this session's own pending marker, and never wait for it
+                row = json.loads(marker.read_text())
+                if row.get("state") == "pending" and row["target"].get("session") == session:
+                    _update_marker(marker, settle, block=False)
+            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                continue
     exited, targets, refreshed = {}, {}, []
     for (project, slug), record in records.items():
         old = record.get("owner_target")
@@ -177,9 +310,10 @@ def refresh_session_owners(session: str, records: dict) -> None:
             if agent not in ("claude", "codex"):
                 continue
             if agent not in targets:
-                targets[agent] = capture_target(session, agent)
+                targets[agent] = (resumed_target if via == "watchdog" else capture_target)(session, agent)
             target = targets[agent]
-            if not target or (old.get("handle") and old["handle"] != target.get("handle")):
+            # Orca gives a relaunched pane a new handle; its worktree id survives a restart.
+            if not target or (old.get("worktree") and old["worktree"] != target.get("worktree")):
                 continue
             from .cli import (
                 _flock,
@@ -203,12 +337,266 @@ def refresh_session_owners(session: str, records: dict) -> None:
             refreshed.append((project, slug, current))
         except (OSError, ValueError, TypeError, KeyError, RuntimeError, subprocess.SubprocessError):
             continue  # Hooks must not prevent a session or prompt from starting.
+    for target in filter(None, targets.values()) if via != "prompt" else ():
+        pages = [[p, s] for p, s, c in refreshed if c["owner_target"] == target]
+        marker = STATE_DIR / "resumes" / f"{target['pid']}-{re.sub(r'[^0-9A-Za-z]', '', target['process_start'])}.json"
+
+        def merge(row, pages=pages, target=target):
+            # SessionStart and the watchdog can each re-bind a page: merge them, and
+            # never reopen a wake-up that was already consumed.
+            if not row:
+                return {"state": "pending", "rebound_at": _now(), "via": via, "target": target, "pages": pages}
+            if row.get("state") == "pending":
+                row["pages"] += [page for page in pages if page not in row["pages"]]
+            return None
+        if pages:
+            _update_marker(marker, merge)
     # Shared tabs route through their canonical page, which must be refreshed first.
     for project, slug, current in refreshed:
         try:
             dispatch_record(current, project, slug)
         except (OSError, ValueError, TypeError, KeyError, RuntimeError, subprocess.SubprocessError):
             continue
+
+
+WAKE_CAP = 3  # wake-ups per watchdog pass: after a reboot every resumed owner is eligible at once
+GRACE = 300  # seconds a queued, unconfirmed Send may still give the owner its turn
+
+
+def _markers() -> list[Path]:
+    return sorted((STATE_DIR / "resumes").glob("*.json"))
+
+
+def _update_marker(marker: Path, change, *, block: bool = True) -> dict | None:
+    """Read-modify-write one resume marker under its lock; `change` edits the row or returns a new one.
+
+    block=False gives up when the watchdog holds the lock (it settles the marker itself)."""
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        with marker.with_suffix(".lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | (0 if block else fcntl.LOCK_NB))
+            row = json.loads(marker.read_text()) if marker.exists() else None
+            before = json.dumps(row)
+            row = change(row) or row
+            if row is not None and json.dumps(row) != before:
+                row["updated_at"] = _now()
+                _atomic(marker, row)
+            return row
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def _same_process(a: dict, b: dict) -> bool:
+    return all(a.get(k) == b.get(k) for k in ("session", "pid", "process_start", "handle", "incarnation"))
+
+
+def _age(stamp: str) -> float:
+    try:
+        return (datetime.now(UTC) - datetime.fromisoformat(stamp)).total_seconds()
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def _turn_since(row: dict) -> tuple[str | None, str]:
+    """("proven", why) when a Send or inbox read shows the owner had a turn since the re-bind;
+    ("unresolved", why) while a Send to it may still start one; (None, "") otherwise."""
+    target, unresolved = row["target"], ""
+    for project, slug in row["pages"]:
+        for r in _journal_rows(project, slug):
+            if r.get("owner_session") != target["session"]:
+                continue
+            receipt = (r.get("receipt") or {}).get("prompt") or {}
+            request = receipt.get("requestId") or r.get("id")
+            if r.get("state") == "acknowledged" and (r.get("acknowledged_at") or "") >= row["rebound_at"]:
+                return "proven", f"The owner read its inbox for {project}/{slug} after the re-bind"
+            if r.get("state") == "pending" and _age(r.get("created_at") or "") < GRACE:
+                unresolved = f"Send {request} is about to be delivered; wake-up deferred"
+                continue
+            if not _same_process(r.get("target") or {}, target):
+                continue
+            if r.get("state") == "started" or "turn_started" in receipt.get("stages", []):
+                return "proven", f"Send {request} started the owner's turn"
+            if r.get("state") in ("attempting", "accepted", "uncertain"):
+                if "turn_started" in _replay(r, target):
+                    return "proven", f"Send {request} started the owner's turn (Orca request replayed)"
+                if _age(r.get("attempted_at") or "") < GRACE:
+                    unresolved = f"Send {request} is queued without a confirmed turn; wake-up deferred"
+    return ("unresolved", unresolved) if unresolved else (None, "")
+
+
+def _replay(row: dict, target: dict) -> list[str]:
+    """Ask Orca what became of a Send by its request ID; Orca replays the result and never repeats it."""
+    request = ((row.get("receipt") or {}).get("prompt") or {}).get("requestId")
+    if not request or not row.get("prompt"):
+        return []
+    try:
+        receipt = _orca("terminal", "send", "--terminal", target["handle"], "--text", row["prompt"], "--enter",
+                        "--retry-request", request, "--wait-submit", "1").get("send", {})
+        return (receipt.get("prompt") or {}).get("stages", []) if receipt.get("accepted") else []
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired):
+        return []
+
+
+def _provider_idle(target: dict) -> bool:
+    """Only the provider's own idle signal: a user or a Send may have started a turn meanwhile."""
+    if target.get("agent") == "claude":
+        session = _claude_session(int(target["pid"])) or {}
+        return session.get("sessionId") == target["session"] and session.get("status") == "idle"
+    try:
+        _orca("terminal", "wait", "--terminal", target["handle"], "--for", "tui-idle", "--timeout-ms", "1000")
+        return True
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired):
+        return False
+
+
+def wake_resumed() -> list[dict]:
+    """Give each owner rebound without a prompt one turn, so it re-arms its waits; at most once."""
+    woken, attempts = [], 0
+    for marker in _markers():
+        try:
+            with marker.with_suffix(".lock").open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                row = json.loads(marker.read_text())
+                if row.get("state") != "pending":
+                    continue
+                before = json.dumps(row)
+                attempts += _wake_one(row, marker, capped=attempts >= WAKE_CAP)
+                if row["state"] == "pending":
+                    if json.dumps(row) != before:
+                        row["updated_at"] = _now()
+                        _atomic(marker, row)
+                    continue
+                row["updated_at"] = _now()
+                _atomic(marker, row)
+                woken.append(row)
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+    return woken
+
+
+def _wake_one(row: dict, marker: Path, *, capped: bool) -> int:
+    """Settle or defer one pending marker; returns 1 when input was sent."""
+    target = row["target"]
+    if _target_exited(target):
+        row.update(state="stale", detail="Owner process ended before its wake-up")
+        return 0
+    ready, detail = _target_ready(target)
+    if not ready:
+        row["detail"] = detail
+        return 0
+    from .cli import _flock, _load_state_for_project, _state_lock_path
+    from .workspace import workspace_owner_record
+
+    def owner_project(project, slug):
+        current = _load_state_for_project(project).get("slugs", {}).get(slug) or {}
+        return (workspace_owner_record(current).get("workspace_owner") or {}).get("project", project)
+    projects = {p for page in row["pages"] for p in (page[0], owner_project(*page))}
+    with ExitStack() as stack:
+        # The locks dispatch_record holds while it sends a Send, in its order: each page's
+        # journal, then the tab and canonical projects' claim locks. Under them no Send or
+        # claim can land between these checks and the input.
+        for project, slug in sorted(row["pages"]):
+            stack.enter_context(journal_lock(project, slug))
+        for project in sorted(projects):
+            stack.enter_context(_flock(_state_lock_path(project)))
+        owned = []
+        for project, slug in row["pages"]:
+            current = _load_state_for_project(project).get("slugs", {}).get(slug) or {}
+            # A linked tab follows its canonical page's owner, as delivery does.
+            effective = workspace_owner_record(current)
+            fresh = (effective.get("workspace_owner") or {}).get("project", project)
+            if (fresh in projects and effective.get("owner_session") == target["session"]
+                    and not current.get("archived")
+                    and _same_process(effective.get("owner_target") or {}, target)):
+                owned.append([project, slug])
+        if not owned:
+            row.update(state="superseded", detail="Every page moved to another owner before the wake-up")
+            return 0
+        row["pages"] = owned
+        turn, why = _turn_since(row)
+        if turn == "proven":
+            row.update(state="skipped", detail=why)
+            return 0
+        if turn == "unresolved":
+            row["detail"] = why
+            return 0
+        if capped:
+            row["detail"] = f"Waiting: at most {WAKE_CAP} wake-ups per watchdog pass"
+            return 0
+        if not _provider_idle(target):
+            row["detail"] = "Owner is busy; wake-up deferred until it is idle"
+            return 0
+        with ExitStack() as outbox:
+            # The page server appends a Send under this lock, never held across an Orca call:
+            # a Send durable before the reservation defers the wake-up; one after it is newer.
+            for project, slug in sorted(owned):
+                outbox.enter_context(outbox_lock(project, slug))
+            for project, slug in owned:
+                current = _load_state_for_project(project).get("slugs", {}).get(slug) or {}
+                if _outbox_waiting(current, project, slug, target["session"]):
+                    row["detail"] = f"A Send on {project}/{slug} is in the outbox; wake-up deferred"
+                    return 0
+            row.update(state="attempting", attempted_at=_now())
+            _atomic(marker, row)  # journaled before input, so a crash never sends twice
+        pages = ", ".join(f"{project}/{slug}" for project, slug in owned)
+        prompt = (f"[annotate] This session was resumed after a restart and owns {pages} again. "
+                  "Re-arm any wait loop or monitor you were running, then read "
+                  "annotate inbox <page> --unread for each page.")
+        try:
+            receipt = _orca("terminal", "send", "--terminal", target["handle"], "--text", prompt,
+                            "--enter", "--wait-submit", "1").get("send", {})
+            row.update(state="sent" if receipt.get("accepted") else "uncertain", receipt=receipt)
+        except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            row.update(state="uncertain", detail=f"Send outcome unproven: {str(exc)[:250]}")
+    return 1
+
+
+@contextmanager
+def _page_lock(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield path
+
+
+def journal_lock(project: str, slug: str):
+    """The page journal lock: dispatch_record holds it, Orca send included."""
+    return _page_lock((STATE_DIR / "deliveries" / project / f"{slug}.json").with_suffix(".lock"))
+
+
+def outbox_lock(project: str, slug: str):
+    """A short leaf lock: Send enqueue, and the wake-up's outbox check plus reservation.
+
+    Its own tree: under deliveries/, page `x.outbox`'s journal lock would be this file."""
+    return _page_lock(STATE_DIR / "outbox-locks" / project / f"{slug}.lock")
+
+
+def _outbox_waiting(record: dict, project: str, slug: str, session: str) -> bool:
+    """A round for this owner is durable in the bus but not yet journaled by dispatch_record."""
+    try:
+        journal = STATE_DIR / "deliveries" / project / f"{slug}.json"
+        offset = json.loads(journal.read_text())["offset"] if journal.exists() else 0
+        with Path(record.get("bus_file") or "").open("rb") as stream:
+            stream.seek(offset)
+            for line in stream:
+                try:
+                    event = json.loads(line)
+                except (ValueError, UnicodeDecodeError):
+                    continue
+                if (event.get("event") == "session_push" and event.get("round") is True
+                        and event.get("automatic_delivery") is True and event.get("owner_session") == session):
+                    return True
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return False
+
+
+def _journal_rows(project: str, slug: str) -> list[dict]:
+    try:
+        return list(json.loads((STATE_DIR / "deliveries" / project / f"{slug}.json").read_text())
+                    .get("deliveries", {}).values())
+    except (OSError, ValueError):
+        return []
 
 
 def _target_ready(target: dict) -> tuple[bool, str]:
@@ -341,7 +729,8 @@ def _send_pending(rows: dict, record: dict, project: str, slug: str, journal: Pa
                   "reply in chat with one line and the URL.")
         from .board_followups import check_clause
         prompt += check_clause(record, project, slug)
-        row.update(state="attempting", attempted_at=_now())
+        # The prompt is kept so its Orca request ID can be replayed (never repeated) later.
+        row.update(state="attempting", attempted_at=_now(), prompt=prompt)
         _atomic(journal, state)
         try:
             result = _orca("terminal", "send", "--terminal", target["handle"],

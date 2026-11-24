@@ -29,7 +29,7 @@ def notice(cwd: Path, session_id: str | None = None) -> str | None:
             continue
     if session_id:
         from agent_annotate.delivery import refresh_session_owners
-        refresh_session_owners(session_id, {(p, s): r for p, s, r in entries})
+        refresh_session_owners(session_id, {(p, s): r for p, s, r in entries}, via="start")
     selected = selected_page(candidates(cwd, entries=entries))
     if not selected:
         return None
@@ -72,7 +72,8 @@ def main() -> int:
     """A visible line and the same context for the agent; never block a session."""
     try:
         payload = {}
-        if not sys.stdin.isatty() and select.select([sys.stdin], [], [], 0.01)[0]:
+        # Twenty sessions resuming at once after a reboot can be slower than 10 ms to write.
+        if not sys.stdin.isatty() and select.select([sys.stdin], [], [], 1)[0]:
             payload = json.load(sys.stdin)
         cwd = payload.get("cwd") if isinstance(payload, dict) else None
         from agent_annotate.hooks.check_comment_bus import _session_id

@@ -37,9 +37,12 @@ Rollback reinstalls the old wheel and restores the skills tarball. It restarts o
 | `sweep.py beads` | `beads: 2 open · 2 ready · 1 in progress over 24 h · 0 closed without proof` |
 | `sweep.py disk` | `disk: 293 GiB free · buses 0.0 GiB · 29 quiet buses over 30 days` |
 | `sweep.py sessions [--apply]` | `sessions: 0 finished worktrees (PR merged, bead closed, clean tree) · 0 removed` |
-| `sweep.py all` | the three lines |
+| `sweep.py owners` | `owners: 2 pages used in the last 7 days with no running owner · 1 Send waiting` |
+| `sweep.py all` | the four lines |
 
-Each run writes its summary lines, a blank line and the judgment items (stale beads, quiet buses, finished worktrees) to `~/.local/share/annotate-sweeps/latest.txt`. `run_summary.py` shows those summary lines by default (`--extra FILE …` for other sources).
+`owners` names each page someone used in the last 7 days (restart events don't count) whose owning agent is not running, with any Sends waiting for it. The revive watchdog re-binds a resumed owner within a minute, so a page listed here means that session never came back. `ownership:` is a separate line: it reports only whether the cross-Mac ownership manifest ran, not whether owners are alive.
+
+Each run writes its summary lines, a blank line and the judgment items (stale beads, quiet buses, finished worktrees, stopped owners) to `~/.local/share/annotate-sweeps/latest.txt`. `run_summary.py` shows those summary lines by default (`--extra FILE …` for other sources).
 
 `sessions` removes a worktree only with `--apply`, and only when all three hold:
 

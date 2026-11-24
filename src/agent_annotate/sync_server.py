@@ -3294,11 +3294,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             "event": "round_submitted", "by": author, "round_id": delivery["delivery_id"],
             "comment_ids": comment_ids, "answers": _push_answers(comments, self._reviewer_authors(author)),
         })
-        _bus_append(self.bus_dir, self.slug, {
-            "event": "session_push", **delivery, "round": True, "automatic_delivery": True,
-            "owner_session": owner.get("owner_session"), "owner_target": owner.get("target"),
-            "comment_count": len(comment_ids), "comment_ids": comment_ids, "author": author, **extra,
-        })
+        from .delivery import outbox_lock
+        # Under the outbox lock, so a resumed owner's re-arm wake-up sees this Send (agent-annotate-dlj).
+        with outbox_lock(_monitor_project(self.bus_dir), self.slug):
+            _bus_append(self.bus_dir, self.slug, {
+                "event": "session_push", **delivery, "round": True, "automatic_delivery": True,
+                "owner_session": owner.get("owner_session"), "owner_target": owner.get("target"),
+                "comment_count": len(comment_ids), "comment_ids": comment_ids, "author": author, **extra,
+            })
         from .review_history import save_round
         save_round(self.artifact_dir, {"id": delivery["delivery_id"], "ts": _now_iso(), "by": author,
                                       "version": self._read_meta().get("current"), "note": None,
@@ -3716,11 +3719,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             answers += _push_answers(pushed, reviewer_authors)
             _bus_append(self.bus_dir, self.slug, {"event": "round_submitted", "by": author,
                                                 "round_id": delivery["delivery_id"], "version": version, "answers": answers, **event})
-            _bus_append(self.bus_dir, self.slug, {
-                "event": "session_push", **delivery, "round": True, "automatic_delivery": True,
-                "owner_session": owner.get("owner_session"), "owner_target": owner.get("target"),
-                "comment_count": len(comment_ids), "author": author, **event,
-            })
+            from .delivery import outbox_lock
+            # Under the outbox lock, so a resumed owner's re-arm wake-up sees this Send (agent-annotate-dlj).
+            with outbox_lock(_monitor_project(self.bus_dir), self.slug):
+                _bus_append(self.bus_dir, self.slug, {
+                    "event": "session_push", **delivery, "round": True, "automatic_delivery": True,
+                    "owner_session": owner.get("owner_session"), "owner_target": owner.get("target"),
+                    "comment_count": len(comment_ids), "author": author, **event,
+                })
             from .review_history import save_round
             save_round(self.artifact_dir, {"id": delivery["delivery_id"], "ts": now, "by": author,
                                           "version": version, "note": note, "answers": answers, "edits": edits, "snapshot": True,

@@ -3761,7 +3761,15 @@ def cmd_revive(args) -> int:
     live = _running_servers()
     live_host = _live_tailnet_host()
     failed = 0
-    for project, slug, _record in _registry_entries():
+    entries = _registry_entries()
+    if not args.dry_run:
+        from .delivery import refresh_session_owners
+        by_session: dict = {}
+        for project, slug, record in entries:
+            by_session.setdefault(record.get("owner_session"), {})[(project, slug)] = record
+        for session, records in by_session.items():
+            refresh_session_owners(session, records, via="watchdog")
+    for project, slug, _record in entries:
         try:
             outcome, detail = _revive_one(project, slug, live, args.dry_run, live_host)
         except TimeoutError as e:
@@ -3778,6 +3786,11 @@ def cmd_revive(args) -> int:
             continue
         stamp = f"{_now_iso()} " if args.quiet else "  "
         print(f"{stamp}{outcome:<12} {page_name(_record)}" + (f"  {detail}" if detail else ""))
+    if not args.dry_run:
+        from .delivery import wake_resumed
+        for row in wake_resumed():
+            pages = ", ".join("/".join(page) for page in row["pages"])
+            print(f"{_now_iso() + ' ' if args.quiet else '  '}{'resumed':<12} {pages}  wake-up {row['state']}")
     return 1 if failed else 0
 
 

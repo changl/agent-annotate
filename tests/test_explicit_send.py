@@ -71,6 +71,34 @@ def test_saved_drafts_are_private_on_every_agent_surface(server, monkeypatch, ca
         assert _events(bus, "round_submitted")[-1]["answers"][0]["text"].count("PRIVATE WORDS") == 1
 
 
+@pytest.mark.parametrize("route", ["submit", "push"])
+def test_send_reaches_the_outbox_under_the_page_outbox_lock(server, monkeypatch, route):  # noqa: F811
+    """A resumed owner's re-arm wake-up holds this lock while it checks the outbox (agent-annotate-dlj)."""
+    import fcntl
+
+    from agent_annotate import delivery, sync_server
+    httpd, _, bus = server
+    real, held = sync_server._bus_append, []
+
+    def append(bus_dir, slug, event):
+        if event.get("automatic_delivery"):
+            lock = delivery.STATE_DIR / "outbox-locks" / sync_server._monitor_project(bus_dir) / f"{slug}.lock"
+            with lock.open("a") as probe:
+                try:
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    held.append(False)
+                except BlockingIOError:
+                    held.append(True)
+        return real(bus_dir, slug, event)
+    monkeypatch.setattr(sync_server, "_bus_append", append)
+    _, card = _call(httpd, "POST", "/api/comments", {"anchor_id": "s:a", "text": "Fix it"}, author="r@x")
+    if route == "submit":
+        _call(httpd, "POST", "/api/rounds/submit", {}, author="r@x")
+    else:
+        _call(httpd, "POST", f"/api/comments/{card['id']}/push", {}, author="r@x")
+    assert held == [True]
+
+
 def _events_before(bus, size):
     return [json.loads(line) for line in bus.read_bytes()[:size].splitlines()]
 
