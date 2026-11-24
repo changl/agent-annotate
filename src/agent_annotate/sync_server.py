@@ -1903,16 +1903,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         self._mark_store(revision_signature, store, page=view == "page", since=since)
                     # Label migration must not look like a content change to the shell.
                     numbers = _pin_item_numbers(store)
-                    if view == "page" or store.get("snapshot_expired"):
+                    if view == "page":
                         review = (current_version, [v for v in published if v],
                                   _card_anchors(lambda: _version_file(self.artifact_dir, current_version)))
-                        projected = _page_store(store, numbers, {"review": review, **_plan_docs(self.artifact_dir, store)})
-                        if view == "page":
-                            store = projected
-                        else:
-                            # With no revision history, hold only what the page view would have included.
-                            store["page_scope"] = [c["id"] for area in ("anchors", "archived")
-                                                   for cards in projected[area].values() for c in cards if "id" in c]
+                        store = _page_store(store, numbers, {"review": review, **_plan_docs(self.artifact_dir, store)})
                 body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
                 packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
                 representation = (packed, compressed) if len(packed) < len(body) else (body, False)

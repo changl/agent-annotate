@@ -352,6 +352,14 @@ def test_unchanged_multi_plan_full_store_revalidates_after_restart(tmp_path, mon
         assert response.status == 304
 
 
+def _expect_full_adoption(page, response):
+    full = response.json()
+    assert full["snapshot_expired"]
+    page.wait_for_function("() => !window.AnnotateDocs.store().partial")
+    assert page.evaluate("window.AnnotateDocs.store()") == full
+    playwright.expect(page.locator("#aa-fresh .aa-fresh-n")).to_be_hidden()
+
+
 @pytest.mark.parametrize("backend", ["json", "sqlite"])
 @pytest.mark.parametrize("archived_only", [False, True], ids=["new-note", "archived-only"])
 def test_earlier_feedback_keeps_history_when_a_restart_expires_its_mark(tmp_path, backend, archived_only):
@@ -379,22 +387,90 @@ def test_earlier_feedback_keeps_history_when_a_restart_expires_its_mark(tmp_path
         earlier = rail.locator('[data-section-toggle="earlier"]')
         archived = rail.locator('[data-comment-id="old-1"]')
         note = rail.locator('[data-comment-id="restart-note"]')
-        badge = page.locator("#aa-fresh .aa-fresh-n")
         with page.expect_response(lambda r: r.url.endswith("comments.json?view=poll")) as loaded:
             earlier.click()
-        assert loaded.value.json()["snapshot_expired"]
         playwright.expect(archived).to_be_visible()
-        if archived_only:
-            playwright.expect(badge).to_be_hidden()
-        else:
+        _expect_full_adoption(page, loaded.value)
+        if not archived_only:
             playwright.expect(rail.locator('[data-comment-id="old-0"]')).to_be_visible()
-            playwright.expect(note).to_have_count(0)
-            playwright.expect(badge).to_have_text("1")
+            playwright.expect(note).to_be_visible()
 
         with page.expect_response(lambda r: r.url.endswith("comments.json?view=poll")):
             page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
         playwright.expect(archived).to_be_visible()
-        if not archived_only:
-            playwright.expect(badge).to_have_text("1")
-            page.locator("#aa-fresh").click()
-            playwright.expect(note).to_be_visible()
+        playwright.expect(page.locator("#aa-fresh .aa-fresh-n")).to_be_hidden()
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+def test_expired_mark_adopts_notes_on_both_plan_revisions(tmp_path, backend):
+    directory = _directory(tmp_path)
+    publish_plan_revision(directory, "rollout", "<h1>Rollout v1</h1>", title="Rollout")
+    path = directory / "comments.json"
+    store = json.loads(path.read_text())
+    store["anchors"]["s:rollout"] = [{
+        "id": "plan-history", "anchor_id": "s:rollout", "doc": "plan:rollout", "category": "plans",
+        "version": "v0", "status": "addressed_by_agent", "author": "reviewer@example.com",
+        "text": "Settled earlier plan feedback", "created_at": "2026-09-01T00:00:00Z", "replies": [],
+    }]
+    path.write_text(json.dumps(store))
+    if backend == "sqlite":
+        page_storage.import_page(directory, project="bus", slug="items-model", state_dir=tmp_path / "state")
+    assert page_storage.backend(directory) == backend
+
+    with _session(tmp_path, directory) as (page, base, restart):
+        page.goto(base + "#view=plans&plan=rollout", wait_until="networkidle")
+        playwright.expect(page.frame_locator("#content-frame").get_by_role("heading", name="Rollout v1")).to_be_visible()
+        restart()
+
+        def add_note(version):
+            _agent(base, "api/comments/batch", {"items": [{
+                "id": f"late-{version}-note", "anchor_id": "s:rollout", "doc": "plan:rollout",
+                "version": version, "text": f"Feedback on {version}",
+            }]})
+
+        def publish_during_read(route):
+            add_note("v1")
+            publish_plan_revision(directory, "rollout", "<h1>Rollout v2</h1>", title="Rollout")
+            add_note("v2")
+            route.continue_()
+
+        page.route("**/comments.json?view=poll", publish_during_read, times=1)
+        rail = page.locator("#comment-list")
+        with page.expect_response(lambda r: r.url.endswith("comments.json?view=poll")) as loaded:
+            rail.locator('[data-section-toggle="earlier"]').click()
+        _expect_full_adoption(page, loaded.value)
+        assert page.evaluate("['late-v1-note', 'late-v2-note'].every(id => window.AnnotateDocs.findComment(id))")
+        playwright.expect(rail.locator('[data-comment-id="plan-history"]')).to_be_visible()
+
+
+def test_expired_mark_keeps_an_older_answer_when_its_prompt_is_repeated(tmp_path):
+    directory = _directory(tmp_path)
+    for version in ("v1", "v2"):
+        publish_plan_revision(directory, "rollout", f"<h1>Rollout {version}</h1>", title="Rollout")
+    path = directory / "comments.json"
+    store = json.loads(path.read_text())
+    question = {"prompt": "Is rollout ready?", "options": [{"id": "yes", "label": "Yes"}]}
+    store["anchors"]["s:rollout"] = [{
+        "id": "old-answer", "anchor_id": "s:rollout", "doc": "plan:rollout", "category": "plans",
+        "version": "v1", "status": "addressed_by_agent", "author": "agent:review-test",
+        "text": "Settled earlier plan question", "created_at": "2026-09-01T00:00:00Z", "replies": [],
+        "decision_request": question,
+        "decision": {"verdict": "accept", "by": "reviewer@example.com", "at": "2026-09-02T00:00:00Z"},
+    }]
+    path.write_text(json.dumps(store))
+
+    with _session(tmp_path, directory) as (page, base, restart):
+        page.goto(base + "#view=plans&plan=rollout", wait_until="networkidle")
+        playwright.expect(page.frame_locator("#content-frame").get_by_role("heading", name="Rollout v2")).to_be_visible()
+        assert page.evaluate("!window.AnnotateDocs.findComment('old-answer')")
+        restart()
+        _agent(base, "api/comments/batch", {"items": [{
+            "id": "repeated-question", "anchor_id": "s:rollout", "doc": "plan:rollout", "version": "v2",
+            "text": "Current plan question", "decision_request": question,
+        }]})
+        rail = page.locator("#comment-list")
+        with page.expect_response(lambda r: r.url.endswith("comments.json?view=poll")) as loaded:
+            rail.locator('[data-section-toggle="earlier"]').click()
+        playwright.expect(rail.locator('[data-section="earlier"] [data-comment-id="old-answer"]')).to_be_visible()
+        playwright.expect(rail.locator('[data-comment-id="repeated-question"]')).to_be_visible()
+        _expect_full_adoption(page, loaded.value)

@@ -407,9 +407,9 @@ let storeAsked = 0, storeTaken = 0;
 // Send, History, an older version or text typed on an old card read the
 // whole store (`view=poll`) once, and the page keeps it from then on.
 let STORE_VIEW = 'page';
-async function pollStore(usePageScope = false) {
+async function pollStore() {
   const asked = ++storeAsked;
-  const baseMark = STORE.partial ? (!usePageScope && STORE.store_mark) || 'unknown' : null;
+  const baseMark = STORE.partial ? STORE.store_mark : null;
   try {
     const got = await pollJson('./comments.json?view=' + STORE_VIEW, false,
       baseMark ? { 'X-Annotate-Store-Mark': baseMark } : {});
@@ -469,22 +469,17 @@ function adoptLive(id) {
   computeNumbers();
 }
 // The whole store, read once when something needs it (see STORE_VIEW). It
-// joins the page as shown: cards on screen stay as they are, and cards that
-// came after the last refresh stay waiting behind the banner.
+// joins the page as shown when we can compare the two snapshots.
 let fullStore = null;
 function wantFullStore() {
   if (!STORE.partial) return Promise.resolve(true);
   if (fullStore) return fullStore;
   STORE_VIEW = 'poll';
-  fullStore = pollStore().then(async () => {
-    let held = heldFromPageRead();
-    // Refresh can replace the partial snapshot while the full read is in flight.
-    if (STORE.partial && LIVE && !LIVE.partial && !held) {
-      await pollStore(true);
-      held = heldFromPageRead();
-    }
-    if (!LIVE || LIVE.partial || (STORE.partial && !held)) { STORE_VIEW = 'page'; fullStore = null; return false; }
-    adoptFull(held);
+  fullStore = pollStore().then(() => {
+    if (!LIVE || LIVE.partial) { STORE_VIEW = 'page'; fullStore = null; return false; }
+    const held = heldFromPageRead();
+    if (STORE.partial && !held) applyLive();
+    else adoptFull(held);
     if (VIEW_DOC) withDoc(VIEW_DOC, renderAll);
     document.dispatchEvent(new CustomEvent('annotate:store'));
     if (window.AA) { window.AA.changed(); if (window.AA.rail && window.AA.rail.tab === 'history') window.AA.rail.renderHistory(); }
@@ -495,7 +490,6 @@ function wantFullStore() {
 }
 function heldFromPageRead() {
   if (!STORE.partial || !LIVE) return null;
-  if (LIVE.page_scope) return new Set(LIVE.page_scope);
   if (!STORE.store_mark || liveBaseMark !== STORE.store_mark || LIVE.snapshot_expired) return null;
   return new Set(LIVE.changed_after);
 }
@@ -561,9 +555,10 @@ function waitingChanges() {
   if (!LIVE || LIVE === STORE) return out;
   if (waiting && waiting.live === LIVE && waiting.doc === DOC) return waiting.out;
   waiting = { live: LIVE, doc: DOC, out };
+  const held = heldFromPageRead();
+  if (STORE.partial && !held) return out;
   const all = (store) => { const s = STORE; STORE = store; try { return flattenStore(true).filter(c => docOf(c) === DOC); } finally { STORE = s; } };
   const shown = new Map(all(STORE).filter(c => !c.pending).map(c => [c.id, JSON.stringify(c)]));
-  const held = heldFromPageRead();
   for (const c of all(LIVE)) {
     const was = shown.get(c.id);
     shown.delete(c.id);
