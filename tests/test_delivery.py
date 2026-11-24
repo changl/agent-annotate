@@ -207,8 +207,8 @@ def _resumed_elsewhere(estate, monkeypatch, copies=1, agent="claude", session=_O
         for i in range(copies):
             (sessions / f"{4343 + i}.json").write_text(json.dumps(
                 {"pid": 4343 + i, "sessionId": session, "procStart": "new start UTC", "status": "idle"}))
-    argv = argv or [f"/Users/x/.npm-global/bin/{agent}", "--effort", "high",
-                    "resume" if agent == "codex" else "--resume", _OWNER]
+    argv = argv or ([f"/Users/x/.npm-global/bin/{agent}", "-c", "model=x", "resume", "--search", _OWNER]
+                    if agent == "codex" else [f"/Users/x/.npm-global/bin/{agent}", "--resume", _OWNER])
     commands = {4343 + i: argv for i in range(copies)} | {5555: ["pgrep", "-fl", "--", _OWNER]}
 
     def kill(pid, signal):
@@ -291,6 +291,12 @@ def test_prompt_hook_rebind_needs_no_wake_up(estate, monkeypatch):
     {"agent": "codex", "argv": ["/Users/x/codex", "resume", "new-session-id", f"pick up where {_OWNER} left off"]},
     {"agent": "codex", "argv": ["/Users/x/codex", "new-session-id", "resume", _OWNER]},
     {"agent": "codex", "argv": ["/Users/x/codex", f"resume {_OWNER}"]},
+    # A profile named "resume": a fresh session whose prompt is the owner's id.
+    {"agent": "codex", "argv": ["/Users/x/codex", "--profile", "resume", _OWNER]},
+    {"agent": "codex", "argv": ["/Users/x/codex", "-p", "resume", "resume", "other-id", _OWNER]},
+    {"agent": "codex", "argv": ["/Users/x/codex", "--unknown-option", "resume", _OWNER]},  # fail closed
+    {"agent": "codex", "argv": ["/Users/x/codex", "resume", "--last", _OWNER]},
+    {"agent": "codex", "argv": ["/Users/x/codex", "resume", "-i", "a.png", _OWNER]},  # -i takes many values
 ])
 def test_watchdog_never_binds_a_fork_of_the_owner_session(estate, monkeypatch, fork):
     _old, record = _resumed_elsewhere(estate, monkeypatch, **fork)
@@ -301,8 +307,13 @@ def test_watchdog_never_binds_a_fork_of_the_owner_session(estate, monkeypatch, f
     assert delivery.wake_resumed() == [] and estate["calls"] == []
 
 
-def test_watchdog_binds_codex_resume_by_its_session_argument(estate, monkeypatch):
-    _old, record = _resumed_elsewhere(estate, monkeypatch, agent="codex")
+@pytest.mark.parametrize("argv", [
+    None,  # codex -c model=x resume --search ID
+    ["/Users/x/codex", "--profile", "resume", "resume", _OWNER],
+    ["/Users/x/codex", "--profile=work", "--dangerously-bypass-approvals-and-sandbox", "resume", _OWNER, "go on"],
+])
+def test_watchdog_binds_codex_resume_by_its_session_argument(estate, monkeypatch, argv):
+    _old, record = _resumed_elsewhere(estate, monkeypatch, agent="codex", argv=argv)
     delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record}, via="watchdog")
     assert cli._load_state_for_project(_PROJECT)["slugs"][_SLUG]["owner_target"]["pid"] == 4343
     assert delivery.wake_resumed()[0]["state"] == "sent"  # Orca reported the pane idle
@@ -350,6 +361,19 @@ def test_wake_up_rechecks_sends_and_idle_under_the_delivery_locks(estate, monkey
     delivery.wake_resumed()
     assert _sends(estate) == []
     assert _marker(estate)["state"] == ("skipped" if meanwhile == "send-started-a-turn" else "pending")
+
+
+def test_wake_up_waits_for_a_send_already_in_the_outbox(estate, monkeypatch):
+    old, record = _resumed_elsewhere(estate, monkeypatch)
+    estate["receipt"]["prompt"]["stages"] = ["input_accepted", "turn_started"]
+    delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record}, via="watchdog")
+    # The page server made a Send durable; its async dispatcher has not journaled it yet.
+    _append(estate, _round(owner_target=old))
+    assert delivery.wake_resumed() == [] and _sends(estate) == []
+    assert "outbox" in _marker(estate)["detail"]
+    _dispatch(estate)  # the dispatcher delivers the round, which is the owner's turn
+    assert delivery.wake_resumed()[0]["state"] == "skipped"
+    assert [send[5][:26] for send in _sends(estate)] == ["[annotate] Round submitted"]
 
 
 def test_prompt_hook_never_waits_on_marker_locks(estate, monkeypatch):

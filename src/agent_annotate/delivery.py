@@ -14,7 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -175,20 +175,35 @@ def _resumed_pids(session: str, expected: str) -> list[int]:
     return pids
 
 
-def _codex_resumes(args: list[str], session: str) -> bool:
-    """`codex [options] resume ID ...`: the subcommand, then the id as its first argument.
+# `codex resume --help` (Codex CLI, 2026-11): options that take one value, and plain flags.
+_CODEX_VALUE = {"-c", "--config", "-m", "--model", "-p", "--profile", "-s", "--sandbox", "-a",
+                "--ask-for-approval", "-C", "--cd", "--add-dir", "--enable", "--disable", "--remote",
+                "--remote-auth-token-env", "--local-provider"}
+_CODEX_FLAG = {"--oss", "--search", "--no-alt-screen", "--no-daemon", "--strict-config", "--approve-for-me",
+               "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", "--worktree"}
 
-    shortcut: Codex keeps no per-process session file, so the argv decides; flags between
-    `resume` and the id, or any fork, never bind. Upgrade when Codex exposes the live thread id."""
-    if any(arg == "fork" or arg.startswith("--fork") for arg in args):
-        return False
-    for i, arg in enumerate(args):
-        if arg == "resume":
-            return args[i + 1:i + 2] == [session]
-        # Before the subcommand only options and their values may appear, never a prompt.
-        if not arg.startswith("-") and not (i and args[i - 1].startswith("-")):
-            return False
-    return False
+
+def _codex_resumes(args: list[str], session: str) -> bool:
+    """`codex [options] resume [options] ID ...`, parsed the way Codex does.
+
+    shortcut: Codex keeps no per-process session file, so the argv decides. Any option not
+    listed above (including -i, --last and fork) fails closed; extend the lists when Codex
+    adds options, or switch to the live thread id once Codex exposes it."""
+    i, positionals = 0, []
+    while i < len(args):
+        arg = args[i]
+        if arg.startswith("-"):
+            name = arg.split("=", 1)[0]
+            if name in _CODEX_VALUE:
+                i += 1 if "=" in arg else 2  # the value is never the subcommand or the id
+                continue
+            if arg not in _CODEX_FLAG:
+                return False
+        else:
+            positionals.append(arg)
+        i += 1
+    # `resume`, then its first positional is the session id; anything else is a fresh session.
+    return positionals[:2] == ["resume", session] and i == len(args)
 
 
 def _argv(pid: int) -> list[str] | None:
@@ -481,9 +496,7 @@ def _wake_one(row: dict, marker: Path, *, capped: bool) -> int:
         # journal, then the tab and canonical projects' claim locks. Under them no Send or
         # claim can land between these checks and the input.
         for project, slug in sorted(row["pages"]):
-            journal = STATE_DIR / "deliveries" / project / f"{slug}.json"
-            journal.parent.mkdir(parents=True, exist_ok=True)
-            fcntl.flock(stack.enter_context(journal.with_suffix(".lock").open("a")), fcntl.LOCK_EX)
+            stack.enter_context(journal_lock(project, slug))
         for project in sorted(projects):
             stack.enter_context(_flock(_state_lock_path(project)))
         owned = []
@@ -513,12 +526,22 @@ def _wake_one(row: dict, marker: Path, *, capped: bool) -> int:
         if not _provider_idle(target):
             row["detail"] = "Owner is busy; wake-up deferred until it is idle"
             return 0
+        with ExitStack() as outbox:
+            # The page server appends a Send under this lock, never held across an Orca call:
+            # a Send durable before the reservation defers the wake-up; one after it is newer.
+            for project, slug in sorted(owned):
+                outbox.enter_context(outbox_lock(project, slug))
+            for project, slug in owned:
+                current = _load_state_for_project(project).get("slugs", {}).get(slug) or {}
+                if _outbox_waiting(current, project, slug, target["session"]):
+                    row["detail"] = f"A Send on {project}/{slug} is in the outbox; wake-up deferred"
+                    return 0
+            row.update(state="attempting", attempted_at=_now())
+            _atomic(marker, row)  # journaled before input, so a crash never sends twice
         pages = ", ".join(f"{project}/{slug}" for project, slug in owned)
         prompt = (f"[annotate] This session was resumed after a restart and owns {pages} again. "
                   "Re-arm any wait loop or monitor you were running, then read "
                   "annotate inbox <page> --unread for each page.")
-        row.update(state="attempting", attempted_at=_now())
-        _atomic(marker, row)  # journaled before input, so a crash never sends twice
         try:
             receipt = _orca("terminal", "send", "--terminal", target["handle"], "--text", prompt,
                             "--enter", "--wait-submit", "1").get("send", {})
@@ -526,6 +549,45 @@ def _wake_one(row: dict, marker: Path, *, capped: bool) -> int:
         except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired) as exc:
             row.update(state="uncertain", detail=f"Send outcome unproven: {str(exc)[:250]}")
     return 1
+
+
+@contextmanager
+def _page_lock(project: str, slug: str, suffix: str):
+    journal = STATE_DIR / "deliveries" / project / f"{slug}.json"
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    with journal.with_suffix(suffix).open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield journal
+
+
+def journal_lock(project: str, slug: str):
+    """The page journal lock: dispatch_record holds it, Orca send included."""
+    return _page_lock(project, slug, ".lock")
+
+
+def outbox_lock(project: str, slug: str):
+    """A short leaf lock: Send enqueue, and the wake-up's outbox check plus reservation."""
+    return _page_lock(project, slug, ".outbox.lock")
+
+
+def _outbox_waiting(record: dict, project: str, slug: str, session: str) -> bool:
+    """A round for this owner is durable in the bus but not yet journaled by dispatch_record."""
+    try:
+        journal = STATE_DIR / "deliveries" / project / f"{slug}.json"
+        offset = json.loads(journal.read_text())["offset"] if journal.exists() else 0
+        with Path(record.get("bus_file") or "").open("rb") as stream:
+            stream.seek(offset)
+            for line in stream:
+                try:
+                    event = json.loads(line)
+                except (ValueError, UnicodeDecodeError):
+                    continue
+                if (event.get("event") == "session_push" and event.get("round") is True
+                        and event.get("automatic_delivery") is True and event.get("owner_session") == session):
+                    return True
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return False
 
 
 def _journal_rows(project: str, slug: str) -> list[dict]:
