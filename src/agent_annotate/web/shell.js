@@ -365,6 +365,7 @@ function authorQuery() {
 // cost no parsing or rendering; `pollChanged` records whether any read in a
 // poll brought something new (`quiet` reads handle their own changes).
 const pollLast = {};
+let pollAsked = 0;
 let pollChanged = false;
 // Posts not answered yet, each with how to put it on a fresh store (see
 // "Optimistic posts").
@@ -373,22 +374,29 @@ const pendingEdits = new Map();
 const early = {};
 function prefetch(url, read = () => pollJson(url)) { early[url] = read(); early[url].catch(() => {}); }
 function takeEarly(url) { const p = early[url]; delete early[url]; return p; }
-async function pollJson(url, quiet) {
+async function pollJson(url, quiet, headers = {}) {
+  const asked = ++pollAsked;
   const last = pollLast[url];
+  if (last?.etag) headers['If-None-Match'] = last.etag;
   // uzd: a page's first read revalidates the browser's copy (a 304 when the meta or categories are unchanged).
-  const r = await fetch(apiUrl(url), { cache: last ? 'no-store' : 'no-cache', headers: last && last.etag ? { 'If-None-Match': last.etag } : {}, signal: AbortSignal.timeout(10000) });
+  const r = await fetch(apiUrl(url), { cache: last ? 'no-store' : 'no-cache', headers, signal: AbortSignal.timeout(10000) });
   // Read the empty 304 body: an unread one ends as an aborted request.
-  if (r.status === 304 && last) { await r.text(); return { ok: true, same: true, data: last.data }; }
-  if (!r.ok) return { ok: false, status: r.status };
+  if (!r.ok && (r.status !== 304 || !last?.etag)) return { ok: false, status: r.status };
   const text = await r.text();
-  const etag = r.headers.get('ETag');
-  if (last && last.text != null && text === last.text) { last.etag = etag; return { ok: true, same: true, data: last.data }; }
-  const data = JSON.parse(text);
-  // The body is kept for comparing only when the server sends no ETag (the
-  // FLD store's text is megabytes held twice otherwise).
-  pollLast[url] = { etag, text: etag ? null : text, data };
-  if (!quiet) pollChanged = true;
-  return { ok: true, same: false, data };
+  const current = pollLast[url];
+  if (current && asked < current.asked) return { ok: true, same: true, data: current.data };
+  // A 304 validates the entry used by this request, even if the cache moved on.
+  let answer = last;
+  if (r.status !== 304) {
+    const etag = r.headers.get('ETag');
+    const data = current?.text === text ? current.data : JSON.parse(text);
+    // Keep the raw text only when it serves as the validator.
+    answer = { etag, text: etag ? null : text, data };
+  }
+  pollLast[url] = { ...answer, asked };
+  const same = current?.data === answer.data;
+  if (!quiet && !same) pollChanged = true;
+  return { ok: true, same, data: answer.data };
 }
 
 // The page's one comment store, shared by every document and tab.
@@ -398,6 +406,7 @@ async function pollJson(url, quiet) {
 // STORE is what the page shows; LIVE is the store as the server last sent it.
 // Polls read LIVE only (Chang, 2026-11-01: nothing changes under the reviewer).
 let LIVE = null;
+let liveBaseMark = null;
 let storeAsked = 0, storeTaken = 0;
 // uzd: the page first reads `view=page`, what the latest version shows and a
 // Send needs (FLD: 140 of 9,178 comments). Earlier feedback, Not in this
@@ -406,14 +415,20 @@ let storeAsked = 0, storeTaken = 0;
 let STORE_VIEW = 'page';
 async function pollStore() {
   const asked = ++storeAsked;
+  const baseMark = STORE.partial ? STORE.store_mark : null;
   try {
-    const got = await pollJson('./comments.json?view=' + STORE_VIEW);
+    const got = await pollJson('./comments.json?view=' + STORE_VIEW, false,
+      baseMark ? { 'X-Annotate-Store-Mark': baseMark } : {});
     if (!got.ok) return false;
     // The 8 s poll and a read after Save can overlap; an older read that
     // answers last would put the card back as it was before the save.
     if (asked < storeTaken) return true;
     storeTaken = asked;
-    if (!got.same || !LIVE) LIVE = got.data && got.data.schema_version === 2 ? got.data : { schema_version: 2, anchors: {}, archived: {} };
+    liveBaseMark = baseMark;
+    if (got.data !== LIVE) {
+      LIVE = got.data && got.data.schema_version === 2 ? got.data : { schema_version: 2, anchors: {}, archived: {} };
+      pollChanged = true;
+    }
     return true;
   } catch { return false; }
 }
@@ -460,17 +475,20 @@ function adoptLive(id) {
   computeNumbers();
 }
 // The whole store, read once when something needs it (see STORE_VIEW). It
-// joins the page as shown: cards on screen stay as they are, and cards that
-// came after the last refresh stay waiting behind the banner.
+// joins the page as shown when we can compare the two snapshots.
 let fullStore = null;
-function wantFullStore() {
+function wantFullStore(startup = false) {
   if (!STORE.partial) return Promise.resolve(true);
   if (fullStore) return fullStore;
   STORE_VIEW = 'poll';
-  const before = LIVE;
-  fullStore = pollStore().then(ok => {
-    if (!ok || !LIVE || LIVE.partial) { STORE_VIEW = 'page'; fullStore = null; return false; }
-    adoptFull(before);
+  fullStore = pollStore().then(() => {
+    if (!LIVE || LIVE.partial) { STORE_VIEW = 'page'; fullStore = null; return false; }
+    const held = heldFromPageRead();
+    if (held || !STORE.partial) adoptFull(held);
+    else if (startup && STORE.current_version && STORE.current_version !== LIVE.current_version) {
+      // The first frame still opens on the Review version selected from the partial read.
+      adoptFull(new Set());
+    } else applyLive();
     if (VIEW_DOC) withDoc(VIEW_DOC, renderAll);
     document.dispatchEvent(new CustomEvent('annotate:store'));
     if (window.AA) { window.AA.changed(); if (window.AA.rail && window.AA.rail.tab === 'history') window.AA.rail.renderHistory(); }
@@ -479,33 +497,43 @@ function wantFullStore() {
   });
   return fullStore;
 }
-function adoptFull(before) {
+function heldFromPageRead() {
+  if (!STORE.partial || !LIVE) return null;
+  if (!STORE.store_mark || liveBaseMark !== STORE.store_mark || LIVE.snapshot_expired) return null;
+  return new Set(LIVE.changed_after);
+}
+function adoptFull(held) {
   const snapshotVersion = STORE.current_version;
   const snapshotNumber = Number(snapshotVersion?.slice(1));
   const where = new Map();
   for (const area of ['anchors', 'archived']) {
     for (const [aid, items] of Object.entries(STORE[area] || {})) for (const c of items) where.set(c.id, { area, aid, c });
   }
-  const waitingNew = new Set();
-  if (before && before !== STORE) {
-    for (const area of ['anchors', 'archived']) {
-      for (const items of Object.values(before[area] || {})) for (const c of items) if (!where.has(c.id)) waitingNew.add(c.id);
-    }
-  }
   const out = Object.assign({}, LIVE, { anchors: {}, archived: {} });
   if (snapshotVersion) out.current_version = snapshotVersion;
+  const targeted = new Set(DOCS.flatMap(doc => withDoc(doc, draftCardIds)));
+  targeted.add(cardLinkId());
   const placed = new Set();
   for (const area of ['anchors', 'archived']) {
     for (const [aid, items] of Object.entries(LIVE[area] || {})) {
       const list = [];
       for (const c of Array.isArray(items) ? items : []) {
         const shown = where.get(c.id);
-        // A full read can finish after a publish. Its new Review cards wait for Refresh.
-        const laterReview = !shown && docOf(c) === 'review' && typeof c.version === 'string'
-          && Number(c.version.slice(1)) > snapshotNumber;
-        if (laterReview || waitingNew.has(c.id) || (shown && (shown.area !== area || shown.aid !== aid))) continue;
+        if (targeted.has(c.id)) {
+          list.push(c);
+          placed.add(c.id);
+          continue;
+        }
+        if (shown) {
+          if (shown.area !== area || shown.aid !== aid) continue;
+          placed.add(c.id);
+        } else {
+          // A full read can finish after a publish. Its new Review cards wait for Refresh.
+          const laterReview = docOf(c) === 'review' && typeof c.version === 'string'
+            && Number(c.version.slice(1)) > snapshotNumber;
+          if (laterReview || !held || held.has(c.id)) continue;
+        }
         list.push(shown ? shown.c : c);
-        if (shown) placed.add(c.id);
       }
       if (list.length) out[area][aid] = list;
     }
@@ -523,15 +551,17 @@ function omitted() {
   const key = DOC === 'review' ? 'review' : DOC === 'plans' && PLAN_ID ? 'plan:' + PLAN_ID : null;
   return (STORE.partial && key && STORE.omitted && STORE.omitted[key]) || { earlier: 0, rest: 0, rest_missing: 0 };
 }
+function draftCardIds() {
+  const cardOf = k => /^(say|edit):/.test(k) ? k.slice(k.indexOf(':') + 1) : k.startsWith('note:') ? k.slice(5).split('|')[0]
+    : k === 'gf' || k === 'pop' || k.startsWith('sending:') ? '' : k;
+  return Object.keys(DRAFTS).filter(k => String(DRAFTS[k] || '').trim()).map(cardOf).filter(Boolean);
+}
 // What the reviewer is looking at needs comments view=page left out.
 function needsFullStore() {
   if (!STORE.partial) return false;
   if ((DOC === 'review' || DOC === 'plans') && CURRENT_VERSION && CURRENT_VERSION !== projectedVersion()) return true;
   const known = new Set(flattenStore(true).map(c => c.id));
-  // Text typed on a card stays with it, however old the card is.
-  const cardOf = k => /^(say|edit):/.test(k) ? k.slice(k.indexOf(':') + 1) : k.startsWith('note:') ? k.slice(5).split('|')[0]
-    : k === 'gf' || k === 'pop' || k.startsWith('sending:') ? '' : k;
-  return Object.keys(DRAFTS).some(k => DRAFTS[k] && cardOf(k) && !known.has(cardOf(k)));
+  return draftCardIds().some(id => !known.has(id));
 }
 // What the banner says is waiting in LIVE for the document on screen
 // (worked out once per store read: it writes out every comment).
@@ -542,12 +572,17 @@ function waitingChanges() {
   if (!LIVE || LIVE === STORE) return out;
   if (waiting && waiting.live === LIVE && waiting.doc === DOC) return waiting.out;
   waiting = { live: LIVE, doc: DOC, out };
+  const held = heldFromPageRead();
+  if (STORE.partial && !held) return out;
   const all = (store) => { const s = STORE; STORE = store; try { return flattenStore(true).filter(c => docOf(c) === DOC); } finally { STORE = s; } };
   const shown = new Map(all(STORE).filter(c => !c.pending).map(c => [c.id, JSON.stringify(c)]));
   for (const c of all(LIVE)) {
     const was = shown.get(c.id);
     shown.delete(c.id);
-    if (was === undefined) { if (c.decision_request) out.questions++; else out.cards++; }
+    if (was === undefined) {
+      if (c.withdrawn || c.status === 'archived' || (held && !held.has(c.id))) continue;
+      if (c.decision_request) out.questions++; else out.cards++;
+    }
     else if (was !== JSON.stringify(c)) out.changed++;
   }
   out.changed += shown.size; // gone from the server
@@ -1888,10 +1923,6 @@ function strandedSayHtml(c) {
     <textarea class="textarea textarea-sm decision-say-ta" data-decision-say-ta="${escAttr(c.id)}" rows="2" aria-label="Your reply on #${NUM_MAP[c.id] || ''}"></textarea>
   </div>`;
 }
-// A reply or comment typed on the card and not sent yet.
-function hasUnsentText(c) {
-  return !!((DRAFTS[c.id] || '').trim() || (DRAFTS['say:' + c.id] || '').trim());
-}
 function isChangingAnswer(c) {
   return !!(c && (decisionChanging[c.id] || sumEditing === c.id) && canChangeAnswer(c));
 }
@@ -1995,6 +2026,8 @@ function renderDrawerNow(id, previousId) {
 
   // v9o: a card holding unsent text stays open with its box, even after the
   // agent answered or resolved it meanwhile (its section opens too).
+  const drafted = new Set(draftCardIds());
+  const hasUnsentText = c => drafted.has(c.id);
   for (const c of id ? [findCommentById(id)].filter(Boolean) : flattenAll(false)) {
     if (!hasUnsentText(c)) continue;
     cardExpanded[c.id] = true;
@@ -5267,9 +5300,12 @@ function showStatus(text) {
 // card follows the viewer), then the rail shows the card expanded and
 // highlighted. takeCardLink() runs before the router reads the hash.
 let linkedCard = null;
+function cardLinkId(params = new URLSearchParams(location.hash.slice(1))) {
+  return params.get('feedback') || params.get('c');
+}
 function takeCardLink() {
   const p = new URLSearchParams(location.hash.slice(1));
-  const id = p.get('feedback') || p.get('c');
+  const id = cardLinkId(p);
   const c = id ? findCommentById(id) : null;
   const doc = c && docOf(c);
   if (!doc || !DOCS.includes(doc)) return;
@@ -5380,9 +5416,8 @@ async function init() {
   for (const doc of DOCS) await loadDocState(doc);
   // A link to an older card, an older version or text typed on an older card
   // needs the whole store before the first screen.
-  const link = new URLSearchParams(location.hash.slice(1));
-  const linkId = link.get('feedback') || link.get('c');
-  if (STORE.partial && ((linkId && !findCommentById(linkId)) || DOCS.some(doc => withDoc(doc, needsFullStore)))) await wantFullStore();
+  const linkId = cardLinkId();
+  if (STORE.partial && ((linkId && !findCommentById(linkId)) || DOCS.some(doc => withDoc(doc, needsFullStore)))) await wantFullStore(true);
   takeCardLink();
   DOCS_LOADED_resolve();
   document.dispatchEvent(new CustomEvent('annotate:store'));

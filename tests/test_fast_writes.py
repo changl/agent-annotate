@@ -232,8 +232,14 @@ def test_unchanged_full_polls_read_no_plan_files(server, monkeypatch):
     # Both complete store representations are independent of plan-file metadata.
     urls = ("/comments.json", "/comments.json?view=poll")
     validators = {url: request(httpd, url)[1]["ETag"] for url in urls}
-    request(httpd, "/comments.json?view=page")
+    mark = json.loads(request(httpd, "/comments.json?view=page")[2])["store_mark"]
+    marked = {"X-Annotate-Store-Mark": mark}
     monkeypatch.setattr(sync_server, "_metadata_stamp", count)
+    status, headers, body = request(httpd, urls[1], headers=marked)
+    assert status == 200 and not json.loads(body).get("snapshot_expired")
+    expired = request(httpd, urls[1], headers={"X-Annotate-Store-Mark": "unknown"})
+    assert json.loads(expired[2])["snapshot_expired"]
+    assert request(httpd, urls[1], headers={**marked, "If-None-Match": headers["ETag"]})[0] == 304
     for url in urls:
         assert request(httpd, url, headers={"If-None-Match": validators[url]})[0] == 304
     assert paths == []

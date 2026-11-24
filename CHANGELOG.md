@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## 2.32.13
+
+- Opening Earlier feedback keeps what the page already shows (agent-annotate-1us, PR #168). The first read carries a small mark; opening Earlier adds only older cards unchanged since that mark, plus a card a link or a saved draft points at, and holds anything newer behind Refresh. A late full response no longer overwrites a newer cached read. After a server restart the mark is unknown and the page loads the full store as before; startup keeps a newly published Review question behind Refresh. Accepted difference: after a restart, a note deleted in another tab disappears when Earlier opens.
+
 ## 2.32.12
 
 - Pages open faster (agent-annotate-uzd, part 2). The server reuses per-open work while its inputs are unchanged: shell asset stamps, `copy.json` validation, the content document and its asks, the plan list with topics, category counts, and the approval seal. Re-opening the same version no longer appends `seen_updated`, which forced a full History rebuild (1–4 s on FLD) during the first screen. Preview images named by hash are immutable. In the browser, the meta and seen reads start at load, `/api/copy` is read once, unchanged first reads come back as 304s, the document request leaves before the rail renders, and tables are measured in one layout. Sandbox copies at load 230–450, main → this release: FLD warm 5.9 → 1.2 s, cold 12.5 → 3.3 s; Rebex warm 7.3 → 0.7 s, cold 9.4 → 1.3 s.
@@ -13,6 +17,7 @@
 ## 2.32.10
 
 - A slow or abandoned download no longer holds up the page's other requests: the server releases the page-store lock before it writes a response, and closes cancelled connections quietly instead of answering them with a second, failing 500. A slow client used to keep every other reader of that page waiting; under load on 2026-11-24 the Rebex server logged about 380 dropped connections.
+- Opening Earlier feedback loads older comments and keeps new questions on the current version behind the refresh banner.
 - Pages open on the latest version's feedback. The first store read leaves out settled Review and plan feedback from older versions and sends counts in its place, so sections, badges and the unanswered warning read the same. The rest loads when the reviewer opens Earlier feedback, Not in this Send, History or an older version, follows a link to it, or has text typed on it. First read: FLD 16.2 MB → 298 KB, Rebex 2.9 MB → 196 KB; a FLD Send's traffic 49 MB → 742 KB (agent-annotate-uzd, part 1).
 - A page restart waits up to 10 s (was 1 s) for the running server to identify itself. Under heavy load on 2026-11-24 live servers took 1-17 s, so the 2.32.9 rollout refused a page as "unknown occupant" and rolled back.
 - `scripts/rollout.py`: the rollback restores the skills backup with tar's `tar` filter instead of `data`. The annotate skill's `state` is an absolute symlink, which `data` refuses, so the 2.32.9 rollback crashed after reinstalling the old wheel and left skills on the new version (agent-annotate-7os).

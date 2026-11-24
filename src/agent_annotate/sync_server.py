@@ -670,6 +670,13 @@ def _plan_docs(artifact_dir: Path, store: dict) -> dict:
     return out
 
 
+def _item_stamp(area: str, anchor: str, comment: dict) -> bytes:
+    # Legacy label pinning and the agent's saved view can change without reviewer activity.
+    fields = {k: v for k, v in comment.items() if k not in ("number", "agent_snapshot")}
+    body = json.dumps([area, anchor, fields], ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
+    return hashlib.blake2b(body, digest_size=12).digest()
+
+
 def _page_store(store: dict, numbers: dict, docs: dict) -> dict:
     """The browser's first read (view=page): what each document's latest version shows and what a Send needs.
 
@@ -1115,6 +1122,8 @@ def _public_monitor_owner(lease: dict | None) -> dict | None:
 class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     _store_snapshot = None
     _store_responses = {}
+    _store_revision = None
+    _page_marks = {}
     _count_rows = (None, None, {})
     _plans_listed = (None, None)
     _stamp_checked = {}
@@ -1880,6 +1889,37 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         type(self)._store_snapshot = (self._store_signature(), store)
         type(self)._store_responses.clear()
 
+    def _mark_store(self, signature, store: dict, *, page: bool, since: str) -> None:
+        cls = type(self)
+        last = cls._store_revision
+        if last is None or last[0] != signature:
+            previous = last[3] if last else {}
+            revision = last[2] + 1 if last else 0
+            mark = hashlib.blake2s(repr(signature).encode(), digest_size=12).hexdigest()
+            cards = {}
+            for area in ("anchors", "archived"):
+                for anchor, items in store[area].items():
+                    for c in items:
+                        if "id" not in c:
+                            continue
+                        stamp = _item_stamp(area, anchor, c)
+                        old = previous.get(c["id"])
+                        cards[c["id"]] = old if old and old[0] == stamp else (stamp, revision)
+            cls._store_revision = (signature, mark, revision, cards)
+        _, mark, revision, cards = cls._store_revision
+        if since and since != mark:
+            base = cls._page_marks.get(since)
+            # An expired mark cannot distinguish history from new activity.
+            if base is None:
+                store["snapshot_expired"] = True
+            elif changed := [cid for cid, (_, changed_at) in cards.items() if changed_at > base]:
+                store["changed_after"] = changed
+        if page:
+            store["store_mark"] = mark
+            cls._page_marks[mark] = revision
+            if len(cls._page_marks) > 4096:
+                del cls._page_marks[next(iter(cls._page_marks))]
+
     @contextmanager
     def _store_response(self):
         """Prepare one early response and write it only after the store transaction exits successfully."""
@@ -1898,6 +1938,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def _v2_get_store(self, parsed=None):
         view = (urllib.parse.parse_qs(parsed.query).get("view") or [None])[0] if parsed else None
         poll = view in ("poll", "page")
+        agent = self._agent_reader()
+        since = self.headers.get("X-Annotate-Store-Mark", "") if poll and not agent else ""
         compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
         with _locked_store(self.artifact_dir, write=False):
             meta = self._read_meta()
@@ -1919,11 +1961,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if cache.get("signature") != signature:
                 cache.clear()
                 cache["signature"] = signature
-            key = (view if poll else None, compressed, self._agent_reader())
-            if key not in cache or cache[key][0] != projection:
+            # Keep one marked variant per view and encoding, even when tabs sent different marks.
+            key = (view if poll else None, compressed, agent)
+            if since:
+                key += ("marked",)
+            variant = (projection, since)
+            cached = cache.get(key)
+            if cached is None or cached[0] != variant:
                 from .review_versions import visible_store
                 store = visible_store(self.artifact_dir, self._v2_load(read_only=True), meta)
-                if self._agent_reader():
+                if agent:
                     store = store_view(store)
                 if poll:
                     # Carry provenance remains on disk and in full comments.json;
@@ -1932,6 +1979,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                                         for comment in items]
                                                for anchor, items in store.get(area, {}).items()}
                                          for area in ("anchors", "archived")}}
+                    if not agent and (view == "page" or since):
+                        self._mark_store(signature, store, page=view == "page", since=since)
                     # Label migration must not look like a content change to the shell.
                     numbers = _pin_item_numbers(store)
                     if view == "page":
@@ -1941,9 +1990,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
                 packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
                 representation = (packed, compressed) if len(packed) < len(body) else (body, False)
-                cache[key] = (projection, representation)
-            representation = cache[key][1]
-        self._respond(200, b"", "application/json", conditional=True, representation=representation)
+                cache[key] = (variant, representation)
+            else:
+                representation = cached[1]
+        self._respond(200, b"", "application/json", conditional=True, representation=representation,
+                      extra_headers={"Vary": "X-Annotate-Store-Mark"} if poll else None)
 
     def _v2_get_meta(self):
         with _locked_store(self.artifact_dir, write=False):
@@ -4689,9 +4740,11 @@ def make_handler(
     BoundHandler.local_author_name = local_author_name
     BoundHandler.proxy_urls = proxy_urls
     BoundHandler.trusted_access_origins = trusted_access_origins
-    # At most four immutable bodies: full/poll × identity/gzip, one file revision.
+    # Cache the current revision per view, encoding and reader, with a separate marked variant.
     BoundHandler._store_responses = {}
     BoundHandler._store_snapshot = None
+    BoundHandler._store_revision = None
+    BoundHandler._page_marks = {}
     BoundHandler._count_rows = (None, None, {})
     BoundHandler._plans_listed = (None, None)
     BoundHandler._stamp_checked = {}
