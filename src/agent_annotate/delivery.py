@@ -168,15 +168,54 @@ def _resumed_pids(session: str, expected: str) -> list[int]:
                            timeout=10, cwd=Path.home()).stdout.split()
     pids = []
     for pid in found:
-        words = subprocess.run(["ps", "-ww", "-p", pid, "-o", "command="], capture_output=True,
-                               text=True, timeout=3, cwd=Path.home()).stdout.split()
-        # shortcut: Codex keeps no per-process session file, so only `codex resume ID` argv counts
-        # (no fork); upgrade when Codex exposes the live thread id.
-        if (words and re.search(r"(?:^|/)codex(?:$|[.-])", words[0]) and "resume" in words
-                and session in words[words.index("resume") + 1:]
-                and not any("fork" in word for word in words)):
+        # Exact argv, not `ps` text: a prompt argument can mention the id or the word resume.
+        argv = _argv(int(pid)) or []
+        if argv and re.search(r"(?:^|/)codex(?:$|[.-])", argv[0]) and _codex_resumes(argv[1:], session):
             pids.append(int(pid))
     return pids
+
+
+def _codex_resumes(args: list[str], session: str) -> bool:
+    """`codex [options] resume ID ...`: the subcommand, then the id as its first argument.
+
+    shortcut: Codex keeps no per-process session file, so the argv decides; flags between
+    `resume` and the id, or any fork, never bind. Upgrade when Codex exposes the live thread id."""
+    if any(arg == "fork" or arg.startswith("--fork") for arg in args):
+        return False
+    for i, arg in enumerate(args):
+        if arg == "resume":
+            return args[i + 1:i + 2] == [session]
+        # Before the subcommand only options and their values may appear, never a prompt.
+        if not arg.startswith("-") and not (i and args[i - 1].startswith("-")):
+            return False
+    return False
+
+
+def _argv(pid: int) -> list[str] | None:
+    """A process's exact argument vector (macOS KERN_PROCARGS2, Linux /proc)."""
+    if sys.platform != "darwin":
+        try:
+            return Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace").split("\0")[:-1]
+        except OSError:
+            return None
+    import ctypes
+    import ctypes.util
+    try:
+        libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+        argmax, size = ctypes.c_int(0), ctypes.c_size_t(ctypes.sizeof(ctypes.c_int))
+        if libc.sysctl((ctypes.c_int * 2)(1, 8), 2, ctypes.byref(argmax), ctypes.byref(size), None, 0):
+            return None  # CTL_KERN, KERN_ARGMAX
+        buffer, size = ctypes.create_string_buffer(argmax.value), ctypes.c_size_t(argmax.value)
+        if libc.sysctl((ctypes.c_int * 3)(1, 49, pid), 3, buffer, ctypes.byref(size), None, 0):
+            return None  # CTL_KERN, KERN_PROCARGS2
+        raw = buffer.raw[:size.value]
+        argc = int.from_bytes(raw[:4], sys.byteorder)
+        rest = raw[4:]
+        rest = rest[rest.index(b"\0"):].lstrip(b"\0")  # skip the exec path and its padding
+        args = rest.split(b"\0")[:argc]
+        return [arg.decode(errors="replace") for arg in args] if len(args) == argc else None
+    except (OSError, ValueError, AttributeError):
+        return None
 
 
 def resumed_target(session: str, agent: str) -> dict | None:
@@ -229,10 +268,16 @@ def refresh_session_owners(session: str, records: dict, *, via: str = "prompt") 
     if not session or session == "unknown":
         return
     if via == "prompt":  # this prompt is the turn a pending wake-up was for
+        def settle(row):
+            if row and row.get("state") == "pending" and row["target"].get("session") == session:
+                row.update(state="skipped", detail="The owner took a turn before its wake-up")
         for marker in _markers():
-            _update_marker(marker, lambda row: row.update(
-                state="skipped", detail="The owner took a turn before its wake-up")
-                if row.get("state") == "pending" and row["target"].get("session") == session else None)
+            try:  # lock only this session's own pending marker, and never wait for it
+                row = json.loads(marker.read_text())
+                if row.get("state") == "pending" and row["target"].get("session") == session:
+                    _update_marker(marker, settle, block=False)
+            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                continue
     exited, targets, refreshed = {}, {}, []
     for (project, slug), record in records.items():
         old = record.get("owner_target")
@@ -307,12 +352,14 @@ def _markers() -> list[Path]:
     return sorted((STATE_DIR / "resumes").glob("*.json"))
 
 
-def _update_marker(marker: Path, change) -> dict | None:
-    """Read-modify-write one resume marker under its lock; `change` edits the row or returns a new one."""
+def _update_marker(marker: Path, change, *, block: bool = True) -> dict | None:
+    """Read-modify-write one resume marker under its lock; `change` edits the row or returns a new one.
+
+    block=False gives up when the watchdog holds the lock (it settles the marker itself)."""
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
         with marker.with_suffix(".lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            fcntl.flock(lock, fcntl.LOCK_EX | (0 if block else fcntl.LOCK_NB))
             row = json.loads(marker.read_text()) if marker.exists() else None
             before = json.dumps(row)
             row = change(row) or row
@@ -347,6 +394,9 @@ def _turn_since(row: dict) -> tuple[str | None, str]:
             request = receipt.get("requestId") or r.get("id")
             if r.get("state") == "acknowledged" and (r.get("acknowledged_at") or "") >= row["rebound_at"]:
                 return "proven", f"The owner read its inbox for {project}/{slug} after the re-bind"
+            if r.get("state") == "pending" and _age(r.get("created_at") or "") < GRACE:
+                unresolved = f"Send {request} is about to be delivered; wake-up deferred"
+                continue
             if not _same_process(r.get("target") or {}, target):
                 continue
             if r.get("state") == "started" or "turn_started" in receipt.get("stages", []):
@@ -415,38 +465,54 @@ def _wake_one(row: dict, marker: Path, *, capped: bool) -> int:
     if _target_exited(target):
         row.update(state="stale", detail="Owner process ended before its wake-up")
         return 0
-    turn, why = _turn_since(row)
-    if turn == "proven":
-        row.update(state="skipped", detail=why)
-        return 0
-    if turn == "unresolved":
-        row["detail"] = why
-        return 0
-    if capped:
-        row["detail"] = f"Waiting: at most {WAKE_CAP} wake-ups per watchdog pass"
-        return 0
     ready, detail = _target_ready(target)
     if not ready:
         row["detail"] = detail
         return 0
-    if not _provider_idle(target):
-        row["detail"] = "Owner is busy; wake-up deferred until it is idle"
-        return 0
     from .cli import _flock, _load_state_for_project, _state_lock_path
+    from .workspace import workspace_owner_record
+
+    def owner_project(project, slug):
+        current = _load_state_for_project(project).get("slugs", {}).get(slug) or {}
+        return (workspace_owner_record(current).get("workspace_owner") or {}).get("project", project)
+    projects = {p for page in row["pages"] for p in (page[0], owner_project(*page))}
     with ExitStack() as stack:
-        # Claims take these locks: a successor that claimed a page since the re-bind wins.
-        for project in sorted({project for project, _slug in row["pages"]}):
+        # The locks dispatch_record holds while it sends a Send, in its order: each page's
+        # journal, then the tab and canonical projects' claim locks. Under them no Send or
+        # claim can land between these checks and the input.
+        for project, slug in sorted(row["pages"]):
+            journal = STATE_DIR / "deliveries" / project / f"{slug}.json"
+            journal.parent.mkdir(parents=True, exist_ok=True)
+            fcntl.flock(stack.enter_context(journal.with_suffix(".lock").open("a")), fcntl.LOCK_EX)
+        for project in sorted(projects):
             stack.enter_context(_flock(_state_lock_path(project)))
         owned = []
         for project, slug in row["pages"]:
             current = _load_state_for_project(project).get("slugs", {}).get(slug) or {}
-            if (current.get("owner_session") == target["session"] and not current.get("archived")
-                    and _same_process(current.get("owner_target") or {}, target)):
+            # A linked tab follows its canonical page's owner, as delivery does.
+            effective = workspace_owner_record(current)
+            fresh = (effective.get("workspace_owner") or {}).get("project", project)
+            if (fresh in projects and effective.get("owner_session") == target["session"]
+                    and not current.get("archived")
+                    and _same_process(effective.get("owner_target") or {}, target)):
                 owned.append([project, slug])
         if not owned:
             row.update(state="superseded", detail="Every page moved to another owner before the wake-up")
             return 0
         row["pages"] = owned
+        turn, why = _turn_since(row)
+        if turn == "proven":
+            row.update(state="skipped", detail=why)
+            return 0
+        if turn == "unresolved":
+            row["detail"] = why
+            return 0
+        if capped:
+            row["detail"] = f"Waiting: at most {WAKE_CAP} wake-ups per watchdog pass"
+            return 0
+        if not _provider_idle(target):
+            row["detail"] = "Owner is busy; wake-up deferred until it is idle"
+            return 0
         pages = ", ".join(f"{project}/{slug}" for project, slug in owned)
         prompt = (f"[annotate] This session was resumed after a restart and owns {pages} again. "
                   "Re-arm any wait loop or monitor you were running, then read "

@@ -207,27 +207,27 @@ def _resumed_elsewhere(estate, monkeypatch, copies=1, agent="claude", session=_O
         for i in range(copies):
             (sessions / f"{4343 + i}.json").write_text(json.dumps(
                 {"pid": 4343 + i, "sessionId": session, "procStart": "new start UTC", "status": "idle"}))
-    command = argv or f"/Users/x/.npm-global/bin/{agent} --effort high {'resume' if agent == 'codex' else '--resume'} {_OWNER}"
-    commands = {str(4343 + i): command + "\n" for i in range(copies)} | {"5555": f"pgrep -fl -- {_OWNER}\n"}
+    argv = argv or [f"/Users/x/.npm-global/bin/{agent}", "--effort", "high",
+                    "resume" if agent == "codex" else "--resume", _OWNER]
+    commands = {4343 + i: argv for i in range(copies)} | {5555: ["pgrep", "-fl", "--", _OWNER]}
 
     def kill(pid, signal):
         if pid == old["pid"]:
             raise ProcessLookupError()
 
-    def run(argv, **kwargs):
-        if argv[:2] == ["pgrep", "-f"]:
-            out = "\n".join(commands) + "\n"
-        elif argv[:3] == ["ps", "-ww", "-p"]:
-            out = commands[argv[3]]
-        elif argv[:2] == ["ps", "eww"]:
-            out = f"{command} ORCA_TERMINAL_HANDLE=term_after-restart HOME=/x\n"
-        elif argv[:2] == ["ps", "-p"] and argv[3:] == ["-o", "lstart="] and kwargs["env"]["TZ"] == "UTC":
+    def run(args, **kwargs):
+        if args[:2] == ["pgrep", "-f"]:
+            out = "\n".join(map(str, commands)) + "\n"
+        elif args[:2] == ["ps", "eww"]:
+            out = f"{' '.join(argv)} ORCA_TERMINAL_HANDLE=term_after-restart HOME=/x\n"
+        elif args[:2] == ["ps", "-p"] and args[3:] == ["-o", "lstart="] and kwargs["env"]["TZ"] == "UTC":
             out = "new start UTC\n"
         else:
-            raise AssertionError(argv)
-        return subprocess.CompletedProcess(argv, 0, out, "")
+            raise AssertionError(args)
+        return subprocess.CompletedProcess(args, 0, out, "")
     monkeypatch.setattr(delivery.os, "kill", kill)
     monkeypatch.setattr(delivery.subprocess, "run", run)
+    monkeypatch.setattr(delivery, "_argv", commands.get)
     monkeypatch.setattr(delivery, "_process", lambda pid: ("new start", f"/Users/x/.npm-global/bin/{agent}"))
     return old, record
 
@@ -285,8 +285,12 @@ def test_prompt_hook_rebind_needs_no_wake_up(estate, monkeypatch):
 
 @pytest.mark.parametrize("fork", [
     {"agent": "claude", "session": "forked-session-id"},  # claude --resume ID --fork-session
-    {"agent": "codex", "argv": f"/Users/x/codex fork {_OWNER}"},
-    {"agent": "codex", "argv": f"/Users/x/codex resume {_OWNER} --fork"},
+    {"agent": "codex", "argv": ["/Users/x/codex", "fork", _OWNER]},
+    {"agent": "codex", "argv": ["/Users/x/codex", "resume", _OWNER, "--fork"]},
+    # Another session whose prompt argument mentions the owner's id (and the word resume).
+    {"agent": "codex", "argv": ["/Users/x/codex", "resume", "new-session-id", f"pick up where {_OWNER} left off"]},
+    {"agent": "codex", "argv": ["/Users/x/codex", "new-session-id", "resume", _OWNER]},
+    {"agent": "codex", "argv": ["/Users/x/codex", f"resume {_OWNER}"]},
 ])
 def test_watchdog_never_binds_a_fork_of_the_owner_session(estate, monkeypatch, fork):
     _old, record = _resumed_elsewhere(estate, monkeypatch, **fork)
@@ -312,6 +316,62 @@ def test_wake_up_drops_pages_a_successor_claimed(estate, monkeypatch):
     _write_registry(estate, successor)
     (woken,) = delivery.wake_resumed()
     assert woken["state"] == "superseded" and _sends(estate) == []
+
+
+def test_wake_up_follows_the_canonical_owner_of_a_linked_tab(estate, monkeypatch):
+    from agent_annotate import workspace
+    _old, record = _resumed_elsewhere(estate, monkeypatch)
+    delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record}, via="watchdog")
+    # A successor claimed the canonical page without an Orca binding; the tab's raw row is unchanged.
+    monkeypatch.setattr(workspace, "workspace_owner_record", lambda current: {
+        **current, "owner_session": "successor", "owner_target": None,
+        "workspace_owner": {"project": "canon", "slug": "main"}})
+    locked = []
+    real = cli._state_lock_path
+    monkeypatch.setattr(cli, "_state_lock_path", lambda name: locked.append(name) or real(name))
+    (woken,) = delivery.wake_resumed()
+    assert woken["state"] == "superseded" and _sends(estate) == []
+    assert locked == ["canon", _PROJECT]  # both, in dispatch_record's sorted order
+
+
+@pytest.mark.parametrize("meanwhile", ["send-started-a-turn", "owner-became-busy"])
+def test_wake_up_rechecks_sends_and_idle_under_the_delivery_locks(estate, monkeypatch, meanwhile):
+    _old, record = _resumed_elsewhere(estate, monkeypatch)
+    delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record}, via="watchdog")
+    ready = delivery._target_ready
+
+    def race(target):  # the last unlocked step: a reviewer Send lands right after it
+        if meanwhile == "send-started-a-turn":
+            _journal_row(estate, state="started", attempted_at=delivery._now())
+        else:
+            _claude_status(estate, "busy")
+        return ready(target)
+    monkeypatch.setattr(delivery, "_target_ready", race)
+    delivery.wake_resumed()
+    assert _sends(estate) == []
+    assert _marker(estate)["state"] == ("skipped" if meanwhile == "send-started-a-turn" else "pending")
+
+
+def test_prompt_hook_never_waits_on_marker_locks(estate, monkeypatch):
+    import fcntl
+    import threading
+    _old, record = _resumed_elsewhere(estate, monkeypatch)
+    delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record}, via="watchdog")
+    (own,) = (estate["state_dir"] / "resumes").glob("*.json")
+    other = own.with_name("9999-other.json")
+    other.write_text(json.dumps({**json.loads(own.read_text()), "target": {**_target(), "session": "other"}}))
+    held = [path.with_suffix(".lock").open("a") for path in (own, other)]
+    for lock in held:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # the watchdog is mid-wake on both
+    hook = threading.Thread(target=delivery.refresh_session_owners, args=(_OWNER, {}))
+    hook.start()
+    hook.join(5)
+    assert not hook.is_alive()
+    for lock in held:
+        lock.close()
+    delivery.refresh_session_owners(_OWNER, {})
+    assert json.loads(own.read_text())["state"] == "skipped"
+    assert json.loads(other.read_text())["state"] == "pending"
 
 
 def _second_page(estate, record):
