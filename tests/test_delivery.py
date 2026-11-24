@@ -93,6 +93,10 @@ def estate(tmp_path, monkeypatch):
         fixture["calls"].append(args)
         if args[:2] == ("terminal", "show"):
             return {"terminal": copy.deepcopy(terminal)}
+        if args[:2] == ("terminal", "wait"):
+            if fixture.get("busy"):
+                raise RuntimeError("timeout")
+            return {}
         assert args[:2] == ("terminal", "send"), args
         callback = fixture.get("on_send")
         if callback:
@@ -186,19 +190,29 @@ def test_resumed_session_refreshes_all_owned_pages_and_delivers_once(estate, mon
     assert not (estate["state_dir"] / "bus-offsets").exists()
 
 
-def _resumed_elsewhere(estate, monkeypatch, copies=1):
-    """The old owner is gone; Orca relaunched `claude --resume <session>` as pid 4343 in a new pane."""
-    old = {**_target(), "agent": "claude"}
-    record = {**estate["record"], "owner_target": old, "owner_agent": "claude"}
+def _resumed_elsewhere(estate, monkeypatch, copies=1, agent="claude", session=_OWNER, argv=None):
+    """The old owner is gone; Orca relaunched `<agent> --resume <session>` as pid 4343 in a new pane.
+
+    Claude names the session each live process runs in CLAUDE_CONFIG_DIR/sessions/<pid>.json;
+    `session` there differs from _OWNER for a fork. Codex is found by its argv."""
+    old = {**_target(), "agent": agent}
+    record = {**estate["record"], "owner_target": old, "owner_agent": agent}
     estate["record"].update(record)
-    estate["terminal"]["agentIdentity"] = "claude"
+    estate["terminal"]["agentIdentity"] = agent
     _write_registry(estate, record)
+    sessions = estate["state_dir"].parent / "claude" / "sessions"
+    sessions.mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(sessions.parent))
+    if agent == "claude":
+        for i in range(copies):
+            (sessions / f"{4343 + i}.json").write_text(json.dumps(
+                {"pid": 4343 + i, "sessionId": session, "procStart": "new start UTC", "status": "idle"}))
+    command = argv or f"/Users/x/.npm-global/bin/{agent} --effort high {'resume' if agent == 'codex' else '--resume'} {_OWNER}"
+    commands = {str(4343 + i): command + "\n" for i in range(copies)} | {"5555": f"pgrep -fl -- {_OWNER}\n"}
 
     def kill(pid, signal):
         if pid == old["pid"]:
             raise ProcessLookupError()
-    claude = f"/Users/x/.npm-global/bin/claude --effort high --resume {_OWNER}\n"
-    commands = {str(4343 + i): claude for i in range(copies)} | {"5555": f"pgrep -fl -- --resume {_OWNER}\n"}
 
     def run(argv, **kwargs):
         if argv[:2] == ["pgrep", "-f"]:
@@ -206,14 +220,26 @@ def _resumed_elsewhere(estate, monkeypatch, copies=1):
         elif argv[:3] == ["ps", "-ww", "-p"]:
             out = commands[argv[3]]
         elif argv[:2] == ["ps", "eww"]:
-            out = f"/Users/x/claude --resume {_OWNER} ORCA_TERMINAL_HANDLE=term_after-restart HOME=/x\n"
+            out = f"{command} ORCA_TERMINAL_HANDLE=term_after-restart HOME=/x\n"
+        elif argv[:2] == ["ps", "-p"] and argv[3:] == ["-o", "lstart="] and kwargs["env"]["TZ"] == "UTC":
+            out = "new start UTC\n"
         else:
             raise AssertionError(argv)
         return subprocess.CompletedProcess(argv, 0, out, "")
     monkeypatch.setattr(delivery.os, "kill", kill)
     monkeypatch.setattr(delivery.subprocess, "run", run)
-    monkeypatch.setattr(delivery, "_process", lambda pid: ("new start", "/Users/x/.npm-global/bin/claude"))
+    monkeypatch.setattr(delivery, "_process", lambda pid: ("new start", f"/Users/x/.npm-global/bin/{agent}"))
     return old, record
+
+
+def _claude_status(estate, status, pid=4343):
+    path = estate["state_dir"].parent / "claude" / "sessions" / f"{pid}.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), "status": status}))
+
+
+def _marker(estate):
+    (path,) = (estate["state_dir"] / "resumes").glob("*.json")
+    return json.loads(path.read_text())
 
 
 def _sends(estate):
@@ -223,6 +249,7 @@ def _sends(estate):
 @pytest.mark.parametrize("queued", [True, False])
 def test_watchdog_rebinds_an_idle_resumed_owner_and_gives_it_one_turn(estate, monkeypatch, queued):
     old, record = _resumed_elsewhere(estate, monkeypatch)
+    estate["receipt"]["prompt"]["stages"] = ["input_accepted", "turn_started"]
     if queued:
         _append(estate, _round(owner_target=old))
         assert _dispatch(estate)["deliveries"][0]["state"] == "pending"
@@ -254,6 +281,143 @@ def test_prompt_hook_rebind_needs_no_wake_up(estate, monkeypatch):
     delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record})
     assert cli._load_state_for_project(_PROJECT)["slugs"][_SLUG]["owner_target"] == new
     assert delivery.wake_resumed() == [] and _sends(estate) == []
+
+
+@pytest.mark.parametrize("fork", [
+    {"agent": "claude", "session": "forked-session-id"},  # claude --resume ID --fork-session
+    {"agent": "codex", "argv": f"/Users/x/codex fork {_OWNER}"},
+    {"agent": "codex", "argv": f"/Users/x/codex resume {_OWNER} --fork"},
+])
+def test_watchdog_never_binds_a_fork_of_the_owner_session(estate, monkeypatch, fork):
+    _old, record = _resumed_elsewhere(estate, monkeypatch, **fork)
+    before = (estate["state_dir"] / f"{_PROJECT}.json").read_bytes()
+    assert delivery.resumed_target(_OWNER, fork["agent"]) is None
+    delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record}, via="watchdog")
+    assert (estate["state_dir"] / f"{_PROJECT}.json").read_bytes() == before
+    assert delivery.wake_resumed() == [] and estate["calls"] == []
+
+
+def test_watchdog_binds_codex_resume_by_its_session_argument(estate, monkeypatch):
+    _old, record = _resumed_elsewhere(estate, monkeypatch, agent="codex")
+    delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record}, via="watchdog")
+    assert cli._load_state_for_project(_PROJECT)["slugs"][_SLUG]["owner_target"]["pid"] == 4343
+    assert delivery.wake_resumed()[0]["state"] == "sent"  # Orca reported the pane idle
+
+
+def test_wake_up_drops_pages_a_successor_claimed(estate, monkeypatch):
+    _old, record = _resumed_elsewhere(estate, monkeypatch)
+    delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record}, via="watchdog")
+    successor = {**cli._load_state_for_project(_PROJECT)["slugs"][_SLUG], "owner_session": "successor",
+                 "owner_target": {**_target(), "session": "successor", "pid": 9999}}
+    _write_registry(estate, successor)
+    (woken,) = delivery.wake_resumed()
+    assert woken["state"] == "superseded" and _sends(estate) == []
+
+
+def _second_page(estate, record):
+    second = {**record}
+    second.pop("bus_file")
+    (estate["state_dir"] / "other.json").write_text(json.dumps({"project": "other", "slugs": {"two": second}}))
+    return second
+
+
+@pytest.mark.parametrize("order", ["both-before-wake", "watchdog-after-wake"])
+def test_session_start_and_watchdog_rebinds_wake_the_session_once(estate, monkeypatch, order):
+    _old, record = _resumed_elsewhere(estate, monkeypatch)
+    second = _second_page(estate, record)
+    new = delivery.resumed_target(_OWNER, "claude")
+    monkeypatch.setattr(delivery, "capture_target", lambda session, agent: new)
+    # SessionStart re-binds the first page; the watchdog's scan then re-binds the second.
+    delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record}, via="start")
+    if order == "watchdog-after-wake":
+        assert delivery.wake_resumed()[0]["state"] == "sent"
+    delivery.refresh_session_owners(_OWNER, {("other", "two"): second}, via="watchdog")
+    assert cli._load_state_for_project("other")["slugs"]["two"]["owner_target"] == new
+    delivery.wake_resumed()
+    assert len(_sends(estate)) == 1 and _marker(estate)["state"] == "sent"
+    if order == "both-before-wake":
+        assert _marker(estate)["pages"] == [[_PROJECT, _SLUG], ["other", "two"]]
+        assert "proj/demo, other/two" in _sends(estate)[0][5]
+
+
+def test_busy_owner_is_not_woken_and_a_user_prompt_settles_it(estate, monkeypatch):
+    _old, record = _resumed_elsewhere(estate, monkeypatch)
+    delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record}, via="watchdog")
+    _claude_status(estate, "busy")
+    assert delivery.wake_resumed() == [] and _sends(estate) == []
+    assert _marker(estate)["state"] == "pending" and "busy" in _marker(estate)["detail"]
+    # The user typed into the resumed session before the next watchdog pass.
+    delivery.refresh_session_owners(_OWNER, {})
+    _claude_status(estate, "idle")
+    assert delivery.wake_resumed() == [] and _sends(estate) == []
+    assert _marker(estate)["state"] == "skipped"
+
+
+def test_busy_codex_owner_is_not_woken(estate, monkeypatch):
+    _old, record = _resumed_elsewhere(estate, monkeypatch, agent="codex")
+    delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record}, via="watchdog")
+    estate["busy"] = True
+    assert delivery.wake_resumed() == [] and _sends(estate) == []
+    estate.pop("busy")
+    assert delivery.wake_resumed()[0]["state"] == "sent"
+
+
+def _journal_row(estate, **row):
+    target = cli._load_state_for_project(_PROJECT)["slugs"][_SLUG]["owner_target"]
+    row = {"id": "b" * 12, "owner_session": _OWNER, "target": target, **row}
+    path = _journal_path(estate)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"offset": 0, "deliveries": {row["id"]: row}}))
+
+
+@pytest.mark.parametrize("case", ["queued", "queued-past-grace", "uncertain", "acknowledged", "replayed-turn"])
+def test_wake_up_waits_on_unresolved_sends_and_skips_proven_turns(estate, monkeypatch, case):
+    _old, record = _resumed_elsewhere(estate, monkeypatch)
+    delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record}, via="watchdog")
+    receipt = {"accepted": True, "prompt": {"requestId": "req-1", "stages": ["input_accepted"]}}
+    now, old = delivery._now(), "2026-01-01T00:00:00+00:00"
+    row = {"state": "accepted", "attempted_at": now, "receipt": receipt, "prompt": "[annotate] Round"}
+    if case == "queued-past-grace":
+        row["attempted_at"] = old
+    if case == "uncertain":
+        row = {"state": "uncertain", "attempted_at": now}
+    if case == "acknowledged":  # an acknowledged Send proves a turn even if it went to the old process
+        row = {"state": "acknowledged", "acknowledged_at": now, "target": _target()}
+    if case == "replayed-turn":
+        estate["receipt"] = {"accepted": True, "prompt": {"requestId": "req-1",
+                                                          "stages": ["input_accepted", "turn_started"]}}
+    _journal_row(estate, **row)
+    woken = delivery.wake_resumed()
+    sends = _sends(estate)
+    if case in ("queued", "uncertain"):
+        # At most a replay of the queued Send's own request; no new prompt.
+        assert woken == [] and all("--retry-request" in send for send in sends)
+        assert "deferred" in _marker(estate)["detail"]
+    elif case == "queued-past-grace":
+        assert woken[0]["state"] == "sent" and "resumed after a restart" in sends[-1][5]
+    elif case == "acknowledged":
+        assert woken[0]["state"] == "skipped" and sends == []
+    else:
+        assert woken[0]["state"] == "skipped" and len(sends) == 1
+        assert sends[0][sends[0].index("--retry-request") + 1] == "req-1"
+        assert sends[0][5] == "[annotate] Round"  # the replay carries the original payload
+
+
+def test_wake_ups_are_capped_per_watchdog_pass(estate, monkeypatch):
+    _old, record = _resumed_elsewhere(estate, monkeypatch)
+    slugs = {}
+    for pid in range(5001, 5001 + delivery.WAKE_CAP + 1):
+        target = {**_target(), "agent": "claude", "pid": pid, "process_start": "new start"}
+        slugs[f"page-{pid}"] = {**record, "owner_target": target}
+        (estate["state_dir"].parent / "claude" / "sessions" / f"{pid}.json").write_text(json.dumps(
+            {"pid": pid, "sessionId": _OWNER, "procStart": "new start UTC", "status": "idle"}))
+        marker = estate["state_dir"] / "resumes" / f"{pid}-newstart.json"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps({"state": "pending", "rebound_at": delivery._now(), "via": "watchdog",
+                                      "target": target, "pages": [[_PROJECT, f"page-{pid}"]]}))
+    (estate["state_dir"] / f"{_PROJECT}.json").write_text(json.dumps({"project": _PROJECT, "slugs": slugs}))
+    assert len(delivery.wake_resumed()) == delivery.WAKE_CAP == len(_sends(estate))
+    assert len(delivery.wake_resumed()) == 1 and len(_sends(estate)) == delivery.WAKE_CAP + 1
 
 
 @pytest.mark.parametrize("case", ["different-session", "live", "different-worktree", "unverifiable", "no-target"])

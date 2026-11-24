@@ -138,21 +138,54 @@ def _bind(session: str, expected: str, handle: str, pid: int, proc: tuple[str, s
             **describe_terminal({**terminal, "handle": handle})}
 
 
+def _claude_session(pid: int) -> dict | None:
+    """Claude's own record of the session a live process runs: sessionId, procStart (UTC), status."""
+    root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    try:
+        data = json.loads((root / "sessions" / f"{pid}.json").read_text())
+        start = subprocess.run(["ps", "-p", str(pid), "-o", "lstart="], capture_output=True, text=True,
+                               timeout=3, cwd=Path.home(), env={**os.environ, "TZ": "UTC"}).stdout.strip()
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    # A leftover file from an exited process can name a reused pid.
+    return data if isinstance(data, dict) and start and data.get("procStart") == start else None
+
+
+def _resumed_pids(session: str, expected: str) -> list[int]:
+    if expected == "claude":
+        # `claude --resume ID --fork-session` carries ID in argv but runs another session.
+        root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "sessions"
+        found = []
+        for path in root.glob("*.json"):
+            try:
+                if path.stem.isdigit() and json.loads(path.read_text()).get("sessionId") == session:
+                    found.append(int(path.stem))
+            except (OSError, ValueError, AttributeError):
+                continue
+        return [pid for pid in found if (_claude_session(pid) or {}).get("sessionId") == session]
+    # A full `ps` listing took over 10 s on the busy M1Max; pgrep returns only candidates.
+    found = subprocess.run(["pgrep", "-f", session], capture_output=True, text=True,
+                           timeout=10, cwd=Path.home()).stdout.split()
+    pids = []
+    for pid in found:
+        words = subprocess.run(["ps", "-ww", "-p", pid, "-o", "command="], capture_output=True,
+                               text=True, timeout=3, cwd=Path.home()).stdout.split()
+        # shortcut: Codex keeps no per-process session file, so only `codex resume ID` argv counts
+        # (no fork); upgrade when Codex exposes the live thread id.
+        if (words and re.search(r"(?:^|/)codex(?:$|[.-])", words[0]) and "resume" in words
+                and session in words[words.index("resume") + 1:]
+                and not any("fork" in word for word in words)):
+            pids.append(int(pid))
+    return pids
+
+
 def resumed_target(session: str, agent: str) -> dict | None:
-    """From outside: the one live provider process resumed with this session id, in its Orca terminal."""
+    """From outside: the one live provider process running this session id, in its Orca terminal."""
     if not re.fullmatch(r"[A-Za-z0-9-]{8,}", session or ""):
         return None
     expected = "codex" if agent == "codex" else "claude"
     try:
-        # A full `ps` listing took over 10 s on the busy M1Max; pgrep returns only candidates.
-        found = subprocess.run(["pgrep", "-f", session], capture_output=True, text=True,
-                               timeout=10, cwd=Path.home()).stdout.split()
-        pids = []
-        for pid in found:
-            words = subprocess.run(["ps", "-ww", "-p", pid, "-o", "command="], capture_output=True,
-                                   text=True, timeout=3, cwd=Path.home()).stdout.split()
-            if words and session in words and re.search(rf"(?:^|/){expected}(?:$|[.-])", words[0]):
-                pids.append(int(pid))
+        pids = _resumed_pids(session, expected)
         if len(pids) != 1:  # none, or two copies of one session: nothing provable
             return None
         proc = _process(pids[0])
@@ -195,6 +228,11 @@ def refresh_session_owners(session: str, records: dict, *, via: str = "prompt") 
     """
     if not session or session == "unknown":
         return
+    if via == "prompt":  # this prompt is the turn a pending wake-up was for
+        for marker in _markers():
+            _update_marker(marker, lambda row: row.update(
+                state="skipped", detail="The owner took a turn before its wake-up")
+                if row.get("state") == "pending" and row["target"].get("session") == session else None)
     exited, targets, refreshed = {}, {}, []
     for (project, slug), record in records.items():
         old = record.get("owner_target")
@@ -242,13 +280,17 @@ def refresh_session_owners(session: str, records: dict, *, via: str = "prompt") 
     for target in filter(None, targets.values()) if via != "prompt" else ():
         pages = [[p, s] for p, s, c in refreshed if c["owner_target"] == target]
         marker = STATE_DIR / "resumes" / f"{target['pid']}-{re.sub(r'[^0-9A-Za-z]', '', target['process_start'])}.json"
-        try:
-            if pages and not marker.exists():
-                marker.parent.mkdir(parents=True, exist_ok=True)
-                _atomic(marker, {"state": "pending", "rebound_at": _now(), "via": via,
-                                 "target": target, "pages": pages})
-        except (OSError, ValueError, TypeError):
-            pass
+
+        def merge(row, pages=pages, target=target):
+            # SessionStart and the watchdog can each re-bind a page: merge them, and
+            # never reopen a wake-up that was already consumed.
+            if not row:
+                return {"state": "pending", "rebound_at": _now(), "via": via, "target": target, "pages": pages}
+            if row.get("state") == "pending":
+                row["pages"] += [page for page in pages if page not in row["pages"]]
+            return None
+        if pages:
+            _update_marker(marker, merge)
     # Shared tabs route through their canonical page, which must be refreshed first.
     for project, slug, current in refreshed:
         try:
@@ -257,48 +299,167 @@ def refresh_session_owners(session: str, records: dict, *, via: str = "prompt") 
             continue
 
 
+WAKE_CAP = 3  # wake-ups per watchdog pass: after a reboot every resumed owner is eligible at once
+GRACE = 300  # seconds a queued, unconfirmed Send may still give the owner its turn
+
+
+def _markers() -> list[Path]:
+    return sorted((STATE_DIR / "resumes").glob("*.json"))
+
+
+def _update_marker(marker: Path, change) -> dict | None:
+    """Read-modify-write one resume marker under its lock; `change` edits the row or returns a new one."""
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        with marker.with_suffix(".lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            row = json.loads(marker.read_text()) if marker.exists() else None
+            before = json.dumps(row)
+            row = change(row) or row
+            if row is not None and json.dumps(row) != before:
+                row["updated_at"] = _now()
+                _atomic(marker, row)
+            return row
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def _same_process(a: dict, b: dict) -> bool:
+    return all(a.get(k) == b.get(k) for k in ("session", "pid", "process_start", "handle", "incarnation"))
+
+
+def _age(stamp: str) -> float:
+    try:
+        return (datetime.now(UTC) - datetime.fromisoformat(stamp)).total_seconds()
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def _turn_since(row: dict) -> tuple[str | None, str]:
+    """("proven", why) when a Send or inbox read shows the owner had a turn since the re-bind;
+    ("unresolved", why) while a Send to it may still start one; (None, "") otherwise."""
+    target, unresolved = row["target"], ""
+    for project, slug in row["pages"]:
+        for r in _journal_rows(project, slug):
+            if r.get("owner_session") != target["session"]:
+                continue
+            receipt = (r.get("receipt") or {}).get("prompt") or {}
+            request = receipt.get("requestId") or r.get("id")
+            if r.get("state") == "acknowledged" and (r.get("acknowledged_at") or "") >= row["rebound_at"]:
+                return "proven", f"The owner read its inbox for {project}/{slug} after the re-bind"
+            if not _same_process(r.get("target") or {}, target):
+                continue
+            if r.get("state") == "started" or "turn_started" in receipt.get("stages", []):
+                return "proven", f"Send {request} started the owner's turn"
+            if r.get("state") in ("attempting", "accepted", "uncertain"):
+                if "turn_started" in _replay(r, target):
+                    return "proven", f"Send {request} started the owner's turn (Orca request replayed)"
+                if _age(r.get("attempted_at") or "") < GRACE:
+                    unresolved = f"Send {request} is queued without a confirmed turn; wake-up deferred"
+    return ("unresolved", unresolved) if unresolved else (None, "")
+
+
+def _replay(row: dict, target: dict) -> list[str]:
+    """Ask Orca what became of a Send by its request ID; Orca replays the result and never repeats it."""
+    request = ((row.get("receipt") or {}).get("prompt") or {}).get("requestId")
+    if not request or not row.get("prompt"):
+        return []
+    try:
+        receipt = _orca("terminal", "send", "--terminal", target["handle"], "--text", row["prompt"], "--enter",
+                        "--retry-request", request, "--wait-submit", "1").get("send", {})
+        return (receipt.get("prompt") or {}).get("stages", []) if receipt.get("accepted") else []
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired):
+        return []
+
+
+def _provider_idle(target: dict) -> bool:
+    """Only the provider's own idle signal: a user or a Send may have started a turn meanwhile."""
+    if target.get("agent") == "claude":
+        session = _claude_session(int(target["pid"])) or {}
+        return session.get("sessionId") == target["session"] and session.get("status") == "idle"
+    try:
+        _orca("terminal", "wait", "--terminal", target["handle"], "--for", "tui-idle", "--timeout-ms", "1000")
+        return True
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired):
+        return False
+
+
 def wake_resumed() -> list[dict]:
     """Give each owner rebound without a prompt one turn, so it re-arms its waits; at most once."""
-    woken = []
-    for marker in sorted((STATE_DIR / "resumes").glob("*.json")):
+    woken, attempts = [], 0
+    for marker in _markers():
         try:
             with marker.with_suffix(".lock").open("a") as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX)
                 row = json.loads(marker.read_text())
                 if row.get("state") != "pending":
                     continue
-                target = row["target"]
-                if _target_exited(target):
-                    row.update(state="stale", detail="Owner process ended before its wake-up")
-                elif any(r.get("state") in ("attempting", "accepted", "started", "uncertain")
-                         and (r.get("target") or {}).get("pid") == target["pid"]
-                         for project, slug in row["pages"]
-                         for r in _journal_rows(project, slug)):
-                    row.update(state="skipped", detail="A queued Send already gave the owner a turn")
-                else:
-                    ready, detail = _target_ready(target)
-                    if not ready:
-                        row["detail"] = detail
+                before = json.dumps(row)
+                attempts += _wake_one(row, marker, capped=attempts >= WAKE_CAP)
+                if row["state"] == "pending":
+                    if json.dumps(row) != before:
+                        row["updated_at"] = _now()
                         _atomic(marker, row)
-                        continue
-                    pages = ", ".join(f"{project}/{slug}" for project, slug in row["pages"])
-                    prompt = (f"[annotate] This session was resumed after a restart and owns {pages} again. "
-                              "Re-arm any wait loop or monitor you were running, then read "
-                              "annotate inbox <page> --unread for each page.")
-                    row.update(state="attempting", attempted_at=_now())
-                    _atomic(marker, row)
-                    try:
-                        receipt = _orca("terminal", "send", "--terminal", target["handle"], "--text", prompt,
-                                        "--enter", "--wait-submit", "1").get("send", {})
-                        row.update(state="sent" if receipt.get("accepted") else "uncertain", receipt=receipt)
-                    except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired) as exc:
-                        row.update(state="uncertain", detail=f"Send outcome unproven: {str(exc)[:250]}")
+                    continue
                 row["updated_at"] = _now()
                 _atomic(marker, row)
                 woken.append(row)
         except (OSError, ValueError, TypeError, KeyError):
             continue
     return woken
+
+
+def _wake_one(row: dict, marker: Path, *, capped: bool) -> int:
+    """Settle or defer one pending marker; returns 1 when input was sent."""
+    target = row["target"]
+    if _target_exited(target):
+        row.update(state="stale", detail="Owner process ended before its wake-up")
+        return 0
+    turn, why = _turn_since(row)
+    if turn == "proven":
+        row.update(state="skipped", detail=why)
+        return 0
+    if turn == "unresolved":
+        row["detail"] = why
+        return 0
+    if capped:
+        row["detail"] = f"Waiting: at most {WAKE_CAP} wake-ups per watchdog pass"
+        return 0
+    ready, detail = _target_ready(target)
+    if not ready:
+        row["detail"] = detail
+        return 0
+    if not _provider_idle(target):
+        row["detail"] = "Owner is busy; wake-up deferred until it is idle"
+        return 0
+    from .cli import _flock, _load_state_for_project, _state_lock_path
+    with ExitStack() as stack:
+        # Claims take these locks: a successor that claimed a page since the re-bind wins.
+        for project in sorted({project for project, _slug in row["pages"]}):
+            stack.enter_context(_flock(_state_lock_path(project)))
+        owned = []
+        for project, slug in row["pages"]:
+            current = _load_state_for_project(project).get("slugs", {}).get(slug) or {}
+            if (current.get("owner_session") == target["session"] and not current.get("archived")
+                    and _same_process(current.get("owner_target") or {}, target)):
+                owned.append([project, slug])
+        if not owned:
+            row.update(state="superseded", detail="Every page moved to another owner before the wake-up")
+            return 0
+        row["pages"] = owned
+        pages = ", ".join(f"{project}/{slug}" for project, slug in owned)
+        prompt = (f"[annotate] This session was resumed after a restart and owns {pages} again. "
+                  "Re-arm any wait loop or monitor you were running, then read "
+                  "annotate inbox <page> --unread for each page.")
+        row.update(state="attempting", attempted_at=_now())
+        _atomic(marker, row)  # journaled before input, so a crash never sends twice
+        try:
+            receipt = _orca("terminal", "send", "--terminal", target["handle"], "--text", prompt,
+                            "--enter", "--wait-submit", "1").get("send", {})
+            row.update(state="sent" if receipt.get("accepted") else "uncertain", receipt=receipt)
+        except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            row.update(state="uncertain", detail=f"Send outcome unproven: {str(exc)[:250]}")
+    return 1
 
 
 def _journal_rows(project: str, slug: str) -> list[dict]:
@@ -439,7 +600,8 @@ def _send_pending(rows: dict, record: dict, project: str, slug: str, journal: Pa
                   "reply in chat with one line and the URL.")
         from .board_followups import check_clause
         prompt += check_clause(record, project, slug)
-        row.update(state="attempting", attempted_at=_now())
+        # The prompt is kept so its Orca request ID can be replayed (never repeated) later.
+        row.update(state="attempting", attempted_at=_now(), prompt=prompt)
         _atomic(journal, state)
         try:
             result = _orca("terminal", "send", "--terminal", target["handle"],
