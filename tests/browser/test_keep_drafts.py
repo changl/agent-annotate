@@ -536,13 +536,14 @@ def test_a_reload_mid_post_gives_back_only_what_the_server_lacks(tmp_path):
         assert _drafts(page) == {"reply-card": "Lost on the way"}
 
 
-def test_polls_read_the_poll_view_of_the_store(tmp_path):
+def test_polls_read_the_page_view_of_the_store(tmp_path):
     directory = _directory(tmp_path)
     with _session(tmp_path, directory) as (page, base, restart):
         urls = []
         page.on("request", lambda r: urls.append(r.url) if "comments.json" in r.url else None)
-        _agent(base, "api/comments/batch", {"items": [{"anchor_id": "s:checks", "text": "Seen through the poll view.", "version": "v1"}]})
+        _agent(base, "api/comments/batch", {"items": [{"anchor_id": "s:checks", "text": "Seen through the page view.", "version": "v1"}]})
         _poll(page)
         page.locator("#aa-fresh").click()  # dw4: shown when the reviewer asks
-        page.locator("#comment-list .citem", has_text="Seen through the poll view.").wait_for()
-        assert urls and all(u.endswith("/comments.json?view=poll") for u in urls)
+        page.locator("#comment-list .citem", has_text="Seen through the page view.").wait_for()
+        # uzd: the page view until the reviewer opens something older
+        assert urls and all(u.endswith("/comments.json?view=page") for u in urls)

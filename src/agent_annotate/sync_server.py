@@ -89,6 +89,7 @@ USAGE (directory layout, version-pivot, comment lifecycle)
 
 import argparse
 import difflib
+import functools
 import gzip
 import hashlib
 import http.server
@@ -556,6 +557,134 @@ def _pin_item_numbers(store: dict) -> dict[str, int | str]:
             if isinstance(other.get("agent_snapshot"), dict):
                 other["agent_snapshot"] = {**other["agent_snapshot"], "number": shown}
     return numbers
+
+
+_LEADING_NUMBER = re.compile(r"^\s*(?:Q|#)\s*\d+[\s:.\-—–]*", re.IGNORECASE)
+
+
+def _prompt_keys(comment: dict) -> set[str]:
+    """shell.js promptKey, with and without a leading Q<n> (displayPrompt drops it when it matches the label)."""
+    prompt = str((comment.get("decision_request") or {}).get("prompt") or "")
+    norm = lambda s: re.sub(r"\s+", " ", s).strip().lower()  # noqa: E731  (shell.js normText)
+    doc = str(comment.get("doc") or "") + "\n"
+    return {doc + norm(p) for p in (prompt, _LEADING_NUMBER.sub("", prompt, count=1)) if norm(p)}
+
+
+def _card_anchors(body) -> set[str] | None:
+    """Anchors of the question cards baked into a version's body (adapter.js `.card[data-anchor-id]`); None if unreadable.
+
+    `body` returns the version file's path (it may refuse with ValueError)."""
+    try:
+        markup = body().read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return None
+    return {m for tag in re.findall(r"<[a-zA-Z][^>]*\bclass=['\"][^'\"]*\bcard\b[^>]*>", markup)
+            for m in re.findall(r"data-anchor-id=['\"]([^'\"]+)", tag)}
+
+
+def _plan_stamps(artifact_dir: Path) -> tuple:
+    """Each plan's meta.json mtime: a plan publish moves its current version without touching the store."""
+    stamps = []
+    for path in (artifact_dir / "plans").glob("*/meta.json"):
+        try:
+            stamps.append((path.parent.name, path.stat().st_mtime_ns))
+        except OSError:
+            pass
+    return tuple(sorted(stamps))
+
+
+def _plan_docs(artifact_dir: Path, store: dict) -> dict:
+    """{"plan:<id>": (current, published versions in order, body card anchors)} for the plans the store has comments on."""
+    from .categories import _json, safe_path, validate_plan_id
+    docs = {c.get("doc") for area in ("anchors", "archived") for items in (store.get(area) or {}).values()
+            if isinstance(items, list) for c in items if isinstance(c, dict) and str(c.get("doc") or "").startswith("plan:")}
+    out = {}
+    for doc in docs:
+        try:
+            plan = validate_plan_id(doc[5:])
+            meta = _json(safe_path(artifact_dir, f"plans/{plan}/meta.json"), {})
+        except (OSError, ValueError):
+            continue
+        history = [h.get("version") for h in meta.get("history") or [] if isinstance(h, dict) and h.get("version")]
+        current = meta.get("current")
+        if current in history:
+            out[doc] = (current, history, _card_anchors(functools.partial(safe_path, artifact_dir, f"plans/{plan}/versions/{current}.html")))
+    return out
+
+
+def _page_store(store: dict, numbers: dict, docs: dict) -> dict:
+    """The browser's first read (view=page): what each document's latest version shows and what a Send needs.
+
+    `docs`: {"review" | "plan:<id>": (current version, published versions in
+    order, anchors of its body's question cards or None)}. Settled Review and
+    Plans feedback from older versions stays out; the shell reads the whole
+    store (view=poll) when Earlier feedback, Not in this Send, History or an
+    older version is opened. `omitted` counts what was left out per document
+    for those headers. Library, Findings and plans without a readable meta come whole.
+    """
+    from .categories import comment_category
+    orders = {key: {v: i for i, v in enumerate(versions)} for key, (_, versions, _) in docs.items()}
+
+    def doc_of(c):
+        category = comment_category(c)
+        return "review" if category == "review" else c.get("doc") if category == "plans" and c.get("doc") in docs else None
+
+    def newer(c):
+        key = doc_of(c)
+        order, current = orders.get(key, {}), docs.get(key, (None,))[0]
+        return c.get("version") in order and current in order and order[c["version"]] > order[current]
+
+    def hot(c):
+        key = doc_of(c)
+        if key is None or c.get("version") == docs[key][0]:
+            return True
+        d = c.get("decision") if isinstance(c.get("decision"), dict) else {}
+        if c.get("round_pending") or d.get("round_pending") or d.get("pending"):
+            return True
+        if c.get("decision_request") and not d.get("verdict") and c.get("status") not in ("archived", "resolved_in_version", "addressed_by_agent"):
+            return True  # shell.js isUnresolvedDecision: follows the reviewer to every version
+        replies = c.get("replies") if isinstance(c.get("replies"), list) else []
+        return any(isinstance(r, dict) and "sent_at" in r and not r["sent_at"] for r in replies) or _comment_needs_push(c)
+
+    areas = {area: [(aid, c) for aid, items in (store.get(area) or {}).items() if isinstance(items, list)
+                    for c in items if isinstance(c, dict)] for area in ("anchors", "archived")}
+    keep = {id(c) for items in areas.values() for _, c in items if hot(c)}
+    # "You answered this on …" reads earlier sent answers to the same prompt.
+    asked = set().union(*(_prompt_keys(c) for items in areas.values() for _, c in items if id(c) in keep and c.get("decision_request")))
+    # The body's question cards show the first live (else the last archived) question on their anchor.
+    first, last = {}, {}
+    for area, target in (("anchors", first), ("archived", last)):
+        for aid, c in areas[area]:
+            key = doc_of(c)
+            if key is None or not c.get("decision_request") or newer(c):
+                continue
+            anchors = docs[key][2]
+            if (anchors is None or aid in anchors) and (area == "archived" or (key, aid) not in target):
+                target[key, aid] = c
+    keep |= {id(c) for c in first.values()} | {id(c) for at, c in last.items() if at not in first}
+    for items in areas.values():
+        for _, c in items:
+            d = c.get("decision") if isinstance(c.get("decision"), dict) else {}
+            answered = d.get("verdict") or any(isinstance(h, dict) and h.get("verdict") for h in c.get("decision_history") or [])
+            if id(c) not in keep and answered and c.get("decision_request") and _prompt_keys(c) & asked:
+                keep.add(id(c))
+    omitted = {}
+    out = {area: {} for area in areas}
+    for area, items in areas.items():
+        for aid, c in items:
+            if id(c) in keep:
+                out[area].setdefault(aid, []).append(c)
+            elif not newer(c) and not (area == "anchors" and c.get("withdrawn")):
+                left = omitted.setdefault(doc_of(c), {"earlier": 0, "rest": 0, "rest_missing": 0})
+                left["earlier"] += 1
+                if area == "anchors" and c.get("decision_request") and c.get("status") not in ("archived", "resolved_in_version"):
+                    left["rest"] += 1
+                    left["rest_missing"] += not (c.get("decision") or {}).get("verdict")
+    shown = [c["id"] for items in out.values() for cs in items.values() for c in cs if c.get("id") in numbers]
+    # approved_plans is the server's approval catalog; the browser never reads it (FLD: 75 KB).
+    return {**{k: v for k, v in store.items() if k != "approved_plans"}, **out, "partial": True, "omitted": omitted,
+            "numbers": {cid: numbers[cid] for cid in shown},
+            "number_max": max((n for n in numbers.values() if type(n) is int), default=0)}
 
 
 def _assign_item_number(store: dict, comment: dict, number: int | None = None, *, existing=False) -> None:
@@ -1684,7 +1813,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         type(self)._store_responses.clear()
 
     def _v2_get_store(self, parsed=None):
-        poll = bool(parsed and urllib.parse.parse_qs(parsed.query).get("view") == ["poll"])
+        view = (urllib.parse.parse_qs(parsed.query).get("view") or [None])[0] if parsed else None
+        poll = view in ("poll", "page")
         compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
         with _locked_store(self.artifact_dir, write=False):
             meta = self._read_meta()
@@ -1694,12 +1824,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             except FileNotFoundError:
                 draft_stamp = None
             published = tuple(h.get("version") for h in meta.get("history") or [] if isinstance(h, dict))
-            signature = (self._store_signature(), current_version, published, draft_stamp)
+            try:  # view=page reads the body's question cards; a republish rewrites them in place
+                body_stamp = _version_file(self.artifact_dir, current_version).stat().st_mtime_ns
+            except (OSError, ValueError):
+                body_stamp = None
+            signature = (self._store_signature(), current_version, published, draft_stamp, body_stamp,
+                         _plan_stamps(self.artifact_dir))
             cache = type(self)._store_responses
             if cache.get("signature") != signature:
                 cache.clear()
                 cache["signature"] = signature
-            key = (poll, compressed, self._agent_reader())
+            key = (view if poll else None, compressed, self._agent_reader())
             if key not in cache:
                 from .review_versions import visible_store
                 store = visible_store(self.artifact_dir, self._v2_load(read_only=True), meta)
@@ -1713,7 +1848,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                                for anchor, items in store.get(area, {}).items()}
                                          for area in ("anchors", "archived")}}
                     # Label migration must not look like a content change to the shell.
-                    _pin_item_numbers(store)
+                    numbers = _pin_item_numbers(store)
+                    if view == "page":
+                        review = (current_version, [v for v in published if v],
+                                  _card_anchors(lambda: _version_file(self.artifact_dir, current_version)))
+                        store = _page_store(store, numbers, {"review": review, **_plan_docs(self.artifact_dir, store)})
                 body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
                 packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
                 cache[key] = (packed, compressed) if len(packed) < len(body) else (body, False)
