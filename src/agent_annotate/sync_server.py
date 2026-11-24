@@ -1945,7 +1945,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def _v2_history_representation(self, parsed):
         from .paths import BUS_ARCHIVE_ROOT
         from .review_history import history_buses, review_history
-        from .store import DB_NAME
+        from .store import backend
 
         bus = self.bus_dir / f"{self.slug}.ndjson" if self.bus_dir else None
         compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
@@ -1956,8 +1956,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                      *history_buses(bus, BUS_ARCHIVE_ROOT)]
             if not latest:
                 paths.extend(self.artifact_dir / kind for kind in ("versions", "content"))
-            if bus is not None:
-                paths.extend(self.artifact_dir / name for name in (DB_NAME, DB_NAME + "-wal"))
             signature = []
             for path in paths:
                 try:
@@ -1966,7 +1964,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                       stat.st_mtime_ns, stat.st_ctime_ns))
                 except FileNotFoundError:
                     signature.append((str(path),))
-            return signature
+            # SQLite indexes the bus. The read transaction can update its WAL even when History inputs are unchanged.
+            return (backend(self.artifact_dir) if bus is not None else None, signature)
 
         responses = type(self)._history_responses
         cache = responses.get(latest, {})

@@ -1,5 +1,6 @@
 """History revalidation, append reuse, and CLI writes against an open server."""
 import json
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -9,7 +10,7 @@ import pytest
 from test_fast_writes import request
 from test_fast_writes import server as server
 
-from agent_annotate import cli, pagegen, paths, review_history
+from agent_annotate import cli, pagegen, paths, prune_bus, review_history, store
 
 
 @pytest.mark.parametrize("encoding", ["identity", "gzip"])
@@ -62,6 +63,62 @@ def test_latest_history_skips_document_and_store_work_and_reuses_warm_response(s
     bus.write_text('{"event":"seen_updated"}\n')
     assert request(httpd, route, headers={"If-None-Match": headers["ETag"]})[0] == 304
     assert len(calls) == 2
+
+
+@pytest.fixture
+def sqlite_history(server):
+    httpd, root, _, _ = server
+    bus = root / "project/page.ndjson"
+    bus.parent.mkdir()
+    bus.write_text('{"event":"seen_updated"}\n')
+    (root / ".comments.json.lock").touch()
+    saved = {"id": "saved", "version": "v1", "note": "Saved Send"}
+    (root / "rounds.ndjson").write_text(json.dumps(saved) + "\n")
+    store.import_page(root, slug="page", bus_file=bus)
+    return httpd, bus, saved
+
+
+def test_sqlite_history_survives_pruning_its_active_bus(sqlite_history, monkeypatch):
+    httpd, bus, saved = sqlite_history
+    archive = bus.parent.parent / "archive"
+    monkeypatch.setattr(paths, "BUS_ARCHIVE_ROOT", archive)
+    monkeypatch.setattr(prune_bus, "ARCHIVE_ROOT", str(archive))
+    monkeypatch.setattr(prune_bus, "BUS_ROOT", str(bus.parent.parent))
+    os.utime(bus, (0, 0))
+    routes = ("/api/history?latest=1", "/api/history")
+    before = {}
+    for route in routes:
+        status, headers, body = request(httpd, route)
+        assert status == 200 and json.loads(body)["rounds"] == [saved]
+        before[route] = headers["ETag"]
+
+    assert prune_bus.main(["--apply"]) == 0
+    assert not bus.exists() and len(list(archive.glob("*/project/page.ndjson"))) == 1
+    for route in routes:
+        status, headers, body = request(httpd, route, headers={"If-None-Match": before[route]})
+        assert status == 304 and headers["ETag"] == before[route] and body == b""
+        status, _, body = request(httpd, route)
+        assert status == 200 and json.loads(body)["rounds"] == [saved]
+
+
+@pytest.mark.parametrize("route", ["/api/history", "/api/history?latest=1"])
+def test_sqlite_history_ignores_read_state_writes_during_reconstruction(sqlite_history, monkeypatch, route):
+    httpd, _, saved = sqlite_history
+    original = review_history.review_history
+    calls = 0
+
+    def write_read_state(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        result = original(*args, **kwargs)
+        assert request(httpd, "/api/read-state", "POST", {"items": [{"id": "card", "sig": str(calls)}]})[0] == 200
+        return result
+
+    monkeypatch.setattr(review_history, "review_history", write_read_state)
+    status, headers, body = request(httpd, route)
+    assert status == 200 and json.loads(body)["rounds"] == [saved]
+    assert request(httpd, route, headers={"If-None-Match": headers["ETag"]})[0] == 304
+    assert calls == 1
 
 
 @pytest.mark.parametrize("change", ["meta", "store", "rounds", "bus", "archive", "availability"])
