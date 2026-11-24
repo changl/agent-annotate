@@ -117,6 +117,19 @@ def test_page_images_cache_without_losing_security_headers(server, directory, ha
         assert changed.getheader("Cache-Control") == "no-cache"
 
 
+def test_preview_images_are_immutable_only_under_their_hash_name(server):
+    _, root, _ = server
+    (root / "assets" / "preview").mkdir(parents=True)
+    for name in ("0123456789abcdef.jpg", "picture.jpg"):
+        (root / "assets" / "preview" / name).write_bytes(b"\xff\xd8 preview bytes")
+    with connection(server) as conn:
+        hashed, _ = request(conn, "/review/assets/preview/0123456789abcdef.jpg")
+        plain, _ = request(conn, "/review/assets/preview/picture.jpg")
+    assert hashed.getheader("Cache-Control") == "public, max-age=31536000, immutable"
+    assert hashed.getheader("Content-Security-Policy") == "sandbox"
+    assert plain.getheader("Cache-Control") == "no-cache"
+
+
 @pytest.mark.parametrize("accept,compressed", [
     (None, False), ("identity", False), ("br", False), ("gzip", True), ("br, gzip;q=0.5", True),
     ("gzip;q=0, *;q=1", False), ("*;q=1", True), ("GZip; q=1", True),

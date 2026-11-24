@@ -225,11 +225,32 @@ def _mtime_stamp(path) -> str:
     stamp every second, so any document referencing a missing asset came back
     byte-different on every request and HTTP caching was defeated entirely."""
     if path is not None:
+        path = Path(path)
+        # uzd: each open hashed every shell asset again (~60-90 ms); rehash only when a file changes.
+        key = (str(path), *map(_file_key, [path, *(path.with_name(n) for n in _FONTS if path.suffix == ".css")]))
+        if key[1] is not None and (stamp := _STAMPS.get(key)):
+            return stamp
         try:
-            return str(int(hashlib.sha256(_asset_bytes(Path(path))).hexdigest()[:16], 16))
+            stamp = str(int(hashlib.sha256(_asset_bytes(path)).hexdigest()[:16], 16))
         except OSError:
-            pass
+            return "0"
+        if len(_STAMPS) > 256:
+            _STAMPS.clear()
+        _STAMPS[key] = stamp
+        return stamp
     return "0"
+
+
+_STAMPS: dict = {}
+_FONTS = ("RobotoVariable.woff2", "RobotoVariable-Italic.woff2")
+
+
+def _file_key(path: Path):
+    try:
+        s = path.stat()
+        return (s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+    except OSError:
+        return None
 
 
 def _asset_bytes(path: Path) -> bytes:
@@ -237,7 +258,7 @@ def _asset_bytes(path: Path) -> bytes:
     if path.suffix == ".css":
         # CSS and its fonts need independent immutable keys. Include the font
         # hashes in the served CSS bytes so changing a font also changes its key.
-        for name in ("RobotoVariable.woff2", "RobotoVariable-Italic.woff2"):
+        for name in _FONTS:
             data = data.replace(f"url({name})".encode(),
                                 f"url(../{_mtime_stamp(path.with_name(name))}/{name})".encode())
     return data
@@ -582,14 +603,29 @@ def _card_anchors(body) -> set[str] | None:
             for m in re.findall(r"data-anchor-id=['\"]([^'\"]+)", tag)}
 
 
+# uzd: pure, and re-run on every /content read of the same version (~30-45 ms each on FLD).
+_content_document = functools.lru_cache(maxsize=4)(build_content_document)
+
+
+@functools.lru_cache(maxsize=4)
+def _implicit_asks(source: str) -> tuple:
+    from .pagegen import implicit_ask_anchors
+    return tuple(implicit_ask_anchors(source))
+
+
 def _plan_stamps(artifact_dir: Path) -> tuple:
     """Each plan's meta.json mtime: a plan publish moves its current version without touching the store."""
     stamps = []
-    for path in (artifact_dir / "plans").glob("*/meta.json"):
-        try:
-            stamps.append((path.parent.name, path.stat().st_mtime_ns))
-        except OSError:
-            pass
+    try:
+        entries = os.scandir(artifact_dir / "plans")  # a glob took ~20 ms on FLD's 194 plans
+    except OSError:
+        return ()
+    with entries:
+        for entry in entries:
+            try:
+                stamps.append((entry.name, os.stat(os.path.join(entry.path, "meta.json")).st_mtime_ns))
+            except OSError:
+                pass
     return tuple(sorted(stamps))
 
 
@@ -1057,6 +1093,9 @@ def _public_monitor_owner(lease: dict | None) -> dict | None:
 class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     _store_snapshot = None
     _store_responses = {}
+    _count_rows = (None, None, {})
+    _plans_listed = (None, None)
+    _stamp_checked = None
 
     def handle_one_request(self):
         from .page_names import resolution_scope
@@ -2108,11 +2147,21 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         every request; the hash recompute itself only runs on a stale/
         missing stamp, not on every GET.
         """
+        # uzd: the write lock and a 279 KB meta parse on every read; skip both for the version just checked.
+        try:
+            meta_stat = self._meta_path().stat()
+            checked = (str(self.artifact_dir), version, content_path.stat().st_mtime_ns,
+                       meta_stat.st_ino, meta_stat.st_size, meta_stat.st_mtime_ns)
+        except OSError:
+            checked = None
+        if checked is not None and type(self)._stamp_checked == checked:
+            return
         with _locked_store(self.artifact_dir):  # reuse the store lock; meta writes are rare & small
             meta = self._read_meta()
             existing = (meta.get("content_stamps") or {}).get(version)
             mtime = content_path.stat().st_mtime
             if existing and existing.get("_mtime") == mtime:
+                type(self)._stamp_checked = checked
                 return  # up to date
             computed = compute_content_stamps(html)
             computed["_mtime"] = mtime
@@ -2226,7 +2275,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 self._respond(500, b"Read error")
                 return
             try:
-                html = build_content_document(raw, title=page_name(self.artifact_dir)) if has_canvas_sentinels(raw) else raw
+                html = _content_document(raw, title=page_name(self.artifact_dir)) if has_canvas_sentinels(raw) else raw
             except ExtractionError as exc:
                 self._respond(
                     500,
@@ -2262,10 +2311,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         adapter_v = _mtime_stamp((self.skill_dir / "adapter.js") if self.skill_dir else None)
         implicit_asks = []
         if plan_id is None:
-            from .pagegen import PageGenError, implicit_ask_anchors
+            from .pagegen import PageGenError
             try:
                 source = _contained_path(self.artifact_dir, f"source/{v}.md")
-                implicit_asks = implicit_ask_anchors(source.read_text(encoding="utf-8"))
+                implicit_asks = _implicit_asks(source.read_text(encoding="utf-8"))
             except (OSError, ValueError, PageGenError):
                 pass  # Missing or invalid source cannot safely distinguish an explicit section citation.
         content_meta = json.dumps({"version": v, "publicBasePath": base, "slug": self.slug,
@@ -4068,12 +4117,34 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 with _READ_LOCK:
                     read = self._reviewer_state(_load_read_state(self.artifact_dir), author)
                 from .review_versions import visible_store
-                store = visible_store(self.artifact_dir, self._v2_load(read_only=True), self._read_meta())
+                raw = self._v2_load(read_only=True)
+                store = visible_store(self.artifact_dir, raw, self._read_meta())
+                rows = None
                 if self._agent_reader():
-                    store = store_view(store)
-                plans = list_plans(self.artifact_dir, store=store)
-                topics = file_plans(self.artifact_dir, plans)
-                counts = category_counts(self.artifact_dir, author, read_state=read, store=store, plans=plans, submitted_only=self._agent_reader())
+                    store = store_view(store)  # fresh comment objects: no memo by id
+                else:
+                    # uzd: per-comment counting work, kept while this snapshot (and so every id) is alive and unchanged.
+                    signature = self._store_signature()
+                    memo = type(self)._count_rows
+                    if memo[0] != signature or memo[1] is not raw:
+                        memo = type(self)._count_rows = (signature, raw, {})
+                    rows = memo[2]
+                # uzd: ~60 plan metas and their topics took ~110 ms on FLD; they change only with these files.
+                try:
+                    topics_stat = (self.artifact_dir / "plan-topics.json").stat()
+                    topics_stamp = (topics_stat.st_mtime_ns, topics_stat.st_size)
+                except OSError:
+                    topics_stamp = None
+                plans_key = (self._store_signature(), self._agent_reader(), _plan_stamps(self.artifact_dir), topics_stamp)
+                cached = type(self)._plans_listed
+                if cached[0] == plans_key:
+                    plans, topics = cached[1]  # read-only below
+                else:
+                    plans = list_plans(self.artifact_dir, store=store)
+                    topics = file_plans(self.artifact_dir, plans)
+                    type(self)._plans_listed = (plans_key, (plans, topics))
+                counts = category_counts(self.artifact_dir, author, read_state=read, store=store, plans=plans,
+                                         submitted_only=self._agent_reader(), rows=rows)
                 category_data = load_categories(self.artifact_dir)
                 try:
                     library = load_copy(self.artifact_dir)
@@ -4328,6 +4399,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             data = _load_seen(self.artifact_dir)
             key = _author_key(author)
             data.setdefault(key, {})
+            before = data[key].get(version)
+            # uzd: re-opening the same version is no news, and every bus append rebuilds History (1-4 s on FLD).
+            changed = not (isinstance(before, dict) and before.get("whole_hash") == stamps.get("whole"))
             data[key][version] = {
                 "ts": _now_iso(),
                 "whole_hash": stamps.get("whole"),
@@ -4338,11 +4412,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         rec.pop("section_hashes", None)
             _save_seen(self.artifact_dir, data)
 
-        _bus_append(self.bus_dir, self.slug, {
-            "event": "seen_updated",
-            "author": author,
-            "version": version,
-        })
+        if changed:
+            _bus_append(self.bus_dir, self.slug, {
+                "event": "seen_updated",
+                "author": author,
+                "version": version,
+            })
         self._respond(200, json.dumps({"ok": True, "author": author, "version": version}, ensure_ascii=False).encode(), "application/json")
 
     # ── Static fallthrough ──────────────────────────────────────────
@@ -4451,6 +4526,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         digest = hashlib.sha256(data).hexdigest()
         hashed_name = re.search(r"(?:^|[-_.])([0-9a-f]{12,64})(?=[-_.]|$)", target.name, re.IGNORECASE)
         immutable = extra and hashed_name and digest.startswith(hashed_name[1].lower())
+        # A preview is named by its original's hash and never rewritten (long_pages._preview), uzd.
+        immutable = immutable or (extra and re.fullmatch(r"assets/preview/[0-9a-f]{16}\.(?:jpg|png)", resolved_rel))
         self._respond(200, data, content_type=mime,
                       cache_control=_IMMUTABLE if immutable else "no-cache", extra_headers=extra)
 
@@ -4554,6 +4631,9 @@ def make_handler(
     # At most four immutable bodies: full/poll × identity/gzip, one file revision.
     BoundHandler._store_responses = {}
     BoundHandler._store_snapshot = None
+    BoundHandler._count_rows = (None, None, {})
+    BoundHandler._plans_listed = (None, None)
+    BoundHandler._stamp_checked = None
     BoundHandler._meta_snapshot = None
     BoundHandler._meta_responses = {}
     BoundHandler._meta_response_lock = threading.Lock()

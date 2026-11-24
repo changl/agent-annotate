@@ -276,7 +276,7 @@ def test_manual_publish_checks_managed_identity_under_the_store_lock(server, mon
 @pytest.mark.parametrize("loss", ["restart", "eviction"])
 @pytest.mark.parametrize("verdict", ["accept", "select"])
 def test_vote_evidence_survives_restart_or_eviction_before_send(server, loss, verdict):
-    from agent_annotate.approval_catalog import _VIEWS, read_bundle
+    from agent_annotate.approval_catalog import _SEALS, _VIEWS, read_bundle
     httpd, directory, _ = server
     comment = seed(server)
     (directory / "assets").mkdir()
@@ -294,6 +294,7 @@ def test_vote_evidence_survives_restart_or_eviction_before_send(server, loss, ve
     original.write_bytes(b"changed-after-vote")
     if loss == "eviction":
         for _ in range(17):
+            _SEALS.clear()  # an unchanged page reuses its view; each read must mint one to evict
             token(httpd, comment)
     else:
         _VIEWS.clear()

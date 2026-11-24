@@ -780,9 +780,11 @@
 
   // ── The tab's part of the page ─────────────────────────────────────────
   $('#sp-search').addEventListener('input', (e) => { query = e.target.value; renderList(); });
-  // The page's store changed (an action, a Send or the 8 s poll).
+  // The page's store changed (an action, a Send or the 8 s poll). The first
+  // one is the page's load, whose copy ready() below already reads (uzd).
+  let storeSeen = false;
   document.addEventListener('annotate:store', async () => {
-    await loadCopy();
+    if (storeSeen) await loadCopy(); else { storeSeen = true; await ready(); }
     if (shown && !UI.isTyping(document.activeElement)) { renderList(); renderRail(); }
     if (shown) syncEditor();
   });

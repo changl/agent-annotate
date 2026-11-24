@@ -12,6 +12,7 @@ from copy import deepcopy
 from functools import lru_cache
 from html import escape, unescape
 from html.parser import HTMLParser
+from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .categories import MAX_PLAN_BYTES, _atomic_bytes, _json, safe_path, validate_plan_id
@@ -229,6 +230,22 @@ def _bundle(comment, version, html="", assets=None, incomplete=None, document_pa
                                                *([] if anchors and content else ["Card only"])]))}
 
 
+_SEALS = OrderedDict()  # uzd: one live view per unchanged sealing input; a reload reuses it (~0.1-0.3 s on FLD)
+# What sealing reads from a card (_bundle, item_id).
+_SEALED_FIELDS = ("id", "anchor_id", "doc", "number", "origin_id", "origin_item_id", "decision_request", "text")
+
+
+def _file_stats(page_dir, relatives):
+    out = []
+    for relative in sorted(relatives):
+        try:
+            stat = safe_path(page_dir, relative).stat()
+            out.append((relative, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
+        except (OSError, ValueError):
+            out.append((relative,))
+    return tuple(out)
+
+
 def seal_review(page_dir, html, version, store, base=""):
     """Capture server-owned HTML and image hashes without altering Review."""
     cards = [comment for items in store.get("anchors", {}).values() for comment in items
@@ -236,6 +253,18 @@ def seal_review(page_dir, html, version, store, base=""):
              and comment.get("doc", "review") == "review" and not comment.get("withdrawn")]
     if not cards:
         return html, {}
+    from .sync_server import _plan_stamps
+    # Predecessors read approved_plans and plans/<id>/meta.json.
+    seal_key = (str(page_dir), version, base, hashlib.sha256(html.encode()).hexdigest(),
+                _digest([[c.get(k) for k in _SEALED_FIELDS] for c in cards]),
+                _digest({k: (v or {}).get("current") for k, v in store.get("approved_plans", {}).items()}),
+                _plan_stamps(Path(page_dir)))
+    with _VIEW_LOCK:
+        hit = _SEALS.get(seal_key)
+        if hit and (str(page_dir), hit[0]) in _VIEWS and hit[2] == _file_stats(page_dir, hit[3]):
+            _VIEWS.move_to_end((str(page_dir), hit[0]))
+            _SEALS.move_to_end(seal_key)
+            return html, hit[1]
     document_parts = _document_parts(html)
     tokens, snapshots = {}, {}
     view = uuid.uuid4().hex
@@ -252,12 +281,17 @@ def seal_review(page_dir, html, version, store, base=""):
     key = (str(page_dir), view)
     entry = {"cards": snapshots, "predecessors": {cid: token["predecessor"] for cid, token in tokens.items()}}
     entry["size"] = _retained_size(entry)
+    images = {relative for bundle in snapshots.values() for relative in bundle["image_sources"].values()}
+    stats = _file_stats(page_dir, images)
     with _VIEW_LOCK:
         _VIEWS[key] = entry
         while len(_VIEWS) > _MAX_VIEWS or sum(v["size"] for v in _VIEWS.values()) > _MAX_VIEW_BYTES:
             _VIEWS.popitem(last=False)
         if key not in _VIEWS:
             return html, {}
+        _SEALS[seal_key] = (view, tokens, stats, images)
+        while len(_SEALS) > _MAX_VIEWS:
+            _SEALS.popitem(last=False)
     return html, tokens
 
 

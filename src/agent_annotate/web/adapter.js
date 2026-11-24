@@ -2727,6 +2727,7 @@ function wireCommentableHover() {
 // in its own labelled region; then the side with more columns fades and the
 // hint shows, so it reads as its own scroll box, not the page.
 function wrapScrollTables() {
+  const wraps = [];
   document.querySelectorAll('table').forEach(t => {
     if (t.closest('.unified-table-scroll') || t.closest('[data-annotate-strip]')) return;
     const frame = document.createElement('div');
@@ -2746,8 +2747,10 @@ function wrapScrollTables() {
     frame.after(hint);
     wrap.addEventListener('scroll', () => markTableEdges(wrap), { passive: true });
     t.querySelectorAll('img').forEach(img => img.addEventListener('load', () => markTableEdges(wrap)));
-    markTableEdges(wrap);
+    wraps.push(wrap);
   });
+  // Every table wrapped first, then measured: one layout, not one per table (~55 ms on FLD).
+  wraps.map(wrap => [wrap, tableEdges(wrap)]).forEach(([wrap, edges]) => showTableEdges(wrap, edges));
   window.addEventListener('resize', () => document.querySelectorAll('.unified-table-scroll').forEach(markTableEdges));
   scheduleBadgeRefresh();
 }
@@ -2822,10 +2825,12 @@ function wireCopyButtons() {
     pre.append(btn);
   });
 }
-function markTableEdges(wrap) {
-  const rest = wrap.scrollWidth - wrap.clientWidth - wrap.scrollLeft;
-  const wide = wrap.scrollWidth - wrap.clientWidth > 1;
-  wrap.parentElement.classList.toggle('is-more-left', wrap.scrollLeft > 1);
+function markTableEdges(wrap) { showTableEdges(wrap, tableEdges(wrap)); }
+function tableEdges(wrap) {
+  return { left: wrap.scrollLeft > 1, rest: wrap.scrollWidth - wrap.clientWidth - wrap.scrollLeft, wide: wrap.scrollWidth - wrap.clientWidth > 1 };
+}
+function showTableEdges(wrap, { left, rest, wide }) {
+  wrap.parentElement.classList.toggle('is-more-left', left);
   wrap.parentElement.classList.toggle('is-more-right', rest > 1);
   wrap.parentElement.classList.toggle('is-wide', wide);
   wrap.setAttribute('aria-label', wide ? 'Table · scroll sideways' : 'Table');

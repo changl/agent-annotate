@@ -136,6 +136,14 @@ def test_categories_loads_the_comment_store_once_even_with_many_plans(server, mo
     assert len(loads) == 1
 
 
+def test_reopening_the_same_version_appends_no_seen_event(server):
+    httpd, root, _, _ = server
+    for _ in range(3):
+        assert request(httpd, "/api/seen", "POST", {"version": "v1"})[0] == 200
+    events = [json.loads(line)["event"] for line in (root / "project/page.ndjson").read_text().splitlines()]
+    assert events.count("seen_updated") == 1
+
+
 def test_poll_projection_preserves_history_on_disk_and_reuses_encoded_bodies(server, monkeypatch):
     httpd, root, _, _ = server
     path = root / "comments.json"

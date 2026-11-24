@@ -368,9 +368,16 @@ let pollChanged = false;
 // Posts not answered yet, each with how to put it on a fresh store (see
 // "Optimistic posts").
 const pendingEdits = new Map();
+// uzd: reads the first screen needs, started together at load; the first read of each URL takes its answer.
+const early = {};
+function prefetch(url, read = () => pollJson(url)) { early[url] = read(); early[url].catch(() => {}); }
+function takeEarly(url) { const p = early[url]; delete early[url]; return p; }
 async function pollJson(url, quiet) {
+  const first = takeEarly(url);
+  if (first) return first;
   const last = pollLast[url];
-  const r = await fetch(apiUrl(url), { cache: 'no-store', headers: last && last.etag ? { 'If-None-Match': last.etag } : {}, signal: AbortSignal.timeout(10000) });
+  // uzd: a page's first read revalidates the browser's copy (a 304 when the meta or categories are unchanged).
+  const r = await fetch(apiUrl(url), { cache: last ? 'no-store' : 'no-cache', headers: last && last.etag ? { 'If-None-Match': last.etag } : {}, signal: AbortSignal.timeout(10000) });
   // Read the empty 304 body: an unread one ends as an aborted request.
   if (r.status === 304 && last) { await r.text(); return { ok: true, same: true, data: last.data }; }
   if (!r.ok) return { ok: false, status: r.status };
@@ -627,7 +634,8 @@ async function loadSeen() {
   // ↑NEW compares Review's content stamps; plan revisions have none.
   if (doc !== 'review') { SEEN = {}; return true; }
   try {
-    const r = await fetch(apiUrl('./api/seen' + authorQuery()), { cache: 'no-store' });
+    const url = './api/seen' + authorQuery();
+    const r = await (takeEarly(url) || fetch(apiUrl(url), { cache: 'no-store' }));
     if (!r.ok) return false;
     const j = await r.json();
     if (doc !== DOC) return false;
@@ -5071,6 +5079,8 @@ async function activateDoc(doc, version) {
     frameReady = { doc: null, version: null };
     frame.dataset.plan = String(PLAN_ID);
     loadIframe(CURRENT_VERSION);
+    // uzd: let the document's request leave before the rail renders (~100 ms on FLD).
+    await new Promise(res => setTimeout(res, 0));
   }
   const gf = document.getElementById('gf-ta');
   if (gf) gf.value = DRAFTS.gf || '';
@@ -5291,11 +5301,14 @@ async function init() {
     setTimeout(() => w.forEach(f => f()), 0);
   });
 
+  prefetch('./current.meta.json');
+  const who = resolveIdentity();
   await Promise.all([loadSessionMonitor(), loadCapabilities()]);
   document.getElementById('share-row').hidden = !(CAPS && CAPS.private_share_links);
 
-  IDENTITY = await resolveIdentity();
+  IDENTITY = await who;
   AUTHOR = authorValue(IDENTITY);
+  prefetch('./api/seen' + authorQuery(), () => fetch(apiUrl('./api/seen' + authorQuery()), { cache: 'no-store' }));
   updateAuthorIndicator();
   if (!IDENTITY && location.protocol === 'https:' && !CAPS) {
     showStatus('Open the private review link to view this page.');
@@ -5305,6 +5318,7 @@ async function init() {
   // The page's store and every document are loaded up front, so the page's
   // counts and the one Send cover all of them before any tab is opened.
   await Promise.all([loadStore(), loadReadState(), loadCategories(), loadProject()]);
+  if (PLAN_ID) prefetch('./api/plans/' + encodeURIComponent(PLAN_ID));
   loadBoard();
   DRAFTS = loadDrafts(DOC);
   for (const doc of DOCS) await loadDocState(doc);
