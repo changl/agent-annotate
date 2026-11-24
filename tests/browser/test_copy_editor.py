@@ -3,6 +3,7 @@
 import pytest
 from single_page import browser_page, go, history
 from test_card_layout import CHROME
+from test_fix_ui_shell import opened
 from test_workspace_intent import _page
 
 from agent_annotate.copy_state import load_copy, save_copy
@@ -55,6 +56,46 @@ def copy_site(tmp_path):
 
 def editor(page):
     return page.locator("#sp-editor .ql-editor")
+
+
+def test_private_library_loads_copy_after_reviewer_session(tmp_path, copy_site):
+    authenticated = False
+    reads = []
+
+    def session(route):
+        nonlocal authenticated
+        authenticated = True
+        route.fulfill(json={"ok": True})
+
+    def copy(route):
+        reads.append(authenticated)
+        if authenticated:
+            route.continue_()
+        else:
+            route.fulfill(status=403, json={"error": "authenticated proxy boundary required"})
+
+    routes = [("**/api/reviewer/session", session), ("**/api/copy", copy)]
+    with opened(tmp_path, copy_site, "#review=fixture&view=library&item=hero", routes=routes, wait=False) as (page, _, _):
+        page.locator('body[data-ready="1"]').wait_for(state="attached")
+        assert reads == [True]
+        assert editor(page).count() == 1
+
+
+def test_library_retries_a_failed_initial_copy_read(tmp_path, copy_site):
+    reads = []
+
+    def copy(route):
+        reads.append(route.request.url)
+        if len(reads) == 1:
+            route.fulfill(status=503, json={"error": "try again"})
+        else:
+            route.continue_()
+
+    with opened(tmp_path, copy_site, routes=[("**/api/copy", copy)]) as (page, _, _):
+        assert len(reads) == 1
+        go(page, "library", item="hero")
+        assert len(reads) == 2
+        assert editor(page).count() == 1
 
 
 @pytest.mark.parametrize("width,theme", [(1440, "dark"), (1440, "light"), (390, "dark"), (390, "light")])
