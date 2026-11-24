@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## 2.32.13
+
+- Opening Earlier feedback keeps what the page already shows (agent-annotate-1us, PR #168). The first read carries a small mark; opening Earlier adds only older cards unchanged since that mark, plus a card a link or a saved draft points at, and holds anything newer behind Refresh. A late full response no longer overwrites a newer cached read. After a server restart the mark is unknown and the page loads the full store as before; startup keeps a newly published Review question behind Refresh. Accepted difference: after a restart, a note deleted in another tab disappears when Earlier opens.
+
 ## 2.32.12
 
 - Pages open faster (agent-annotate-uzd, part 2). The server reuses per-open work while its inputs are unchanged: shell asset stamps, `copy.json` validation, the content document and its asks, the plan list with topics, category counts, and the approval seal. Re-opening the same version no longer appends `seen_updated`, which forced a full History rebuild (1–4 s on FLD) during the first screen. Preview images named by hash are immutable. In the browser, the meta and seen reads start at load, `/api/copy` is read once, unchanged first reads come back as 304s, the document request leaves before the rail renders, and tables are measured in one layout. Sandbox copies at load 230–450, main → this release: FLD warm 5.9 → 1.2 s, cold 12.5 → 3.3 s; Rebex warm 7.3 → 0.7 s, cold 9.4 → 1.3 s.
