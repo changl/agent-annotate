@@ -504,15 +504,17 @@ function adoptFull(before) {
   for (const apply of pendingEdits.values()) apply();
   computeNumbers();
 }
-// view=page leaves settled Review feedback from older versions out; these
-// count it for the headers that list it (Earlier feedback, Not in this Send).
+// view=page leaves settled Review and Plans feedback from older versions out;
+// these count it, per document, for the headers that list it (Earlier
+// feedback, Not in this Send).
 function omitted() {
-  return STORE.partial && DOC === 'review' && STORE.omitted ? STORE.omitted : { earlier: 0, rest: 0, rest_missing: 0 };
+  const key = DOC === 'review' ? 'review' : DOC === 'plans' && PLAN_ID ? 'plan:' + PLAN_ID : null;
+  return (STORE.partial && key && STORE.omitted && STORE.omitted[key]) || { earlier: 0, rest: 0, rest_missing: 0 };
 }
 // What the reviewer is looking at needs comments view=page left out.
 function needsFullStore() {
   if (!STORE.partial) return false;
-  if (DOC === 'review' && CURRENT_VERSION && CURRENT_VERSION !== latestVersion()) return true;
+  if ((DOC === 'review' || DOC === 'plans') && CURRENT_VERSION && CURRENT_VERSION !== latestVersion()) return true;
   const known = new Set(flattenStore(true).map(c => c.id));
   // Text typed on a card stays with it, however old the card is.
   const cardOf = k => /^(say|edit):/.test(k) ? k.slice(k.indexOf(':') + 1) : k.startsWith('note:') ? k.slice(5).split('|')[0]

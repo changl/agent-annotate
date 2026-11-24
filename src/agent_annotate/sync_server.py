@@ -89,6 +89,7 @@ USAGE (directory layout, version-pivot, comment lifecycle)
 
 import argparse
 import difflib
+import functools
 import gzip
 import hashlib
 import http.server
@@ -569,31 +570,73 @@ def _prompt_keys(comment: dict) -> set[str]:
     return {doc + norm(p) for p in (prompt, _LEADING_NUMBER.sub("", prompt, count=1)) if norm(p)}
 
 
-def _card_anchors(artifact_dir: Path, version: str | None) -> set[str] | None:
-    """Anchors of the question cards baked into a version's body (adapter.js `.card[data-anchor-id]`); None if unreadable."""
+def _card_anchors(body) -> set[str] | None:
+    """Anchors of the question cards baked into a version's body (adapter.js `.card[data-anchor-id]`); None if unreadable.
+
+    `body` returns the version file's path (it may refuse with ValueError)."""
     try:
-        markup = _version_file(artifact_dir, version).read_text(encoding="utf-8")
+        markup = body().read_text(encoding="utf-8")
     except (OSError, ValueError):
         return None
     return {m for tag in re.findall(r"<[a-zA-Z][^>]*\bclass=['\"][^'\"]*\bcard\b[^>]*>", markup)
             for m in re.findall(r"data-anchor-id=['\"]([^'\"]+)", tag)}
 
 
-def _page_store(store: dict, numbers: dict, history: list, card_anchors: set[str] | None = None) -> dict:
-    """The browser's first read (view=page): what the latest version shows and what a Send needs.
+def _plan_stamps(artifact_dir: Path) -> tuple:
+    """Each plan's meta.json mtime: a plan publish moves its current version without touching the store."""
+    stamps = []
+    for path in (artifact_dir / "plans").glob("*/meta.json"):
+        try:
+            stamps.append((path.parent.name, path.stat().st_mtime_ns))
+        except OSError:
+            pass
+    return tuple(sorted(stamps))
 
-    Review feedback from older versions that is settled stays out; the shell
-    reads the whole store (view=poll) when Earlier feedback, Not in this Send,
-    History or an older version is opened. `omitted` counts what was left out
-    for those headers. Everything else (Plans, Library, Findings) comes whole.
+
+def _plan_docs(artifact_dir: Path, store: dict) -> dict:
+    """{"plan:<id>": (current, published versions in order, body card anchors)} for the plans the store has comments on."""
+    from .categories import _json, safe_path, validate_plan_id
+    docs = {c.get("doc") for area in ("anchors", "archived") for items in (store.get(area) or {}).values()
+            if isinstance(items, list) for c in items if isinstance(c, dict) and str(c.get("doc") or "").startswith("plan:")}
+    out = {}
+    for doc in docs:
+        try:
+            plan = validate_plan_id(doc[5:])
+            meta = _json(safe_path(artifact_dir, f"plans/{plan}/meta.json"), {})
+        except (OSError, ValueError):
+            continue
+        history = [h.get("version") for h in meta.get("history") or [] if isinstance(h, dict) and h.get("version")]
+        current = meta.get("current")
+        if current in history:
+            out[doc] = (current, history, _card_anchors(functools.partial(safe_path, artifact_dir, f"plans/{plan}/versions/{current}.html")))
+    return out
+
+
+def _page_store(store: dict, numbers: dict, docs: dict) -> dict:
+    """The browser's first read (view=page): what each document's latest version shows and what a Send needs.
+
+    `docs`: {"review" | "plan:<id>": (current version, published versions in
+    order, anchors of its body's question cards or None)}. Settled Review and
+    Plans feedback from older versions stays out; the shell reads the whole
+    store (view=poll) when Earlier feedback, Not in this Send, History or an
+    older version is opened. `omitted` counts what was left out per document
+    for those headers. Library, Findings and plans without a readable meta come whole.
     """
     from .categories import comment_category
-    current = store.get("current_version")
-    order = {v: i for i, v in enumerate(history)}
-    newer = lambda c: c.get("version") in order and current in order and order[c["version"]] > order[current]  # noqa: E731
+    orders = {key: {v: i for i, v in enumerate(versions)} for key, (_, versions, _) in docs.items()}
+
+    def doc_of(c):
+        category = comment_category(c)
+        return "review" if category == "review" else c.get("doc") if category == "plans" and c.get("doc") in docs else None
+
+    def newer(c):
+        key = doc_of(c)
+        order, current = orders.get(key, {}), docs.get(key, (None,))[0]
+        return c.get("version") in order and current in order and order[c["version"]] > order[current]
 
     def hot(c):
-        if comment_category(c) != "review" or c.get("version") == current:
+        key = doc_of(c)
+        if key is None or c.get("version") == docs[key][0]:
             return True
         d = c.get("decision") if isinstance(c.get("decision"), dict) else {}
         if c.get("round_pending") or d.get("round_pending") or d.get("pending"):
@@ -612,29 +655,34 @@ def _page_store(store: dict, numbers: dict, history: list, card_anchors: set[str
     first, last = {}, {}
     for area, target in (("anchors", first), ("archived", last)):
         for aid, c in areas[area]:
-            if (c.get("decision_request") and comment_category(c) == "review" and not newer(c)
-                    and (card_anchors is None or aid in card_anchors) and (area == "archived" or aid not in target)):
-                target[aid] = c
-    keep |= {id(c) for aid, c in first.items()} | {id(c) for aid, c in last.items() if aid not in first}
+            key = doc_of(c)
+            if key is None or not c.get("decision_request") or newer(c):
+                continue
+            anchors = docs[key][2]
+            if (anchors is None or aid in anchors) and (area == "archived" or (key, aid) not in target):
+                target[key, aid] = c
+    keep |= {id(c) for c in first.values()} | {id(c) for at, c in last.items() if at not in first}
     for items in areas.values():
         for _, c in items:
             d = c.get("decision") if isinstance(c.get("decision"), dict) else {}
             answered = d.get("verdict") or any(isinstance(h, dict) and h.get("verdict") for h in c.get("decision_history") or [])
             if id(c) not in keep and answered and c.get("decision_request") and _prompt_keys(c) & asked:
                 keep.add(id(c))
-    omitted = {"earlier": 0, "rest": 0, "rest_missing": 0}
+    omitted = {}
     out = {area: {} for area in areas}
     for area, items in areas.items():
         for aid, c in items:
             if id(c) in keep:
                 out[area].setdefault(aid, []).append(c)
             elif not newer(c) and not (area == "anchors" and c.get("withdrawn")):
-                omitted["earlier"] += 1
+                left = omitted.setdefault(doc_of(c), {"earlier": 0, "rest": 0, "rest_missing": 0})
+                left["earlier"] += 1
                 if area == "anchors" and c.get("decision_request") and c.get("status") not in ("archived", "resolved_in_version"):
-                    omitted["rest"] += 1
-                    omitted["rest_missing"] += not (c.get("decision") or {}).get("verdict")
+                    left["rest"] += 1
+                    left["rest_missing"] += not (c.get("decision") or {}).get("verdict")
     shown = [c["id"] for items in out.values() for cs in items.values() for c in cs if c.get("id") in numbers]
-    return {**store, **out, "partial": True, "omitted": omitted,
+    # approved_plans is the server's approval catalog; the browser never reads it (FLD: 75 KB).
+    return {**{k: v for k, v in store.items() if k != "approved_plans"}, **out, "partial": True, "omitted": omitted,
             "numbers": {cid: numbers[cid] for cid in shown},
             "number_max": max((n for n in numbers.values() if type(n) is int), default=0)}
 
@@ -1780,7 +1828,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 body_stamp = _version_file(self.artifact_dir, current_version).stat().st_mtime_ns
             except (OSError, ValueError):
                 body_stamp = None
-            signature = (self._store_signature(), current_version, published, draft_stamp, body_stamp)
+            signature = (self._store_signature(), current_version, published, draft_stamp, body_stamp,
+                         _plan_stamps(self.artifact_dir))
             cache = type(self)._store_responses
             if cache.get("signature") != signature:
                 cache.clear()
@@ -1801,7 +1850,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     # Label migration must not look like a content change to the shell.
                     numbers = _pin_item_numbers(store)
                     if view == "page":
-                        store = _page_store(store, numbers, [v for v in published if v], _card_anchors(self.artifact_dir, current_version))
+                        review = (current_version, [v for v in published if v],
+                                  _card_anchors(lambda: _version_file(self.artifact_dir, current_version)))
+                        store = _page_store(store, numbers, {"review": review, **_plan_docs(self.artifact_dir, store)})
                 body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
                 packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
                 cache[key] = (packed, compressed) if len(packed) < len(body) else (body, False)
