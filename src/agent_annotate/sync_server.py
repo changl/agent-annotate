@@ -105,7 +105,7 @@ import tomllib
 import urllib.error
 import urllib.parse
 import uuid
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -1820,6 +1820,20 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         type(self)._store_snapshot = (self._store_signature(), store)
         type(self)._store_responses.clear()
 
+    @contextmanager
+    def _store_response(self):
+        """Prepare one early response and write it only after the store transaction exits successfully."""
+        response = None
+
+        def defer(code, body):
+            nonlocal response
+            response = (code, body)
+
+        with _locked_store(self.artifact_dir):
+            yield defer
+        if response is not None:
+            self._respond(*response)
+
     def _v2_get_store(self, parsed=None):
         view = (urllib.parse.parse_qs(parsed.query).get("view") or [None])[0] if parsed else None
         poll = view in ("poll", "page")
@@ -3163,7 +3177,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if not isinstance(payload, dict) or not isinstance(payload.get("on"), bool):
             return self._respond(400, b'{"error":"expected {\"on\": true|false}"}')
         author = self._author(parsed)
-        with _locked_store(self.artifact_dir):
+        with self._store_response() as defer:
             store = self._v2_load()
             c = next((c for items in store["anchors"].values() for c in items if c.get("id") == comment_id), None)
             if c is None:
@@ -3173,7 +3187,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     return self._respond(409, b'{"error":"only an unanswered question can be answered later"}')
                 c["answer_later"] = {"ts": _now_iso(), "by": author}
             elif not c.get("answer_later"):
-                return self._respond(200, json.dumps(c, ensure_ascii=False).encode(), "application/json")
+                return defer(200, json.dumps(c, ensure_ascii=False).encode())
             else:
                 c["answer_later"] = False  # brought back on purpose: a later re-ask must not restore an older mark
             self._v2_save(store)
@@ -3556,7 +3570,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         identity = self._identity()
         author = identity["email"] or "anonymous"
 
-        with _locked_store(self.artifact_dir):
+        with self._store_response() as defer:
             store = self._v2_load()
             found = None
             for anchor_id, items in store.get("anchors", {}).items():
@@ -3590,8 +3604,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     and prior_evidence.get("view_revision") == incoming_revision
                     and prior_evidence.get("request") == evidence.get("request")
                     and prior_evidence.get("version") == evidence.get("version")):
-                return self._respond(200, json.dumps({**c, "delivery": "noop", "delivery_id": None,
-                    "monitor_count": 0, "monitor_owner": None}).encode(), "application/json")
+                return defer(200, json.dumps({**c, "delivery": "noop", "delivery_id": None,
+                    "monitor_count": 0, "monitor_owner": None}).encode())
             is_revision = prior_decision is not None
             if is_revision:
                 c.setdefault("decision_history", []).append(prior_decision)
@@ -3719,7 +3733,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         note = str(payload.get("note") or "").strip() or None
         author = self._author(parsed)
         reviewer_authors = self._reviewer_authors(author)
-        with _locked_store(self.artifact_dir):
+        with self._store_response() as defer:
             if self._refuse_moved_write("/api/rounds/submit"):  # see push-session
                 return
             store = self._v2_load()
@@ -3820,12 +3834,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if not comment_ids and not edits and not note:
                 if cleared_archived:
                     self._v2_save(store)
-                self._respond(200, json.dumps({"ok": True, "delivery": "noop", "comment_count": 0,
+                return defer(200, json.dumps({"ok": True, "delivery": "noop", "comment_count": 0,
                                               "comment_ids": [], "verdict_counts": verdict_counts,
                                               "undecided_count": len(undecided_ids),
                                               "edits": [], "edit_count": 0,
-                                              "undecided_ids": undecided_ids, **skipped}).encode(), "application/json")
-                return
+                                              "undecided_ids": undecided_ids, **skipped}).encode())
             owner = self._read_meta().get("owner") or {}
             version = payload.get("version") or self._read_meta().get("current")
             if version and (not isinstance(version, str) or not _VERSION_ID.fullmatch(version)

@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- Slow responses to unchanged Answer later, decision, and Send requests no longer hold the page-store lock.
+
 ## 2.32.10
 
 - A slow or abandoned download no longer holds up the page's other requests: the server releases the page-store lock before it writes a response, and closes cancelled connections quietly instead of answering them with a second, failing 500. A slow client used to keep every other reader of that page waiting; under load on 2026-11-24 the Rebex server logged about 380 dropped connections.
