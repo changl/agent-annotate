@@ -98,7 +98,7 @@
 
   async function render(el, ctx, anchor) {
     P.notes.slot(S, 'links');  // S.move is the kit's one Move; navigating here ended any earlier one (r12 audit17 reference 4, fix20)
-    let D = LD = await ctx.data('links');
+    let D = LD = await ctx.data('links'); prune(ctx);
     el.innerHTML = '<div class="l-wrap"></div>';
     const w = el.firstElementChild;
     if (anchor === 'people') return people(w, ctx, D);
@@ -476,6 +476,8 @@
   // the note being typed: a draft, in Send before Save and kept across a reload with "Unsent answers and notes" on, as Questions' open note is (audit8 running 1)
   const typed = c => { const d = c.prefs.get('draft:lnote', null); return d && (d.text || '').trim() ? d : null; };
   // a failed save's words: the kit's second-spot rule (the typed draft again, or with another spot typed or open, a draft at their own spot)
+  // the kit's prune as the feed first lands: a typed note a reload cut off from its Save's answer is that saved note (r12 audit42 running 3)
+  const prune = c => { const t = P.notes.prune(c, [...LD.notes || [], ...mine], 'draft:lnote', BK); if (t && S.note === t.a) { S.note = ''; S.tgt = null; } };
   const putBack = (c, d) => P.notes.failed(c, BK, d, typed(c), S.note ? {a: S.note, tgt: S.tgt} : null, x => c.prefs.set('draft:lnote', x));
   const noteHtml = (c, d) => `On “${c.esc(cut((d.tgt && d.tgt.quote) || d.line || d.l || 'Pages & links', 50))}”:${c.esc(cut(d.text.trim(), 140))}`;
   const goTyped = async (c, d) => { openAt(await c.data('links'), d.a); S.note = d.a; S.tgt = d.tgt || null; S.hl = '';
@@ -485,7 +487,7 @@
   let KEPT = null;  // kept documents' titles, for Send before Pages & links has opened
   // unsent notes from the feed (after a reload: the server's, or a copy's simulated ones) and from this visit, once each (r12 fix8)
   const unsent = c => {
-    if (!LD) c.data('links').then(d => { if (!LD) { LD = d; c.refreshTop(); } }).catch(() => {});
+    if (!LD) c.data('links').then(d => { if (!LD) { LD = d; prune(c); c.refreshTop(); } }).catch(() => {});
     // before links.json is in (a reload), the notes as Send last listed them, saved with the drafts (r12 fix10 frame 1, reference 2)
     const fd = LD ? LD.notes || [] : c.prefs.get('draft:lnotes', []);
     const l = [...fd, ...mine.filter(n => !fd.some(x => x.id === n.id))].map(moved).filter(n => P.notes.out(n) && !n.closed && /^doc:/.test(n.a)).map(n => Object.assign(n, {line: lineOf(n)}));
@@ -550,5 +552,5 @@
     // an approval made after the round check stays for the next Send (r12 audit31 running 4)
     sent: (c, was, done) => { unsent(c).forEach(P.notes.gone); c.prefs.set('draft:lappr', apprs(c).filter(id => !done('lappr:' + id))); c.prefs.set('draft:lnotes', []); redo(); },
   });
-  P.tab({key: 'links', render, chip: async ctx => { const D = LD = await ctx.data('links'); return {text: String(1 + D.pages.length), title: 'pages'}; }});
+  P.tab({key: 'links', render, chip: async ctx => { const D = LD = await ctx.data('links'); prune(ctx); return {text: String(1 + D.pages.length), title: 'pages'}; }});
 })();

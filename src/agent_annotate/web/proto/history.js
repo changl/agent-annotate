@@ -263,7 +263,10 @@
   const cnotes = v => allC().filter(n => n.anchor === 'chart:' + v);
   // saved and not yet sent; Questions' feed is read here too, so Send lists them before History is opened
   // kept as saved records too (draft:hcnotes): while that feed is held or failed, Send lists them from what was saved (r12 fix14 running 1)
-  const savedC = ctx => { if (!QR) QR = ctx.data('questions').then(q => { if (q && q !== QD) { QD = q; ctx.refreshTop && ctx.refreshTop(); } }).catch(() => {}).finally(() => { QR = null; });
+  // the kit's prune as Questions' feed first lands: a typed note a reload cut off from its Save's answer is that saved note (r12 audit42 running 3)
+  const pruneC = ctx => { const t = P.notes.prune(ctx, (QD && QD.notes) || null, 'draft:hnote', HB, d => 'chart:' + (d.a || d.v));
+    if (t && S.cn === t.v) { S.cn = ''; redrawH(); } };
+  const savedC = ctx => { if (!QR) QR = ctx.data('questions').then(q => { if (q && q !== QD) { QD = q; pruneC(ctx); ctx.refreshTop && ctx.refreshTop(); } }).catch(() => {}).finally(() => { QR = null; });
     const m = ctx.prefs.get('draft:hcnotes', []);
     if (!QD) return [...m, ...CN.filter(n => P.notes.out(n) && !m.some(x => x.id === n.id))];
     // a saved record the read predates stays: no late or stale read removes its row (r12 audit14 running 1)
@@ -366,7 +369,7 @@
     D = await ctx.data('history');
     // the copy's findings audits and Copy library, from Reference's own data; History never waits for it, the rows join when it arrives
     if (!R) ctx.data('reference').then(r => { R = r; if (el.querySelector('#h-list')) draw(el, ctx); }).catch(() => {});
-    ctx.data('questions').then(q => { QD = q; if (el.querySelector('#h-list') && qpv().some(([v]) => cnotes(v).length)) { draw(el, ctx); litC(el); } }).catch(() => {});
+    ctx.data('questions').then(q => { QD = q; pruneC(ctx); if (el.querySelector('#h-list') && qpv().some(([v]) => cnotes(v).length)) { draw(el, ctx); litC(el); } }).catch(() => {});
     const {esc, icon} = ctx;
     if (/^hn-/.test(anchor || '')) { S.hl = anchor.slice(3); S.hlT = ''; anchor = ''; }  // a copied note link lands on the note
     if (anchor) return openView(el, ctx, anchor);

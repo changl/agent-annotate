@@ -24,7 +24,7 @@ def test_a_warm_refresh_in_flight_or_failed_is_unread(tmp_path):
     node(tmp_path, f"""
 const assert = require('assert');
 let D = {{v: 0}}, stale = false, ctx = null, n = 0, fail = false, hang = null, redraws = 0; const S = {{}};
-const sim = d => d, relist = () => {{ redraws++; }};
+const sim = d => d, relist = () => {{ redraws++; }}, pruneQ = () => {{}};
 const c = {{data: () => fail ? Promise.reject(Error('503')) : new Promise(r => {{ hang = r; }})}};
 {load}
 {state}

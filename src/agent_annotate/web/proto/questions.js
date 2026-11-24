@@ -323,6 +323,23 @@
     failed(c, k, d, now, open, set) { if (now) { if (!NK.same(now, d.a, d.tgt)) NK.backs.put(c, k, d); }
       else if (!open || NK.same(open, d.a, d.tgt)) set(d); else NK.backs.put(c, k, d);
       c.refreshTop(); },
+    // A kept draft whose Save stored it is that saved note: a reload while its Save settled kept both, so Send listed the words
+    // twice (r12 audit42 running 3). Each reader prunes once a visit, as its feed first lands: its typed slot (tk) and its drafts
+    // at their own spots (bk) drop a draft with the same words at the same spot (anchor, quote, occurrence, point) as a saved
+    // note. Different words at one spot, or a draft whose Save or Send failed (not in the store), stay. at: a draft's anchor
+    // (null: not a new note). Returns the typed draft it dropped, so the reader closes its composer
+    pruned: new Set(),
+    tk: t => JSON.stringify(t && (t.quote != null || t.offset) ? [t.quote, t.at == null ? null : t.at, t.offset ? [t.offset.dx, t.offset.dy] : null] : null),
+    dup: (ns, a, tgt, text) => { const w = String(text || '').trim();
+      return !!a && !!w && ns.some(n => (n.a || n.anchor || n.anchor_id) === a && NK.tk(n.target) === NK.tk(tgt) && String(n.text || '').trim() === w); },
+    prune(c, ns, tk, bk, at = d => d.a) {
+      if (NK.pruned.has(tk) || !ns) return null;
+      NK.pruned.add(tk);
+      const hit = d => !!d && NK.dup(ns, at(d), d.tgt !== undefined ? d.tgt : d.target, d.text), t = c.prefs.get(tk, null), l = NK.backs.all(c, bk), m = l.filter(d => !hit(d));
+      if (hit(t)) c.prefs.set(tk, null);
+      if (m.length < l.length) c.prefs.set(bk, m);
+      if (hit(t) || m.length < l.length) c.refreshTop();
+      return hit(t) ? t : null; },
     // Cancel drops only the draft at its own spot: words typed at another spot stay (r12 audit40 frame)
     cancel(c, k, open, now, clear) { NK.backs.drop(c, k, open.a, open.tgt); if (!now || NK.same(now, open.a, open.tgt)) clear(); },
     // a redraw (an earlier note's Save landing) never blurs the box he types in: hold(w) before, its result after (r12 audit40 running 4)
@@ -609,6 +626,9 @@
     () => { S.note = qNote(qSpot(n)); ctx.prefs.set('q:newnote', S.note); });
   // a spot opening takes its kept draft's words into its composer
   const fromBack = n => { const b = !n.edit && NK.backs.at(ctx, QB, n.anchor, n.target); if (!b) return n; NK.backs.drop(ctx, QB, b.a, b.tgt); return {...n, text: b.text}; };
+  // the kit's prune as the questions first land: a typed note a reload cut off from its Save's answer is that saved note (r12 audit42 running 3)
+  const pruneQ = () => { const t = NK.prune(ctx, D.notes, 'q:newnote', QB, d => !d.edit && (d.a || d.anchor));
+    if (t && S.note && !S.note.edit && S.note.anchor === t.anchor && S.note.text === t.text) S.note = null; };
   if (P.queue) P.queue({items: c => NK.backs.all(c, QB).map(b => ({key: 'qnb:' + b.a + ' ' + JSON.stringify(b.tgt || null), spot: b.a, tgt: b.target, group: 'Notes', say: b.text.trim(),
     html: `On “${esc(cut((b.target && b.target.quote) || b.label || 'Questions', 50))}”: ${esc(cut(b.text.trim(), 140))}`,
     // Go to it: the composer he was typing in stays a draft at its own spot; shortcut: an open Edit of a saved note is replaced, as the 'nn:' row's Go to it does
@@ -2078,7 +2098,7 @@
       S.view = S.view || ctx.prefs.get('q:view', 'doc');
       el.innerHTML = '<p class="mut">Loading the questions…</p>';
       const fresh = stale; stale = false;
-      D = sim(await track('questions', c.data('questions', fresh)));
+      D = sim(await track('questions', c.data('questions', fresh))); pruneQ();
       await findCopy(c);
       // the Send opened over another tab now shows in this bar; General feedback's focus, selection and caret move with it, in the
       // same task as the draw below, so no keystroke lands between (r12 audit32 running 4)
@@ -2114,7 +2134,7 @@
       // the sheet redraws when the read lands or first fails, not on a repeat failure: a redraw asks for counts, and with no
       // data yet a count reads again, so redrawing on every failure would loop against a down server
       let ok = false;
-      const r = reading = track('questions', c.data('questions', fresh)).then(d => { D = sim(d); ok = true; })
+      const r = reading = track('questions', c.data('questions', fresh)).then(d => { D = sim(d); pruneQ(); ok = true; })
         .finally(() => { if (reading === r) { reading = null; if (ok) relist(); } });  // a failure relists from track(), once
       relist();  // the open sheet waits on this read
     }

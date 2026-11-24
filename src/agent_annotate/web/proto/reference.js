@@ -122,6 +122,8 @@
     return d && NK().same(d, k, S.tgt) ? d.text || '' : bk ? bk.text : d && d.a === k ? d.text || '' : ''; };
   const BK = 'draft:rback';  // the notes kit's drafts kept at their own spots (NK().backs)
   // a failed save's words: the typed draft again, or with another note typed, a draft at their own spot (r12 audit39 running 1)
+  // the kit's prune as the feed first lands: a typed note a reload cut off from its Save's answer is that saved note (r12 audit42 running 3)
+  const prune = () => { const t = NK().prune(ctx, allNotes(), 'draft:rnote', BK); if (t && S.note === t.a) { S.note = ''; S.tgt = null; if (S.reach === t.a) S.reach = ''; } };
   const putBack = d => NK().failed(ctx, BK, d, rnote(), S.note ? {a: S.note, tgt: S.tgt} : null, setR);  // the kit's second-spot rule (r12 audit40)
 
   /* ---------- a plan revision, read from today's plans/<id>/<v>.html as blocks ---------- */
@@ -799,10 +801,11 @@
       for (const k of [...S.appr]) if (done('ap:' + k)) S.appr.delete(k); if (D) allNotes().forEach(NK().gone); SNOTES = []; keepDrafts(); redo(); },
   });
   Proto.tab({key: 'reference',
-    chip: async c => { ctx = c; restoreDrafts(); D = await c.data('reference'); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },
+    chip: async c => { ctx = c; restoreDrafts(); D = await c.data('reference'); prune(); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },
     render: async (main, c, anchor) => {
       ctx = c; el = main; NK().slot(S, 'reference'); restoreDrafts();  // S.move is the kit's one Move; navigating here ended any earlier one (r12 audit17 reference 4, fix20)
       if (!D) { main.innerHTML = '<p class="mut">Reading Reference…</p>'; D = await c.data('reference'); }
+      prune();
       unsort();
       if (S.reach) {  // Go to it pressed before the data was in (r12 fix10 reference 1); a checklist note opens its checklist
         if (/^chk:/.test(S.reach) && D.checklist && !anchor) { S.sel = D.checklist.plan; S.scroll = true; history.replaceState(null, '', '#reference/' + encodeURIComponent(S.sel)); }

@@ -56,7 +56,7 @@ def test_counts_wait_for_the_read_on_its_way(tmp_path):
     load = grab("  let reading = null;", "\n  };")
     node(tmp_path, f"""
 const assert = require('assert');
-let D = {{v: 0}}, stale = true, ctx = null, n = 0; const S = {{}}, relist = () => {{}}, qerr = () => false, track = (a, p) => p, retry = () => {{}};
+let D = {{v: 0}}, stale = true, ctx = null, n = 0; const S = {{}}, relist = () => {{}}, qerr = () => false, track = (a, p) => p, retry = () => {{}}, pruneQ = () => {{}};
 const sim = d => d;
 const c = {{data: () => new Promise(r => setTimeout(() => r({{v: ++n}}), 20))}};
 {load}
