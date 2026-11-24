@@ -62,7 +62,8 @@ def test_reopen_is_its_own_send_row_with_remove_and_undo(tmp_path):
   await NK.set(c, r, 'close', api, async () => {});
   assert(r.closed && calls.at(-1)[0] === 'api/comments/n2/accept');  // a resolved note's Close is today's Resolve (r12 fix22)
   await NK.set(c, n, 'restore', api, async () => {});
-  assert(!n.closed && calls.at(-1)[0] === 'api/comments/n1/restore');
+  // a sent note's Re-open is today's restore, then stored open with his words (r12 audit43 reference 1)
+  assert(!n.closed && calls.at(-2)[0] === 'api/comments/n1/restore' && calls.at(-1)[0] === 'api/comments/n1' && calls.at(-1)[2] === 'PUT');
   NK.goRes(c, n); assert.deepStrictEqual(calls.at(-1), ['go', 'history', 'v2~s:p2']);
 })().catch(e => { console.error(e); process.exit(1); });
 """)

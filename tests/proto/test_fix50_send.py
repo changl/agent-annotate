@@ -11,7 +11,7 @@ def test_a_saved_draft_is_pruned_once_and_other_drafts_stay(tmp_path):
     node(tmp_path, f"""
 const assert = require('assert');
 const store = {{}}, c = {{prefs: {{get: (k, d) => k in store ? store[k] : d, set: (k, v) => {{ store[k] = v; }}}}, refreshTop: () => {{}}}};
-const NK = {{backs: {{all: (c, k) => c.prefs.get(k, null) || []}},
+const NK = {{backs: {{all: (c, k) => c.prefs.get(k, null) || []}}, feeds: [],
 {kit}
 }};
 const w = {{quote: 'held words', at: 0}}, saved = [{{anchor_id: 'p1', target: {{quote: 'held words', at: 0, offset: null}}, text: 'Second note continued'}}];

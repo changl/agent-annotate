@@ -758,8 +758,8 @@
         it.push(out('ap:' + k, 'Reference', `${c.esc(name('ap:' + k, x && x.t, id))} → <b>approved</b>`, id, () => S.appr.delete(k), () => S.appr.add(k))); }
       // the note being typed, as the mock lists it beside General feedback: Send saves it as its own write before the round goes, and
       // the editor closes only once saved; one changed since stays (r12 audit31 reference 1), as Pages & links' typed note (audit30 questions 3)
-      const tr = rnote();
-      if (tr) it.push({key: 'rnn:' + tr.a, tgt: tr.tgt || undefined, group: 'Notes', say: tr.text.trim(), html: `On “${c.esc(cutq((tr.tgt && tr.tgt.quote) || tr.l || 'Reference'))}”:${c.esc(tr.text.trim().length > 140 ? tr.text.trim().slice(0, 139) + '…' : tr.text.trim())}`,
+      const tr = rnote(), one = d => D ? NK().hit(allNotes(), d) : NK().hit(NK().qlisted(), d, undefined, true);  // a draft whose Save the store has is that saved note's row; before reference.json is in, only where Questions lists it (r12 audit43 questions 3)
+      if (tr && !one(tr)) it.push({key: 'rnn:' + tr.a, tgt: tr.tgt || undefined, group: 'Notes', say: tr.text.trim(), html: `On “${c.esc(cutq((tr.tgt && tr.tgt.quote) || tr.l || 'Reference'))}”:${c.esc(tr.text.trim().length > 140 ? tr.text.trim().slice(0, 139) + '…' : tr.text.trim())}`,
         put: () => putBack(tr), go: () => { goRef(tr.item || itemOf(tr.a), '', tr.a)(); S.note = tr.a; S.tgt = tr.tgt || null; redo(); },
         save: async () => { const r = await c.api('api/comments', {anchor_id: tr.a, anchor_label: tr.l, text: tr.text.trim(), target: tr.tgt || undefined, ...(tr.m || {})}, undefined, true);
           mine.push({id: r.id, a: tr.a, l: tr.l, text: r.text || tr.text.trim(), who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), v: r.version, target: r.target || tr.tgt || undefined});
@@ -771,7 +771,7 @@
           return r; },
         remove: SAVING ? null : () => { ctx.prefs.set('draft:rnote', null); if (S.note === tr.a) S.note = ''; redo(); return () => { ctx.prefs.set('draft:rnote', tr); S.note = tr.a; S.tgt = tr.tgt || null; redo(); }; }});
       // a draft kept at its own spot: Go to it opens its composer with its words; Send saves it before the round (r12 audit39 running 1)
-      for (const b of NK().backs.all(c, BK)) it.push({key: 'rnb:' + b.a + ' ' + JSON.stringify(b.tgt || null), spot: b.a, tgt: b.tgt || undefined, group: 'Notes', say: b.text.trim(),
+      for (const b of NK().backs.all(c, BK).filter(b => !one(b))) it.push({key: 'rnb:' + b.a + ' ' + JSON.stringify(b.tgt || null), spot: b.a, tgt: b.tgt || undefined, group: 'Notes', say: b.text.trim(),
         html: `On “${c.esc(cutq((b.tgt && b.tgt.quote) || b.l || 'Reference'))}”:${c.esc(b.text.trim().length > 140 ? b.text.trim().slice(0, 139) + '…' : b.text.trim())}`,
         put: () => putBack(b), go: () => { goRef(b.item || itemOf(b.a), '', b.a)(); S.note = b.a; S.tgt = b.tgt || null; redo(); },
         save: async () => { const r = await c.api('api/comments', {anchor_id: b.a, anchor_label: b.l, text: b.text.trim(), target: b.tgt || undefined, ...(b.m || {})}, undefined, true);

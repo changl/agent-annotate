@@ -478,6 +478,8 @@
   // a failed save's words: the kit's second-spot rule (the typed draft again, or with another spot typed or open, a draft at their own spot)
   // the kit's prune as the feed first lands: a typed note a reload cut off from its Save's answer is that saved note (r12 audit42 running 3)
   const prune = c => { const t = P.notes.prune(c, [...LD.notes || [], ...mine], 'draft:lnote', BK); if (t && S.note === t.a) { S.note = ''; S.tgt = null; } };
+  // a draft whose Save the store has is that saved note's row, never a second one (r12 audit43 frame 2)
+  const one = (c, d) => d && !P.notes.hit([...(LD ? LD.notes || [] : c.prefs.get('draft:lnotes', [])), ...mine], d) ? d : null;
   const putBack = (c, d) => P.notes.failed(c, BK, d, typed(c), S.note ? {a: S.note, tgt: S.tgt} : null, x => c.prefs.set('draft:lnote', x));
   const noteHtml = (c, d) => `On “${c.esc(cut((d.tgt && d.tgt.quote) || d.line || d.l || 'Pages & links', 50))}”:${c.esc(cut(d.text.trim(), 140))}`;
   const goTyped = async (c, d) => { openAt(await c.data('links'), d.a); S.note = d.a; S.tgt = d.tgt || null; S.hl = '';
@@ -508,10 +510,12 @@
   }
   // a saved note taken back, by Send's Remove or its own: hidden now, its DELETE goes when Undo is gone, so Undo keeps the very stored note (r12 fix15)
   function takeNote(c, n) {
-    const keep = c.take(n.id, 'api/comments/' + encodeURIComponent(n.id)), wm = mine, wd = LD && LD.notes, ws = c.prefs.get('draft:lnotes', []);
-    mine = mine.filter(x => x.id !== n.id); if (LD) LD.notes = LD.notes.filter(x => x.id !== n.id); c.prefs.set('draft:lnotes', ws.filter(x => x.id !== n.id)); redo();
+    // every feed held: the chip's read (LD) and the one on screen (ON.D) can be separate objects, so the card goes with the row (r12 audit43 running 2)
+    const fs = [...new Set([LD, ON && ON.D].filter(Boolean))], wf = fs.map(f => f.notes);
+    const keep = c.take(n.id, 'api/comments/' + encodeURIComponent(n.id)), wm = mine, ws = c.prefs.get('draft:lnotes', []);
+    mine = mine.filter(x => x.id !== n.id); fs.forEach(f => { f.notes = (f.notes || []).filter(x => x.id !== n.id); }); c.prefs.set('draft:lnotes', ws.filter(x => x.id !== n.id)); redo();
     return () => { keep(); mine = P.putBack(mine, wm, n.id);
-      if (LD) { LD.notes = P.putBack(LD.notes || [], wd || [], n.id); if (!LD.notes.some(x => x.id === n.id)) LD.notes.push(n); }  // a feed read while it was hidden lacks it
+      fs.forEach((f, i) => { f.notes = P.putBack(f.notes || [], wf[i] || [], n.id); if (f === LD && !f.notes.some(x => x.id === n.id)) f.notes.push(n); });  // a feed read while it was hidden lacks it
       const l = P.putBack(c.prefs.get('draft:lnotes', []), ws, n.id); if (!l.some(x => x.id === n.id)) l.push({id: n.id, a: n.a, l: n.l, text: n.text, target: n.target, line: n.line});
       c.prefs.set('draft:lnotes', l); redo(); };
   }
@@ -536,9 +540,9 @@
           () => { c.prefs.set('draft:lnote', null); if (S.note === d.a) S.note = ''; S.edit = r.id; S.edt = null; redo(); });
         return r; },
       remove: SAVING ? null : () => { c.prefs.set('draft:lnote', null); if (S.note === d.a) S.note = ''; redo();
-        return () => { c.prefs.set('draft:lnote', d); S.note = d.a; S.tgt = d.tgt || null; redo(); }; }}] : [])(typed(c)),
+        return () => { c.prefs.set('draft:lnote', d); S.note = d.a; S.tgt = d.tgt || null; redo(); }; }}] : [])(one(c, typed(c))),
     // a draft kept at its own spot: Go to it opens its composer with its words; Send saves it before the round (r12 audit39 running 1)
-    ...P.notes.backs.all(c, BK).map(d => ({key: 'lnb:' + d.a + ' ' + JSON.stringify(d.tgt || null), spot: d.a, group: 'Notes', tgt: d.tgt || undefined, say: d.text.trim(), html: noteHtml(c, d),
+    ...P.notes.backs.all(c, BK).filter(d => one(c, d)).map(d => ({key: 'lnb:' + d.a + ' ' + JSON.stringify(d.tgt || null), spot: d.a, group: 'Notes', tgt: d.tgt || undefined, say: d.text.trim(), html: noteHtml(c, d),
       go: () => goTyped(c, d), put: () => putBack(c, d),
       save: async () => { const r = await c.api('api/comments', {anchor_id: d.a, anchor_label: d.l, text: d.text.trim(), target: d.tgt || undefined}, undefined, true);
         mine.push({id: r.id, a: d.a, l: d.l, line: d.line, text: r.text || d.text.trim(), who: r.author_name || 'You', at: r.created_at || new Date().toISOString(), target: d.tgt || undefined});

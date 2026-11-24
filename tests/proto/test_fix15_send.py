@@ -76,7 +76,7 @@ def test_every_tab_undo_keeps_the_record():
         assert "ctx.take(" in src
     assert "const keep = c.take(n.id, 'api/comments/' + encodeURIComponent(n.id))" in LINKS
     assert "c.api('api/comments', {anchor_id: n.a, anchor_label: n.l, text: n.text, target: n.target})" not in LINKS
-    assert "if (!LD.notes.some(x => x.id === n.id)) LD.notes.push(n);" in LINKS  # a feed read while it was hidden gets it back
+    assert "if (f === LD && !f.notes.some(x => x.id === n.id)) f.notes.push(n);" in LINKS  # a feed read while it was hidden gets it back
     assert "await call('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text, version: v" not in Q
     assert "ctx.api('api/comments', {anchor_id: n.anchor, anchor_label: n.label, text: n.text})" not in HIST
     assert "ctx.prefs.set('draft:hcnotes', l); CN.push" in HIST

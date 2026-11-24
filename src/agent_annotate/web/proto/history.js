@@ -83,9 +83,9 @@
             () => { ctx.prefs.set('draft:hnote', null); if (S.cn === d.v) S.cn = ''; S.ce = r.id; redrawH(); });
           return r; },
         remove: SAVING ? null : () => { ctx.prefs.set('draft:hnote', null); if (S.cn === d.v) S.cn = ''; redrawH();
-          return () => { ctx.prefs.set('draft:hnote', d); S.cn = d.v; redrawH(); }; }}] : [])(typedC(ctx)),
+          return () => { ctx.prefs.set('draft:hnote', d); S.cn = d.v; redrawH(); }; }}] : [])(oneC(ctx, typedC(ctx))),
       // a draft kept at its own point: Go to it opens its composer with its words; Send saves it before the round (r12 audit40 running 1-2)
-      ...P.notes.backs.all(ctx, HB).map(b => ({key: 'hnb:' + b.a, spot: 'chart:' + b.a, group: 'Notes', say: b.text.trim(), html: `On “${ctx.esc(CLAB(b.a))}”: ${ctx.esc(cut(b.text.trim(), 140))}`,
+      ...P.notes.backs.all(ctx, HB).filter(b => oneC(ctx, b)).map(b => ({key: 'hnb:' + b.a, spot: 'chart:' + b.a, group: 'Notes', say: b.text.trim(), html: `On “${ctx.esc(CLAB(b.a))}”: ${ctx.esc(cut(b.text.trim(), 140))}`,
         go: () => { S.cn = b.a; S.q = ''; S.cspot = ''; if (onH()) { draw(HE.el, HE.ctx); focusC(HE.el); } else ctx.go('history'); },
         put: () => { putC(ctx, b); redrawH(); },
         save: async () => { const t = b.text.trim(), r = await ctx.api('api/comments', {anchor_id: 'chart:' + b.a, anchor_label: CLAB(b.a), text: t}, undefined, true);
@@ -266,6 +266,8 @@
   // the kit's prune as Questions' feed first lands: a typed note a reload cut off from its Save's answer is that saved note (r12 audit42 running 3)
   const pruneC = ctx => { const t = P.notes.prune(ctx, (QD && QD.notes) || null, 'draft:hnote', HB, d => 'chart:' + (d.a || d.v));
     if (t && S.cn === t.v) { S.cn = ''; redrawH(); } };
+  // a draft whose Save the store has is that saved note's row, never a second one (r12 audit43 frame 2)
+  const oneC = (ctx, d) => d && !P.notes.hit([...allC(), ...ctx.prefs.get('draft:hcnotes', [])], d, x => 'chart:' + (x.a || x.v)) ? d : null;
   const savedC = ctx => { if (!QR) QR = ctx.data('questions').then(q => { if (q && q !== QD) { QD = q; pruneC(ctx); ctx.refreshTop && ctx.refreshTop(); } }).catch(() => {}).finally(() => { QR = null; });
     const m = ctx.prefs.get('draft:hcnotes', []);
     if (!QD) return [...m, ...CN.filter(n => P.notes.out(n) && !m.some(x => x.id === n.id))];

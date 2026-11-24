@@ -155,7 +155,9 @@
     // resolved one; Archive on any other. Restore undoes either (r12 fix22)
     resolves: n => ['user_confirmed', 'resolved_in_version'].includes(stOf(n)) || (stOf(n) === 'open' && !!(n.replies || []).length && n.replies[n.replies.length - 1].agent),
     // the words after a sent note: edited, re-opened, resolved, addressed or sent
-    words: (c, n) => n.edited ? `<span class="saved">· edited · goes with Send</span>` : NK.isReo(c, n) ? `<span class="saved">· re-opened · goes with Send</span>`
+    // edited: the copy on screen, or the kit's record of his edit, which Send lists from whichever copy it reads (r12 audit43 frame 1)
+    // a re-opened one says so first, as Send lists it: its Re-open row (r12 audit43 reference 1)
+    words: (c, n) => NK.isReo(c, n) ? `<span class="saved">· re-opened · goes with Send</span>` : n.edited || (NK.loc()[n.id] || {}).text != null ? `<span class="saved">· edited · goes with Send</span>`
       : NK.resolved(n) ? `<span class="saved">· ${ic('tick')} ${stOf(n) === 'resolved_in_version' ? `resolved${n.rv ? ' in ' + esc(String(n.rv).replace(/^v/, 'version ')) : ''}` : 'addressed by the agent'}</span>` : '<span class="mut">· sent</span>',
     view: n => NK.resolved(n) && n.rv && n.ra ? `<button class="lk small" data-nres="${esc(n.id)}">${ic('eye')} View resolution in ${esc(String(n.rv).replace(/^v/, 'version '))}</button>` : '',
     // every note's actions on every tab, today's menu (shell.js cardMenuItems): Edit on his own (canEditComment), Remove while
@@ -200,9 +202,15 @@
         }
         NK.put(c, n.id, rec);
       } else {
-        try { await api(u + (how === 'close' ? (NK.resolves(n) ? '/accept' : '/archive') : '/restore'), {}); } catch (e) { c.toast('Not changed: ' + e.message); return null; }
+        // Re-open on a closed note the agent already has is his Re-open: stored open (today's PUT, an edit the round takes, so a
+        // reload keeps it) and listed once as the kit's Re-open row. Close's Undo (quiet) only puts back what it was (r12 audit43 reference 1)
+        const again = how === 'restore' && !quiet && !!n.sent;
+        try { await api(u + (how === 'close' ? (NK.resolves(n) ? '/accept' : '/archive') : '/restore'), {});
+          // his own words with it: a text PUT clears the store's sent flag, so a Re-open in the same whole second as the last Send still goes
+          if (again) await api(u, {status: 'open', ...(NK.own(n) && typeof n.text === 'string' ? {text: (NK.loc()[n.id] || {}).text ?? n.text} : {})}, 'PUT'); } catch (e) { c.toast('Not changed: ' + e.message); return null; }
         n.closed = how === 'close'; NK.setLife(n, {closed: n.closed});
         if (was) NK.put(c, n.id, null);  // Close ends a pending Re-open: nothing goes with Send; its Undo brings it back (r12 audit17 frame 1)
+        if (again) NK.put(c, n.id, {...NK.rec(n), st: 'open'});
       }
       await redraw(n.id);
       const back = {close: 'restore', restore: 'close', reopen: 'unreopen', unreopen: 'reopen'}[how],
@@ -248,7 +256,7 @@
     row: (n, no, on) => `${mk(no)}Re-opened · ${on}${n.text ? ': ' + esc(cut(n.text, 140)) : ''}`,
     // every note at one marker, with Go to it on each and + Comment for another (today's pin popover, catalog 25)
     spot: (c, ns, kind, add) => `<div class="qspot" role="dialog" aria-label="Notes at this marker"><div class="qspoth"><b class="small">${pl(ns.length, 'note', 'notes')} ${kind}</b><span class="spacer"></span><button class="btn sm pri" ${add}>${ic('plus')} Comment</button><button class="ib sm" data-spotx title="Close this list" aria-label="Close this list" data-esc>${ic('x')}</button></div>
-      <ul class="qhist">${ns.map(([n, no]) => `<li>${mk(no, n.sent || n.closed)} ${esc(cut(n.text, 160))} <span class="small mut">· ${n.closed ? 'closed' : NK.isReo(c, n) ? 're-opened · goes with Send' : NK.resolved(n) ? 'addressed' : n.sent ? 'sent' : 'goes with Send'}</span> <button class="lk small" data-spotgo="${esc(n.id)}">Go to it</button></li>`).join('')}</ul></div>`,
+      <ul class="qhist">${ns.map(([n, no]) => `<li>${mk(no, n.sent || n.closed)} ${esc(cut(n.text, 160))} <span class="small mut">· ${n.closed ? 'closed' : NK.isReo(c, n) ? 're-opened · goes with Send' : n.sent && (n.edited || (NK.loc()[n.id] || {}).text != null) ? 'edited · goes with Send' : NK.resolved(n) ? 'addressed' : n.sent ? 'sent' : 'goes with Send'}</span> <button class="lk small" data-spotgo="${esc(n.id)}">Go to it</button></li>`).join('')}</ul></div>`,
     // View resolution in another version: History opens it at the resolution, scrolled to and lit, as today's page does (r12 audit15 questions 3)
     // a resolution on a Reference or Pages & links line opens that line there, outlined (the tab's res hook)
     // the shared picture viewer closes first, so the outlined destination is in sight, as Reference's does (r12 audit19 running 3, reference 3)
@@ -346,10 +354,16 @@
     tk: t => JSON.stringify(t && (t.quote != null || t.offset) ? [t.quote, t.at == null ? null : t.at, t.offset ? [t.offset.dx, t.offset.dy] : null] : null),
     dup: (ns, a, tgt, text) => { const w = String(text || '').trim();
       return !!a && !!w && ns.some(n => (n.a || n.anchor || n.anchor_id) === a && NK.tk(n.target) === NK.tk(tgt) && String(n.text || '').trim() === w); },
+    // the moment the store has a draft's Save, the draft and the saved note are one row: Send never lists a draft whose saved
+    // note a feed already holds, warm (its Save's answer still out) or after a reload (r12 audit43 frame 2, questions 3)
+    // every feed held, not the reader's own alone (r12 audit43 frame 2); only: the given notes alone, for a reader whose own list is not in yet
+    hit: (ns, d, at = x => x.a, only) => !!d && NK.dup([...(ns || []), ...(only ? [] : NK.feeds.flatMap(f => f.notes))], at(d), d.tgt !== undefined ? d.tgt : d.target, d.text),
+    // the notes Questions lists in Send (set by the Questions reader)
+    qlisted: () => [],
     prune(c, ns, tk, bk, at = d => d.a) {
       if (NK.pruned.has(tk) || !ns) return null;
       NK.pruned.add(tk);
-      const hit = d => !!d && NK.dup(ns, at(d), d.tgt !== undefined ? d.tgt : d.target, d.text), t = c.prefs.get(tk, null), l = NK.backs.all(c, bk), m = l.filter(d => !hit(d));
+      const hit = d => NK.hit(ns, d, at), t = c.prefs.get(tk, null), l = NK.backs.all(c, bk), m = l.filter(d => !hit(d));
       if (hit(t)) c.prefs.set(tk, null);
       if (m.length < l.length) c.prefs.set(bk, m);
       if (hit(t) || m.length < l.length) c.refreshTop();
@@ -632,7 +646,8 @@
   // the new note still being typed says it goes with the next Send, so Send lists, counts and carries it (audit7 #03)
   // a saved note open in its editor reads as he left it: in the editor, in Send and after a reload (audit8 #01)
   const editText = n => { const e = S.note || ctx.prefs.get('q:newnote', null); return e && e.edit === n.id && e.text != null ? e.text : n.text; };
-  const typingNote = () => { const n = S.note || ctx.prefs.get('q:newnote', null); return n && !n.edit && (n.text || '').trim() ? n : null; };
+  // one whose Save the store has is that saved note, never a second row (r12 audit43 frame 2)
+  const typingNote = () => { const n = S.note || ctx.prefs.get('q:newnote', null); return n && !n.edit && (n.text || '').trim() && !NK.hit(D && D.notes, {a: n.anchor, tgt: n.target || null, text: n.text}) ? n : null; };
   // the kit's second-spot rule here: the composer (S.note) is the one typed slot; words it cannot hold are drafts at their own
   // spots (draft:qback), each a Send row, back in its composer when that spot opens (r12 audit40 running 3, questions)
   const QB = 'draft:qback', qSpot = n => ({...n, a: n.anchor, tgt: n.target || null}), qNote = ({a, tgt, ...n}) => n;
@@ -643,7 +658,7 @@
   // the kit's prune as the questions first land: a typed note a reload cut off from its Save's answer is that saved note (r12 audit42 running 3)
   const pruneQ = () => { const t = NK.prune(ctx, D.notes, 'q:newnote', QB, d => !d.edit && (d.a || d.anchor));
     if (t && S.note && !S.note.edit && S.note.anchor === t.anchor && S.note.text === t.text) S.note = null; };
-  if (P.queue) P.queue({items: c => NK.backs.all(c, QB).map(b => ({key: 'qnb:' + b.a + ' ' + JSON.stringify(b.tgt || null), spot: b.a, tgt: b.target, group: 'Notes', say: b.text.trim(),
+  if (P.queue) P.queue({items: c => NK.backs.all(c, QB).filter(b => !NK.hit(D && D.notes, b)).map(b => ({key: 'qnb:' + b.a + ' ' + JSON.stringify(b.tgt || null), spot: b.a, tgt: b.target, group: 'Notes', say: b.text.trim(),
     html: `On “${esc(cut((b.target && b.target.quote) || b.label || 'Questions', 50))}”: ${esc(cut(b.text.trim(), 140))}`,
     // Go to it: the composer he was typing in stays a draft at its own spot; shortcut: an open Edit of a saved note is replaced, as the 'nn:' row's Go to it does
     go: () => { const now = typingNote(); if (now && NK.other(qSpot(now), b.a, b.tgt)) NK.backs.put(c, QB, qSpot(now));
@@ -1946,6 +1961,7 @@
   // Close, Re-open and the closed note's Re-open: the shared lifecycle (P.notes.set), each with Undo (#138, catalog 64)
   const noteRedraw = async id => { S.spot = S.pin = null; notesNow(Q()); await draw(true); if (!host) litNote(id); };
   NK.hooks.questions = {go: r => sendGo('n:' + r.id), redo: () => draw(true)};
+  NK.qlisted = () => D ? myNotes([]) : [];
   function noteState(id, how, quiet) {
     const n = D.notes.find(x => x.id === id);
     return n ? NK.set(ctx, n, how, call, noteRedraw, quiet) : null;
