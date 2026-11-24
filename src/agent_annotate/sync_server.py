@@ -1884,18 +1884,20 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             except FileNotFoundError:
                 draft_stamp = None
             published = tuple(h.get("version") for h in meta.get("history") or [] if isinstance(h, dict))
-            try:  # view=page reads the body's question cards; a republish rewrites them in place
-                body_stamp = _version_file(self.artifact_dir, current_version).stat().st_mtime_ns
-            except (OSError, ValueError):
-                body_stamp = None
-            signature = (self._store_signature(), current_version, published, draft_stamp, body_stamp,
-                         _plan_stamps(self.artifact_dir))
+            signature = (self._store_signature(), current_version, published, draft_stamp)
+            projection = None
+            if view == "page":
+                try:  # The projected store includes question anchors from the current body.
+                    body_stamp = _version_file(self.artifact_dir, current_version).stat().st_mtime_ns
+                except (OSError, ValueError):
+                    body_stamp = None
+                projection = (body_stamp, _plan_stamps(self.artifact_dir))
             cache = type(self)._store_responses
             if cache.get("signature") != signature:
                 cache.clear()
                 cache["signature"] = signature
             key = (view if poll else None, compressed, self._agent_reader())
-            if key not in cache:
+            if key not in cache or cache[key][0] != projection:
                 from .review_versions import visible_store
                 store = visible_store(self.artifact_dir, self._v2_load(read_only=True), meta)
                 if self._agent_reader():
@@ -1915,8 +1917,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         store = _page_store(store, numbers, {"review": review, **_plan_docs(self.artifact_dir, store)})
                 body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
                 packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
-                cache[key] = (packed, compressed) if len(packed) < len(body) else (body, False)
-            representation = cache[key]
+                representation = (packed, compressed) if len(packed) < len(body) else (body, False)
+                cache[key] = (projection, representation)
+            representation = cache[key][1]
         self._respond(200, b"", "application/json", conditional=True, representation=representation)
 
     def _v2_get_meta(self):

@@ -220,6 +220,25 @@ def test_poll_projection_preserves_history_on_disk_and_reuses_encoded_bodies(ser
     assert request(httpd, "/comments.json?view=poll", headers={"If-None-Match": headers["ETag"]})[0] == 200
 
 
+def test_unchanged_full_polls_read_no_plan_files(server, monkeypatch):
+    httpd, _, _, _ = server
+    paths = []
+    stamp = sync_server._metadata_stamp
+
+    def count(path):
+        paths.append(path)
+        return stamp(path)
+
+    # Both complete store representations are independent of plan-file metadata.
+    urls = ("/comments.json", "/comments.json?view=poll")
+    validators = {url: request(httpd, url)[1]["ETag"] for url in urls}
+    request(httpd, "/comments.json?view=page")
+    monkeypatch.setattr(sync_server, "_metadata_stamp", count)
+    for url in urls:
+        assert request(httpd, url, headers={"If-None-Match": validators[url]})[0] == 304
+    assert paths == []
+
+
 def test_failed_write_cannot_poison_cached_snapshot(server, monkeypatch):
     httpd, root, _, _ = server
     path = root / "comments.json"

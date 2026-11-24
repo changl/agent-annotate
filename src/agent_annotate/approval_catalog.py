@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sys
 import threading
@@ -43,20 +44,9 @@ def _retained_size(value, seen=None):
     return size
 
 
-def _image_hash(path, *, fresh=False):
-    stat = path.stat()
-    if stat.st_size > 10 * 1024 * 1024:
+def _image_hash(path):
+    if path.stat().st_size > 10 * 1024 * 1024:
         raise ValueError("oversized image")
-    if fresh:
-        # Mapped writes can change bytes without changing any stat field.
-        # Vote-time integrity must not rely on a metadata cache hit.
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    return _cached_image_hash(path, (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
-
-
-@lru_cache(maxsize=512)
-def _cached_image_hash(path, signature):
-    # Cache digests only for rendering; votes always verify the current bytes.
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -144,14 +134,16 @@ def _pin_images(page_dir, html, base, dependencies=None):
                         raise ValueError("image outside page")
                     relative = relative[len(prefix):]
                 relative = relative.removeprefix("./")
-                if dependencies is not None and relative not in dependencies:
-                    # Record the input before hashing, including paths a later request could restore.
-                    dependencies[relative] = _image_file_key(page_dir, relative)
-                path = safe_path(page_dir, relative)
-                if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif"}:
-                    raise ValueError("unsupported image")
-                digest = _image_hash(path)
-                name = "attachments/approval-" + digest + path.suffix.lower()
+                if dependencies is None:
+                    image = _image_stamp(page_dir, relative)
+                else:
+                    if relative not in dependencies:
+                        dependencies[relative] = _image_stamp(page_dir, relative)
+                    image = dependencies[relative]
+                if image is None:
+                    raise ValueError("image unavailable")
+                digest, suffix = image
+                name = "attachments/approval-" + digest + suffix
                 assets[name] = digest
                 paths = sources.setdefault(name, [])
                 if relative not in paths:
@@ -240,13 +232,43 @@ _SEALS = OrderedDict()  # uzd: one live view per unchanged sealing input; a relo
 _SEALED_FIELDS = ("id", "anchor_id", "doc", "number", "origin_id", "origin_item_id", "decision_request", "text")
 
 
-def _image_file_key(page_dir, relative):
-    from .sync_server import _file_key
-
+def _image_stamp(page_dir, relative):
+    # A mapped edit can change the displayed bytes without changing any stat field.
     try:
-        return _file_key(safe_path(page_dir, relative))
+        path = safe_path(page_dir, relative)
+        suffix = path.suffix.lower()
+        if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif"}:
+            return _image_hash(path), suffix
     except (OSError, ValueError):
-        return None
+        pass
+    return None
+
+
+def _seal_predecessors(page_dir, store, cards):
+    managed = store.get("approved_plans", {})
+    plan_dirs = None
+    by_card, by_item = {}, {}
+    for comment in cards:
+        try:
+            cid, identifier = comment["id"], item_id(comment)
+            if identifier not in by_item:
+                if plan := managed.get(identifier):
+                    by_item[identifier] = plan.get("current")
+                else:
+                    # A single directory read replaces per-card checks of missing plans.
+                    if plan_dirs is None:
+                        try:
+                            plan_dirs = set(os.listdir(safe_path(page_dir, "plans")))
+                        except (FileNotFoundError, NotADirectoryError):
+                            plan_dirs = set()
+                    if identifier in plan_dirs and safe_path(page_dir, f"plans/{identifier}/meta.json").exists():
+                        by_item[identifier] = _current(page_dir, store, identifier)
+                    else:
+                        by_item[identifier] = None
+            by_card[cid] = by_item[identifier]
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+    return by_card
 
 
 def seal_review(page_dir, html, version, store, base=""):
@@ -256,25 +278,21 @@ def seal_review(page_dir, html, version, store, base=""):
              and comment.get("doc", "review") == "review" and not comment.get("withdrawn")]
     if not cards:
         return html, {}
-    predecessors = {}
-    for comment in cards:
-        try:
-            predecessors[comment["id"]] = _current(page_dir, store, item_id(comment))
-        except (OSError, ValueError, TypeError, KeyError):
-            continue
+    predecessors = _seal_predecessors(page_dir, store, cards)
     seal_key = (str(page_dir), version, base, hashlib.sha256(html.encode()).hexdigest(),
                 _digest([[c.get(k) for k in _SEALED_FIELDS] for c in cards]),
                 _digest(predecessors))
+    dependencies = {}
     with _VIEW_LOCK:
         hit = _SEALS.get(seal_key)
-        if hit and (str(page_dir), hit[0]) in _VIEWS and all(
-            _image_file_key(page_dir, relative) == stamp for relative, stamp in hit[2].items()
-        ):
-            _VIEWS.move_to_end((str(page_dir), hit[0]))
-            _SEALS.move_to_end(seal_key)
-            return html, hit[1]
+        if hit and (str(page_dir), hit[0]) in _VIEWS:
+            dependencies = {relative: _image_stamp(page_dir, relative) for relative in hit[2]}
+            if dependencies == hit[2]:
+                _VIEWS.move_to_end((str(page_dir), hit[0]))
+                _SEALS.move_to_end(seal_key)
+                return html, hit[1]
     document_parts = _document_parts(html)
-    tokens, snapshots, dependencies = {}, {}, {}
+    tokens, snapshots = {}, {}
     view = uuid.uuid4().hex
     for comment in cards:
         try:
@@ -334,11 +352,11 @@ def persist_evidence(page_dir, comment, evidence):
             pattern = r'((?:\bsrc|\bhref|\bxlink:href)\s*=\s*)([\"\'])' + re.escape(ref) + r'\2'
             try:
                 source = safe_path(page_dir, relative)
-                if _image_hash(source, fresh=True) != digest:
+                if _image_hash(source) != digest:
                     raise ValueError("image changed since view")
                 if not pinned:
                     target = safe_path(page_dir, name)
-                    if not target.exists() or _image_hash(target, fresh=True) != digest:
+                    if not target.exists() or _image_hash(target) != digest:
                         body = source.read_bytes()
                         if hashlib.sha256(body).hexdigest() != digest:
                             raise ValueError("image changed while freezing")

@@ -68,6 +68,27 @@ def test_seal_invalidates_when_missing_image_is_restored(tmp_path, image_seal):
     assert not approve(refreshed)["incomplete"]
 
 
+def test_new_seal_captures_same_stat_mapped_image_edit(tmp_path, image_seal, monkeypatch):
+    from agent_annotate import sync_server
+
+    seal, approve = image_seal
+    path = tmp_path / "a.png"
+    path.write_bytes(b"original")
+    (tmp_path / "b.png").write_bytes(b"second image")
+    file_key = sync_server._file_key
+    original_key = file_key(path)
+    monkeypatch.setattr(sync_server, "_file_key", lambda p: original_key if p == path else file_key(p))
+    with path.open("r+b") as source, mmap.mmap(source.fileno(), 0) as mapped:
+        mapped[:] = b"original"
+        displayed = seal()
+        mapped[:] = b"updated!"
+        refreshed = seal()
+    assert refreshed != displayed
+    bundle = approve(refreshed)
+    assert {(tmp_path / name).read_bytes() for name in bundle["assets"]} == {b"updated!", b"second image"}
+    assert not bundle["incomplete"]
+
+
 def test_seal_does_not_cache_a_digest_with_a_newer_file_stat(tmp_path, image_seal, monkeypatch):
     from agent_annotate import approval_catalog
 
@@ -122,6 +143,44 @@ def vote(httpd, comment, evidence, verdict="accept", **extra):
 
 def plans(httpd):
     return _call(httpd, "GET", "/api/categories")[1]["plans"]
+
+
+def test_warm_seals_skip_managed_and_absent_predecessor_lookups(tmp_path, monkeypatch):
+    from agent_annotate import approval_catalog
+    from agent_annotate.categories import publish_plan_revision
+
+    (tmp_path / "plans/empty").mkdir(parents=True)
+    publish_plan_revision(tmp_path, "unrelated", "<h1>Not cited</h1>")
+    ids = ["managed", "absent", "empty"]
+    cards = [{"id": identifier, "anchor_id": "design", "version": "v1",
+              "decision_request": {"prompt": "Approve?", "item_id": identifier}}
+             for identifier in ids]
+    store = {"anchors": {"design": cards}, "approved_plans": {"managed": {"current": "v5"}}}
+    html = '<section id="design">Design</section>'
+    _, first = approval_catalog.seal_review(tmp_path, html, "v1", store)
+    assert {key: first[key]["predecessor"] for key in ids} == {"managed": "v5", "absent": None, "empty": None}
+
+    lookups, reads = [], []
+    current, read_json = approval_catalog._current, approval_catalog._json
+
+    def count_lookup(page_dir, values, identifier):
+        lookups.append(identifier)
+        return current(page_dir, values, identifier)
+
+    def count_read(path, default):
+        reads.append(path)
+        return read_json(path, default)
+
+    monkeypatch.setattr(approval_catalog, "_current", count_lookup)
+    monkeypatch.setattr(approval_catalog, "_json", count_read)
+    for _ in range(12):
+        assert approval_catalog.seal_review(tmp_path, html, "v1", store)[1] == first
+    assert lookups == reads == []
+
+    publish_plan_revision(tmp_path, "empty", "<h1>Now cited</h1>")
+    assert approval_catalog.seal_review(tmp_path, html, "v1", store)[1]["empty"]["predecessor"] == "v1"
+    assert lookups == ["empty"]
+    assert reads == [tmp_path / "plans/empty/meta.json"]
 
 
 def test_seal_revalidates_plan_predecessor_with_preserved_mtime(server):

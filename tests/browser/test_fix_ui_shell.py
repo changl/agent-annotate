@@ -366,6 +366,45 @@ def test_first_review_open_refreshes_store_when_meta_shows_a_new_publish(tmp_pat
         assert len(reads) >= 2
 
 
+def test_first_review_open_uses_the_version_from_the_retried_store(tmp_path, versions):
+    source = tmp_path / "v3.md"
+    source.write_text("---\ntitle: Third review\nversion: v3\nfull_plan: true\nother_files_required: none\n---\n\n## Checks\n\nThird document.\n")
+    previous_meta = json.loads((versions / "current.meta.json").read_text())
+    generate(source, versions)
+    complete(versions)
+    path = versions / "comments.json"
+    snapshot = json.loads(path.read_text())
+    snapshot["anchors"]["d:q31"] = [{
+        "id": "v3-only", "number": 31, "anchor_id": "d:q31", "version": "v3", "text": "V3-only question?",
+        "author": "agent:review-test", "status": "open", "replies": [],
+        "decision_request": {"prompt": "V3-only question?", "options": ["accept", "reject"]},
+    }]
+    path.write_text(json.dumps(snapshot))
+    reads = []
+
+    def meta(route):
+        route.fulfill(json=previous_meta)
+
+    def store(route):
+        reads.append(route.request.url)
+        if len(reads) == 1:
+            older = route.fetch().json()
+            older["current_version"] = "v1"
+            older["anchors"].pop("d:q31", None)
+            route.fulfill(json=older)
+        else:
+            route.continue_()
+
+    routes = [("**/current.meta.json", meta), ("**/comments.json?view=page", store)]
+    with opened(tmp_path, versions, routes=routes) as (page, _, _):
+        assert frame_version(page) == "v3"
+        assert len(reads) >= 2
+        urls = page.evaluate("performance.getEntriesByType('resource').map(e => e.name)")
+        assert not any("view=poll" in url for url in urls)
+        page.evaluate("() => window.AA.rail.reveal()")
+        expect(page.locator('#comment-list .citem[data-comment-id="v3-only"]')).to_be_visible()
+
+
 # ── UI-28: the version hint, and pages with one tab ────────────────────────
 def test_version_hint_shows_only_for_the_document_on_screen(tmp_path, workspace):  # noqa: F811
     with opened(tmp_path, workspace) as (page, _, _b):

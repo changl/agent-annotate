@@ -519,7 +519,7 @@ function omitted() {
 // What the reviewer is looking at needs comments view=page left out.
 function needsFullStore() {
   if (!STORE.partial) return false;
-  if ((DOC === 'review' || DOC === 'plans') && CURRENT_VERSION && CURRENT_VERSION !== latestVersion()) return true;
+  if ((DOC === 'review' || DOC === 'plans') && CURRENT_VERSION && CURRENT_VERSION !== projectedVersion()) return true;
   const known = new Set(flattenStore(true).map(c => c.id));
   // Text typed on a card stays with it, however old the card is.
   const cardOf = k => /^(say|edit):/.test(k) ? k.slice(k.indexOf(':') + 1) : k.startsWith('note:') ? k.slice(5).split('|')[0]
@@ -615,8 +615,6 @@ async function loadMeta() {
       got = await pollJson(url);
       if (got.ok && got.data.current !== STORE.current_version) {
         await loadStore();
-        // If another publish raced the retry, the full store includes both revisions.
-        if (got.data.current !== STORE.current_version && await wantFullStore()) applyLive();
       }
     }
     if (!got.ok) return false;
@@ -5044,11 +5042,14 @@ function withDocAsync(doc, fn) {
 function latestVersion() {
   return META.current || (META.history && META.history.length ? META.history[META.history.length - 1].version : null);
 }
+function projectedVersion() {
+  return (DOC === 'review' && STORE.current_version) || latestVersion();
+}
 async function loadDocState(doc) {
   return withDocAsync(doc, async () => {
     await loadMeta();
     const want = window.AA ? window.AA.versionFor(doc) : null;
-    if (!CURRENT_VERSION) CURRENT_VERSION = (want && (META.history || []).some(h => h.version === want)) ? want : latestVersion();
+    if (!CURRENT_VERSION) CURRENT_VERSION = (want && (META.history || []).some(h => h.version === want)) ? want : projectedVersion();
     await loadSeen();
   });
 }
@@ -5079,7 +5080,7 @@ async function activateDoc(doc, version) {
   VIEW_DRAFTS = DRAFTS;
   if (!CURRENT_VERSION) {
     await loadMeta();
-    CURRENT_VERSION = latestVersion();
+    CURRENT_VERSION = projectedVersion();
   }
   if (version && version !== CURRENT_VERSION && (META.history || []).some(h => h.version === version)) CURRENT_VERSION = version;
   const frame = document.getElementById('content-frame');
