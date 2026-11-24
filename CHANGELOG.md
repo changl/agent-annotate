@@ -1,8 +1,9 @@
 # agent-annotate — changelog
 
-## Unreleased
+## 2.32.11
 
 - Slow responses to unchanged or rejected Answer later, decision, and Send requests no longer hold the page-store lock.
+- `api/history?latest=1`, which every page open calls, builds only the last Send instead of the whole History. It was the slowest request on the 2026-11-24 all-page check (FLD 4.3 s cold). On a copy of the FLD page under heavy load: cold 15.6 s → 2.7 s, server CPU 976 ms → 107 ms, same response bytes. Its cache follows the store backend and source files, so archiving a SQLite page's bus or a read-state write during the read no longer matters.
 
 ## 2.32.10
 
