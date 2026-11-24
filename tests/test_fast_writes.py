@@ -136,6 +136,63 @@ def test_categories_loads_the_comment_store_once_even_with_many_plans(server, mo
     assert len(loads) == 1
 
 
+def test_categories_revalidate_plan_and_topic_replacements_with_preserved_mtimes(server):
+    httpd, root, _, _ = server
+    meta = root / "plans/test/meta.json"
+    topics = root / "plan-topics.json"
+    topics.write_text('{"topics":[{"name":"Before","words":["test"]}]}')
+    old_meta, old_topics = meta.stat(), topics.stat()
+    _, first, body = request(httpd, "/api/categories")
+    assert json.loads(body)["plans"][0]["current"] == "v1"
+    assert json.loads(body)["plan_topics"] == ["Before"]
+
+    publish_plan_revision(root, "test", "<h1>Next plan</h1>")
+    os.utime(meta, ns=(old_meta.st_atime_ns, old_meta.st_mtime_ns))
+    status, second, body = request(httpd, "/api/categories", headers={"If-None-Match": first["ETag"]})
+    assert status == 200 and json.loads(body)["plans"][0]["current"] == "v2"
+
+    replacement = root / "topics.tmp"
+    replacement.write_text(topics.read_text().replace("Before", "Modern"))
+    os.utime(replacement, ns=(old_topics.st_atime_ns, old_topics.st_mtime_ns))
+    replacement.replace(topics)
+    status, _, body = request(httpd, "/api/categories", headers={"If-None-Match": second["ETag"]})
+    assert status == 200 and json.loads(body)["plan_topics"] == ["Modern"]
+
+
+@pytest.mark.parametrize("target", ["plan", "topics"])
+def test_categories_revalidate_same_stat_mapped_edits(server, monkeypatch, target):
+    httpd, root, _, _ = server
+    if target == "plan":
+        path = root / "plans/test/meta.json"
+        before, after = b'"title": "Test"', b'"title": "Next"'
+    else:
+        path = root / "plan-topics.json"
+        path.write_bytes(b'{"topics":[{"name":"Before","words":["test"]}]}')
+        before, after = b'"Before"', b'"Modern"'
+    key = sync_server._file_key
+    original_key = key(path)
+    monkeypatch.setattr(sync_server, "_file_key", lambda candidate: original_key if candidate == path else key(candidate))
+    _, headers, _ = request(httpd, "/api/categories")
+    with path.open("r+b") as source, mmap.mmap(source.fileno(), 0) as mapped:
+        assert before in mapped[:]
+        mapped[:] = mapped[:].replace(before, after)
+        status, _, body = request(httpd, "/api/categories", headers={"If-None-Match": headers["ETag"]})
+    assert status == 200
+    result = json.loads(body)
+    if target == "plan":
+        assert result["plans"][0]["title"] == "Next"
+    else:
+        assert result["plan_topics"] == ["Modern"]
+
+
+def test_reopening_the_same_version_appends_no_seen_event(server):
+    httpd, root, _, _ = server
+    for _ in range(3):
+        assert request(httpd, "/api/seen", "POST", {"version": "v1"})[0] == 200
+    events = [json.loads(line)["event"] for line in (root / "project/page.ndjson").read_text().splitlines()]
+    assert events.count("seen_updated") == 1
+
+
 def test_poll_projection_preserves_history_on_disk_and_reuses_encoded_bodies(server, monkeypatch):
     httpd, root, _, _ = server
     path = root / "comments.json"
@@ -161,6 +218,31 @@ def test_poll_projection_preserves_history_on_disk_and_reuses_encoded_bodies(ser
     assert request(httpd, "/api/comments/card", "PUT", {"text": "Edited"})[0] == 200
     assert json.loads(path.read_text())["anchors"]["s:test"][0]["carry_history"]
     assert request(httpd, "/comments.json?view=poll", headers={"If-None-Match": headers["ETag"]})[0] == 200
+
+
+def test_unchanged_full_polls_read_no_plan_files(server, monkeypatch):
+    httpd, _, _, _ = server
+    paths = []
+    stamp = sync_server._metadata_stamp
+
+    def count(path):
+        paths.append(path)
+        return stamp(path)
+
+    # Both complete store representations are independent of plan-file metadata.
+    urls = ("/comments.json", "/comments.json?view=poll")
+    validators = {url: request(httpd, url)[1]["ETag"] for url in urls}
+    mark = json.loads(request(httpd, "/comments.json?view=page")[2])["store_mark"]
+    marked = {"X-Annotate-Store-Mark": mark}
+    monkeypatch.setattr(sync_server, "_metadata_stamp", count)
+    status, headers, body = request(httpd, urls[1], headers=marked)
+    assert status == 200 and not json.loads(body).get("snapshot_expired")
+    expired = request(httpd, urls[1], headers={"X-Annotate-Store-Mark": "unknown"})
+    assert json.loads(expired[2])["snapshot_expired"]
+    assert request(httpd, urls[1], headers={**marked, "If-None-Match": headers["ETag"]})[0] == 304
+    for url in urls:
+        assert request(httpd, url, headers={"If-None-Match": validators[url]})[0] == 304
+    assert paths == []
 
 
 def test_failed_write_cannot_poison_cached_snapshot(server, monkeypatch):

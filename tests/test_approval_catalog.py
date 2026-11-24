@@ -77,8 +77,6 @@ def test_images_are_pinned_in_review_and_plan_before_original_changes(tmp_path):
 def test_votes_rehash_images_and_detect_edits_and_tampering(tmp_path, monkeypatch):
     from pathlib import Path
 
-    from agent_annotate.approval_catalog import _cached_image_hash
-    _cached_image_hash.cache_clear()
     original = tmp_path / "screen.png"
     original.write_bytes(b"first-image")
     comment = card()

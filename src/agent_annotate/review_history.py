@@ -86,21 +86,23 @@ def _bus_rounds(path, cache):
     return [*rounds, *parse(tail[boundary:])]
 
 
-def review_history(directory: Path, bus: Path | None = None, archive: Path | None = None,
-                   *, meta_bytes: bytes | None = None, store_bytes: bytes | None = None,
-                   bus_cache: dict | None = None) -> dict:
-    from .categories import comment_category
+def _versions(directory, meta_bytes, *, check_availability):
     meta = json.loads(meta_bytes if meta_bytes is not None else (directory / "current.meta.json").read_bytes())
-    store = json.loads(store_bytes) if store_bytes is not None else (
-        json.loads((directory / "comments.json").read_bytes()) if (directory / "comments.json").exists() else {})
     versions = []
     for item in meta.get("history", []):
         version = item.get("version", "")
         if not isinstance(version, str) or not re.fullmatch(r"v[0-9]{1,10}", version):
             continue
-        available = _available(directory, version)
-        versions.append({**item, "current": version == meta.get("current"), "available": available})
+        if check_availability:
+            item = {**item, "current": version == meta.get("current"), "available": _available(directory, version)}
+        versions.append(item)
     versions.sort(key=lambda item: _time(item.get("ts")), reverse=True)
+    return versions
+
+
+def _records(directory, store_bytes):
+    store = json.loads(store_bytes) if store_bytes is not None else (
+        json.loads((directory / "comments.json").read_bytes()) if (directory / "comments.json").exists() else {})
     records = {}
     for bucket in ("anchors", "archived"):
         groups = store.get(bucket) or {}
@@ -108,6 +110,12 @@ def review_history(directory: Path, bus: Path | None = None, archive: Path | Non
             for comment in items:
                 if isinstance(comment, dict) and comment.get("id"):
                     records[comment["id"]] = comment
+    return records
+
+
+def _add_version_answers(versions, records):
+    from .categories import comment_category
+
     # Index each source's publication intervals once. Previously every version
     # rescanned every decision and reparsed its timestamp while holding up writes.
     intervals = {}
@@ -135,13 +143,17 @@ def review_history(directory: Path, bus: Path | None = None, archive: Path | Non
                         "number": target.get("source_number", comment.get("number")),
                         "prompt": "", "verdict": decision["verdict"], "text": decision.get("text", ""),
                         "by": decision.get("by"), "ts": decision.get("ts")})
-    rounds = {event["id"]: event for event in _events(directory / "rounds.ndjson") if event.get("id")}
+
+
+def _submitted_rounds(directory, bus, archive, bus_cache):
+    from .store import backend, events_after
+
+    rounds = {event["id"]: (event, True) for event in _events(directory / "rounds.ndjson") if event.get("id")}
     buses = history_buses(bus, archive)
     if bus_cache is not None:
         for path in list(bus_cache):
             if path not in buses:
                 del bus_cache[path]
-    from .store import backend, events_after
     indexed = bus is not None and backend(directory) == "sqlite"
     for path in buses:
         if indexed and path == bus:
@@ -152,36 +164,70 @@ def review_history(directory: Path, bus: Path | None = None, archive: Path | Non
             if event.get("event") != "round_submitted":
                 continue
             identifier = event.get("round_id") or str(event.get("ts")) + ":" + str(event.get("by"))
-            if identifier in rounds:
+            rounds.setdefault(identifier, (event, False))
+    return sorted(rounds.items(), key=lambda item: _time(item[1][0].get("ts")), reverse=True)
+
+
+def _restore_legacy_round(identifier, event, versions, records):
+    from .categories import comment_category
+
+    version = event.get("version")
+    if not version:
+        version = next((item["version"] for item in versions
+                        if _time(item.get("ts")) and _time(item.get("ts")) <= _time(event.get("ts"))), None)
+    answers = event.get("answers")
+    if not isinstance(answers, list):
+        answers = []
+        for cid in event.get("comment_ids", []):
+            comment = records.get(cid, {})
+            decisions = list(comment.get("decision_history") or []) + [comment.get("decision") or {}]
+            choices = [d for d in decisions if d.get("verdict") and not d.get("round_pending")
+                       and not d.get("discarded") and _time(d.get("ts")) <= _time(event.get("ts"))]
+            if choices:
+                decision = max(choices, key=lambda d: _time(d.get("ts")))
+                answers.append({"comment_id": cid, "number": comment.get("number"),
+                                "category": comment_category(comment),
+                                "verdict": decision["verdict"], "text": decision.get("text", ""),
+                                "prompt": "", "by": decision.get("by")})
+    return {"id": identifier, "ts": event.get("ts"), "by": event.get("by"),
+            "note": event.get("note"), "version": version, "answers": answers,
+            "edits": event.get("edits", []), "snapshot": isinstance(event.get("answers"), list)}
+
+
+def review_history(directory: Path, bus: Path | None = None, archive: Path | None = None,
+                   *, meta_bytes: bytes | None = None, store_bytes: bytes | None = None,
+                   bus_cache: dict | None = None, latest: bool = False) -> dict:
+    versions = records = None
+    if not latest:
+        versions = _versions(directory, meta_bytes, check_availability=True)
+        records = _records(directory, store_bytes)
+        _add_version_answers(versions, records)
+    rounds = []
+    for identifier, (event, local) in _submitted_rounds(directory, bus, archive, bus_cache):
+        if not local:
+            # Only saved snapshots can carry the send_id that pairs two records.
+            if latest and rounds:
                 continue
-            version = event.get("version")
-            if not version:
-                version = next((item["version"] for item in versions
-                                if _time(item.get("ts")) and _time(item.get("ts")) <= _time(event.get("ts"))), None)
-            answers = event.get("answers")
-            if not isinstance(answers, list):
-                answers = []
-                for cid in event.get("comment_ids", []):
-                    comment = records.get(cid, {})
-                    decisions = list(comment.get("decision_history") or []) + [comment.get("decision") or {}]
-                    choices = [d for d in decisions if d.get("verdict") and not d.get("round_pending")
-                               and not d.get("discarded") and _time(d.get("ts")) <= _time(event.get("ts"))]
-                    if choices:
-                        decision = max(choices, key=lambda d: _time(d.get("ts")))
-                        answers.append({"comment_id": cid, "number": comment.get("number"),
-                                        "category": comment_category(comment),
-                                        "verdict": decision["verdict"], "text": decision.get("text", ""),
-                                        "prompt": "", "by": decision.get("by")})
-            rounds[identifier] = {"id": identifier, "ts": event.get("ts"), "by": event.get("by"),
-                                  "note": event.get("note"), "version": version, "answers": answers,
-                                  "edits": event.get("edits", []),
-                                  "snapshot": isinstance(event.get("answers"), list)}
-    return {"versions": versions, "rounds": sorted(rounds.values(), key=lambda r: _time(r.get("ts")), reverse=True)}
+            if versions is None and not event.get("version"):
+                versions = _versions(directory, meta_bytes, check_availability=False)
+            if records is None and not isinstance(event.get("answers"), list) and event.get("comment_ids"):
+                records = _records(directory, store_bytes)
+            event = _restore_legacy_round(identifier, event, versions or [], records or {})
+        if latest and not _round_has_content(event):
+            continue
+        rounds.append(event)
+        if latest and not rounds[0].get("send_id"):
+            break
+    return latest_round({"rounds": rounds}) if latest else {"versions": versions, "rounds": rounds}
+
+
+def _round_has_content(round_):
+    return round_.get("receipt") or round_.get("answers") or round_.get("edits") or round_.get("note")
 
 
 def latest_round(history: dict) -> dict:
     """The newest Send only (its round and push records share a send_id): all the header and Send read on load."""
-    rounds = [r for r in history["rounds"] if r.get("receipt") or r.get("answers") or r.get("edits") or r.get("note")]
+    rounds = [r for r in history["rounds"] if _round_has_content(r)]
     if not rounds:
         return {"rounds": []}
     send_id = rounds[0].get("send_id")

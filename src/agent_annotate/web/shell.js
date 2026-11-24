@@ -369,11 +369,16 @@ let pollChanged = false;
 // Posts not answered yet, each with how to put it on a fresh store (see
 // "Optimistic posts").
 const pendingEdits = new Map();
+// uzd: reads the first screen needs, started together at load; the first read of each URL takes its answer.
+const early = {};
+function prefetch(url, read = () => pollJson(url)) { early[url] = read(); early[url].catch(() => {}); }
+function takeEarly(url) { const p = early[url]; delete early[url]; return p; }
 async function pollJson(url, quiet, headers = {}) {
   const asked = ++pollAsked;
   const last = pollLast[url];
   if (last?.etag) headers['If-None-Match'] = last.etag;
-  const r = await fetch(apiUrl(url), { cache: 'no-store', headers, signal: AbortSignal.timeout(10000) });
+  // uzd: a page's first read revalidates the browser's copy (a 304 when the meta or categories are unchanged).
+  const r = await fetch(apiUrl(url), { cache: last ? 'no-store' : 'no-cache', headers, signal: AbortSignal.timeout(10000) });
   // Read the empty 304 body: an unread one ends as an aborted request.
   if (!r.ok && (r.status !== 304 || !last?.etag)) return { ok: false, status: r.status };
   const text = await r.text();
@@ -494,11 +499,14 @@ function heldFromPageRead() {
   return new Set(LIVE.changed_after);
 }
 function adoptFull(held) {
+  const snapshotVersion = STORE.current_version;
+  const snapshotNumber = Number(snapshotVersion?.slice(1));
   const where = new Map();
   for (const area of ['anchors', 'archived']) {
     for (const [aid, items] of Object.entries(STORE[area] || {})) for (const c of items) where.set(c.id, { area, aid, c });
   }
   const out = Object.assign({}, LIVE, { anchors: {}, archived: {} });
+  if (snapshotVersion) out.current_version = snapshotVersion;
   const targeted = new Set(DOCS.flatMap(doc => withDoc(doc, draftCardIds)));
   targeted.add(cardLinkId());
   const placed = new Set();
@@ -515,7 +523,12 @@ function adoptFull(held) {
         if (shown) {
           if (shown.area !== area || shown.aid !== aid) continue;
           placed.add(c.id);
-        } else if (!held || held.has(c.id)) continue;
+        } else {
+          // A full read can finish after a publish. Its new Review cards wait for Refresh.
+          const laterReview = docOf(c) === 'review' && typeof c.version === 'string'
+            && Number(c.version.slice(1)) > snapshotNumber;
+          if (laterReview || !held || held.has(c.id)) continue;
+        }
         list.push(shown ? shown.c : c);
       }
       if (list.length) out[area][aid] = list;
@@ -542,7 +555,7 @@ function draftCardIds() {
 // What the reviewer is looking at needs comments view=page left out.
 function needsFullStore() {
   if (!STORE.partial) return false;
-  if ((DOC === 'review' || DOC === 'plans') && CURRENT_VERSION && CURRENT_VERSION !== latestVersion()) return true;
+  if ((DOC === 'review' || DOC === 'plans') && CURRENT_VERSION && CURRENT_VERSION !== projectedVersion()) return true;
   const known = new Set(flattenStore(true).map(c => c.id));
   return draftCardIds().some(id => !known.has(id));
 }
@@ -633,11 +646,29 @@ async function loadMeta() {
   const doc = DOC;
   try {
     const url = doc === 'plans' ? './api/plans/' + encodeURIComponent(PLAN_ID) : './current.meta.json';
-    const got = await pollJson(url);
-    if (!got.ok) return false;
-    if (doc !== DOC) return false;
-    if (got.same && (META.current || (META.history || []).length)) return true;
-    const meta = got.data;
+    const earlyMeta = takeEarly(url);
+    const startupReview = earlyMeta && doc === 'review';
+    const readMeta = () => pollJson(url).catch(() => ({ ok: false }));
+    let got = earlyMeta ? await earlyMeta.catch(() => ({ ok: false })) : await readMeta();
+    // Review may have published between the early meta read and the store read.
+    if (startupReview && STORE.current_version && got.data?.current !== STORE.current_version) {
+      const refreshed = await readMeta();
+      if (refreshed.ok) got = refreshed;
+      if (got.ok && got.data.current !== STORE.current_version && await loadStore() && got.data.current !== STORE.current_version) {
+        const afterStore = await readMeta();
+        if (afterStore.ok) got = afterStore;
+      }
+    }
+    const version = startupReview && STORE.current_version;
+    if ((!got.ok && !version) || doc !== DOC) return false;
+    if (got.same && got.data.current === META.current && (META.current || (META.history || []).length)) return true;
+    let meta = got.data || {};
+    // If another publish races the retry, install metadata for the store we will show.
+    if (version && meta.current !== version) {
+      const history = meta.history || [];
+      const at = history.findIndex(h => h.version === version);
+      meta = { ...meta, current: version, history: at < 0 ? [...history, { version }] : history.slice(0, at + 1) };
+    }
     if (doc === 'plans') { META = { current: meta.current, history: meta.history || [], content_stamps: {}, title: meta.title }; return true; }
     if (JSON.stringify(meta.history || []) !== JSON.stringify(META.history || [])) historyDirty = true;
     if (meta.project_info && meta.delivery_status) {
@@ -657,7 +688,8 @@ async function loadSeen() {
   // ↑NEW compares Review's content stamps; plan revisions have none.
   if (doc !== 'review') { SEEN = {}; return true; }
   try {
-    const r = await fetch(apiUrl('./api/seen' + authorQuery()), { cache: 'no-store' });
+    const url = './api/seen' + authorQuery();
+    const r = await (takeEarly(url) || fetch(apiUrl(url), { cache: 'no-store' }));
     if (!r.ok) return false;
     const j = await r.json();
     if (doc !== DOC) return false;
@@ -1569,7 +1601,7 @@ function setFresh(n, newer, fix) {
   btn.dataset.state = n ? 'new' : newer ? 'newer' : 'idle';
 }
 function renderVersionBanner() {
-  const latest = latestVersion();
+  const latest = (DOC === 'review' && LIVE?.current_version) || latestVersion();
   const newer = latest && CURRENT_VERSION !== latest ? latest : '';
   const w = waitingChanges();
   const fix = !!newer && (META.history || []).some(h => h.fixes === CURRENT_VERSION);
@@ -1848,11 +1880,6 @@ function sayDraft(c) {
 }
 function replyDraft(c) {
   return (DRAFTS[c.id] || '').trim();
-}
-// Publication gives a reissued question a new id; typed words follow its number.
-function feedbackTarget(c) {
-  return flattenAll(false).find(next => next.number && next.number === c.number &&
-    next.version === latestVersion() && !next.withdrawn && next.status !== 'archived') || c;
 }
 // Clear a card's comment draft everywhere it is shown (rail, summary, body
 // strip), so a re-render cannot read the old text back out of a box.
@@ -4493,13 +4520,12 @@ async function prepareDocCore() {
   let ok = true;
   const failed = [];
   for (const c of flattenAll(false).filter(c => hasSayDraft(c) || strandedSay(c))) {
-    const target = feedbackTarget(c);
-    const r = isUnresolvedDecision(target)
-      ? await apiDecision(target.id, 'comment', sayDraft(c)) : await apiReply(target.id, sayDraft(c));
+    const r = isUnresolvedDecision(c)
+      ? await apiDecision(c.id, 'comment', sayDraft(c)) : await apiReply(c.id, sayDraft(c));
     if (r) { clearSayDraft(c.id); delete decisionChanging[c.id]; } else { ok = false; failed.push(c.id); }
   }
   for (const c of flattenAll(false).filter(replyDraft)) {
-    if (await apiReply(feedbackTarget(c).id, replyDraft(c))) {
+    if (await apiReply(c.id, replyDraft(c))) {
       setDraft(c.id, '');
       document.querySelectorAll('[data-reply-for="' + cssEsc(c.id) + '"]').forEach(ta => { ta.value = ''; });
     } else { ok = false; failed.push(c.id); }
@@ -4538,13 +4564,34 @@ function pageRoundPending() {
 async function submitPage(alsoPending, receipt) {
   let sentCount = 0, delivered = false, last = null;
   const lines = Array.isArray(receipt) ? receipt : [];
+  const reviewVersion = VIEW_DOC === 'review' || lines.some(it => it.cat === 'review')
+    ? withDoc('review', () => CURRENT_VERSION) : null;
+  const shownDrafts = withIdIndex(() => lines.flatMap(it => {
+    if (!it.id || !DOCS.includes(it.cat)) return [];
+    const keys = withDoc(it.cat, () => {
+      if (it.id === 'gf:' + DOC) return gfDraft() ? ['gf'] : [];
+      const c = findCommentById(it.id);
+      if (!c) return [];
+      return [(hasSayDraft(c) || strandedSay(c)) && 'say:' + c.id, replyDraft(c) && c.id].filter(Boolean);
+    });
+    return keys.length ? [{ it, keys }] : [];
+  }));
+  if (!await pollStore()) return null;
+  if (reviewVersion && LIVE.current_version && LIVE.current_version !== reviewVersion) {
+    if (VIEW_DOC === 'review') withDoc('review', renderVersionBanner);
+    return { refreshRequired: true };
+  }
   const sendId = lines.length ? newSendId() : null;
   const failedIds = new Set();
   // Text typed on a card the agent has since withdrawn goes as a reply to it.
-  await loadStore();
+  applyLive();
   for (const doc of DOCS) {
     const r = await withDocAsync(doc, prepareDocCore);
     (r.failed || []).forEach(id => failedIds.add(doc + '|' + id));
+  }
+  // A refreshed projection can omit a card whose draft was in the summary.
+  for (const { it, keys } of shownDrafts) {
+    if (withDoc(it.cat, () => keys.some(key => DRAFTS[key]?.trim()))) failedIds.add(it.cat + '|' + it.id);
   }
   const failed = lines.filter(it => it.id && failedIds.has(it.cat + '|' + it.id));
   const sent = [];
@@ -5056,11 +5103,14 @@ function withDocAsync(doc, fn) {
 function latestVersion() {
   return META.current || (META.history && META.history.length ? META.history[META.history.length - 1].version : null);
 }
+function projectedVersion() {
+  return (DOC === 'review' && STORE.current_version) || latestVersion();
+}
 async function loadDocState(doc) {
   return withDocAsync(doc, async () => {
     await loadMeta();
     const want = window.AA ? window.AA.versionFor(doc) : null;
-    if (!CURRENT_VERSION) CURRENT_VERSION = (want && (META.history || []).some(h => h.version === want)) ? want : latestVersion();
+    if (!CURRENT_VERSION) CURRENT_VERSION = (want && (META.history || []).some(h => h.version === want)) ? want : projectedVersion();
     await loadSeen();
   });
 }
@@ -5080,18 +5130,18 @@ function whenFrameReady() {
   return new Promise(res => { frameWaiters.push(res); setTimeout(res, 8000); });
 }
 // Show a document: its rail, its frame and its History section.
-async function activateDoc(doc, version) {
+async function activateDoc(doc, version, switching) {
   await DOCS_LOADED;
   await docQueue;
   if (!DOCS.includes(doc)) doc = 'review';
-  if (VIEW_DOC !== doc) applyLive(); // opening a tab shows what the polls brought
+  if (switching && VIEW_DOC !== doc) applyLive(); // Keep the startup snapshot on first open.
   if (DOC !== doc) enterDoc(doc);
   ownDrafts();
   VIEW_DOC = doc;
   VIEW_DRAFTS = DRAFTS;
   if (!CURRENT_VERSION) {
     await loadMeta();
-    CURRENT_VERSION = latestVersion();
+    CURRENT_VERSION = projectedVersion();
   }
   if (version && version !== CURRENT_VERSION && (META.history || []).some(h => h.version === version)) CURRENT_VERSION = version;
   const frame = document.getElementById('content-frame');
@@ -5099,6 +5149,8 @@ async function activateDoc(doc, version) {
     frameReady = { doc: null, version: null };
     frame.dataset.plan = String(PLAN_ID);
     loadIframe(CURRENT_VERSION);
+    // uzd: let the document's request leave before the rail renders (~100 ms on FLD).
+    await new Promise(res => setTimeout(res, 0));
   }
   const gf = document.getElementById('gf-ta');
   if (gf) gf.value = DRAFTS.gf || '';
@@ -5322,11 +5374,14 @@ async function init() {
     setTimeout(() => w.forEach(f => f()), 0);
   });
 
+  prefetch('./current.meta.json');
+  const who = resolveIdentity();
   await Promise.all([loadSessionMonitor(), loadCapabilities()]);
   document.getElementById('share-row').hidden = !(CAPS && CAPS.private_share_links);
 
-  IDENTITY = await resolveIdentity();
+  IDENTITY = await who;
   AUTHOR = authorValue(IDENTITY);
+  prefetch('./api/seen' + authorQuery(), () => fetch(apiUrl('./api/seen' + authorQuery()), { cache: 'no-store' }));
   updateAuthorIndicator();
   if (!IDENTITY && location.protocol === 'https:' && !CAPS) {
     showStatus('Open the private review link to view this page.');
@@ -5336,6 +5391,7 @@ async function init() {
   // The page's store and every document are loaded up front, so the page's
   // counts and the one Send cover all of them before any tab is opened.
   await Promise.all([loadStore(), loadReadState(), loadCategories(), loadProject()]);
+  if (PLAN_ID) prefetch('./api/plans/' + encodeURIComponent(PLAN_ID));
   loadBoard();
   DRAFTS = loadDrafts(DOC);
   for (const doc of DOCS) await loadDocState(doc);

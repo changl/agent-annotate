@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sys
 import threading
@@ -43,20 +44,9 @@ def _retained_size(value, seen=None):
     return size
 
 
-def _image_hash(path, *, fresh=False):
-    stat = path.stat()
-    if stat.st_size > 10 * 1024 * 1024:
+def _image_hash(path):
+    if path.stat().st_size > 10 * 1024 * 1024:
         raise ValueError("oversized image")
-    if fresh:
-        # Mapped writes can change bytes without changing any stat field.
-        # Vote-time integrity must not rely on a metadata cache hit.
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    return _cached_image_hash(path, (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
-
-
-@lru_cache(maxsize=512)
-def _cached_image_hash(path, signature):
-    # Cache digests only for rendering; votes always verify the current bytes.
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -117,7 +107,7 @@ class _Anchors(HTMLParser):
             del self.stack[index:]
 
 
-def _pin_images(page_dir, html, base):
+def _pin_images(page_dir, html, base, dependencies=None):
     assets, incomplete, sources = {}, [], {}
 
     def pin(match):
@@ -144,14 +134,22 @@ def _pin_images(page_dir, html, base):
                         raise ValueError("image outside page")
                     relative = relative[len(prefix):]
                 relative = relative.removeprefix("./")
-                path = safe_path(page_dir, relative)
-                if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif"}:
-                    raise ValueError("unsupported image")
-                digest = _image_hash(path)
-                name = "attachments/approval-" + digest + path.suffix.lower()
+                if dependencies is None:
+                    image = _image_stamp(page_dir, relative)
+                else:
+                    if relative not in dependencies:
+                        dependencies[relative] = _image_stamp(page_dir, relative)
+                    image = dependencies[relative]
+                if image is None:
+                    raise ValueError("image unavailable")
+                digest, suffix = image
+                name = "attachments/approval-" + digest + suffix
                 assets[name] = digest
-                sources[name] = relative
-                return attribute[1] + attribute[2] + "./" + name + attribute[2]
+                paths = sources.setdefault(name, [])
+                if relative not in paths:
+                    paths.append(relative)
+                # Keep references distinct until vote-time verification of each source.
+                return attribute[1] + attribute[2] + f"./{name}?source={paths.index(relative)}" + attribute[2]
             except (OSError, ValueError):
                 incomplete.append("Image not sealed: " + url[:200])
                 return attribute[0]
@@ -229,6 +227,50 @@ def _bundle(comment, version, html="", assets=None, incomplete=None, document_pa
                                                *([] if anchors and content else ["Card only"])]))}
 
 
+_SEALS = OrderedDict()  # uzd: one live view per unchanged sealing input; a reload reuses it (~0.1-0.3 s on FLD)
+# What sealing reads from a card (_bundle, item_id).
+_SEALED_FIELDS = ("id", "anchor_id", "doc", "number", "origin_id", "origin_item_id", "decision_request", "text")
+
+
+def _image_stamp(page_dir, relative):
+    # A mapped edit can change the displayed bytes without changing any stat field.
+    try:
+        path = safe_path(page_dir, relative)
+        suffix = path.suffix.lower()
+        if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif"}:
+            return _image_hash(path), suffix
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _seal_predecessors(page_dir, store, cards):
+    managed = store.get("approved_plans", {})
+    plan_dirs = None
+    by_card, by_item = {}, {}
+    for comment in cards:
+        try:
+            cid, identifier = comment["id"], item_id(comment)
+            if identifier not in by_item:
+                if plan := managed.get(identifier):
+                    by_item[identifier] = plan.get("current")
+                else:
+                    # A single directory read replaces per-card checks of missing plans.
+                    if plan_dirs is None:
+                        try:
+                            plan_dirs = set(os.listdir(safe_path(page_dir, "plans")))
+                        except (FileNotFoundError, NotADirectoryError):
+                            plan_dirs = set()
+                    if identifier in plan_dirs and safe_path(page_dir, f"plans/{identifier}/meta.json").exists():
+                        by_item[identifier] = _current(page_dir, store, identifier)
+                    else:
+                        by_item[identifier] = None
+            by_card[cid] = by_item[identifier]
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+    return by_card
+
+
 def seal_review(page_dir, html, version, store, base=""):
     """Capture server-owned HTML and image hashes without altering Review."""
     cards = [comment for items in store.get("anchors", {}).values() for comment in items
@@ -236,17 +278,30 @@ def seal_review(page_dir, html, version, store, base=""):
              and comment.get("doc", "review") == "review" and not comment.get("withdrawn")]
     if not cards:
         return html, {}
+    predecessors = _seal_predecessors(page_dir, store, cards)
+    seal_key = (str(page_dir), version, base, hashlib.sha256(html.encode()).hexdigest(),
+                _digest([[c.get(k) for k in _SEALED_FIELDS] for c in cards]),
+                _digest(predecessors))
+    dependencies = {}
+    with _VIEW_LOCK:
+        hit = _SEALS.get(seal_key)
+        if hit and (str(page_dir), hit[0]) in _VIEWS:
+            dependencies = {relative: _image_stamp(page_dir, relative) for relative in hit[2]}
+            if dependencies == hit[2]:
+                _VIEWS.move_to_end((str(page_dir), hit[0]))
+                _SEALS.move_to_end(seal_key)
+                return html, hit[1]
     document_parts = _document_parts(html)
     tokens, snapshots = {}, {}
     view = uuid.uuid4().hex
     for comment in cards:
         try:
+            predecessor = predecessors[comment["id"]]
             bundle = _bundle(comment, version, html, document_parts=document_parts)
-            fragment, assets, incomplete, sources = _pin_images(page_dir, bundle["html"], base)
+            fragment, assets, incomplete, sources = _pin_images(page_dir, bundle["html"], base, dependencies)
             bundle.update(html=fragment, assets=assets, image_sources=sources, incomplete=bundle["incomplete"] + incomplete)
             snapshots[comment["id"]] = bundle
-            tokens[comment["id"]] = {"view": view, "revision": _digest(bundle),
-                "predecessor": _current(page_dir, store, item_id(comment))}
+            tokens[comment["id"]] = {"view": view, "revision": _digest(bundle), "predecessor": predecessor}
         except (OSError, ValueError, TypeError, KeyError):
             continue
     key = (str(page_dir), view)
@@ -258,6 +313,9 @@ def seal_review(page_dir, html, version, store, base=""):
             _VIEWS.popitem(last=False)
         if key not in _VIEWS:
             return html, {}
+        _SEALS[seal_key] = (view, tokens, dependencies)
+        while len(_SEALS) > _MAX_VIEWS:
+            _SEALS.popitem(last=False)
     return html, tokens
 
 
@@ -285,22 +343,30 @@ def persist_evidence(page_dir, comment, evidence):
     if not bundle or _digest(bundle) != evidence.get("revision"):
         frozen = {**comment, "decision_request": evidence.get("request") or comment.get("decision_request")}
         bundle = _bundle(frozen, evidence.get("version") or comment.get("version"), incomplete=["Displayed evidence unavailable"])
-    for name in bundle["assets"]:
-        try:
-            source = safe_path(page_dir, bundle["image_sources"][name])
-            digest = bundle["assets"][name]
-            if _image_hash(source, fresh=True) != digest:
-                raise ValueError("image changed since view")
-            target = safe_path(page_dir, name)
-            if not target.exists() or _image_hash(target, fresh=True) != digest:
-                body = source.read_bytes()
-                if hashlib.sha256(body).hexdigest() != digest:
-                    raise ValueError("image changed while freezing")
-                _atomic_bytes(target, body)
-        except (OSError, ValueError, KeyError):
-            bundle["incomplete"].append("Image unavailable or changed since view: " + name)
-            bundle["html"] = re.sub(r'(?:src|href|xlink:href)\s*=\s*([\"\'])\./' + re.escape(name) + r'\1',
-                                    'data-evidence-image-unavailable=""', bundle["html"], flags=re.I)
+    for name, digest in bundle["assets"].items():
+        relatives = bundle["image_sources"][name]
+        legacy = isinstance(relatives, str)
+        pinned = False
+        for index, relative in enumerate([relatives] if legacy else relatives):
+            ref = "./" + name + ("" if legacy else f"?source={index}")
+            pattern = r'((?:\bsrc|\bhref|\bxlink:href)\s*=\s*)([\"\'])' + re.escape(ref) + r'\2'
+            try:
+                source = safe_path(page_dir, relative)
+                if _image_hash(source) != digest:
+                    raise ValueError("image changed since view")
+                if not pinned:
+                    target = safe_path(page_dir, name)
+                    if not target.exists() or _image_hash(target) != digest:
+                        body = source.read_bytes()
+                        if hashlib.sha256(body).hexdigest() != digest:
+                            raise ValueError("image changed while freezing")
+                        _atomic_bytes(target, body)
+                    pinned = True
+                replacement = rf'\1\2./{name}\2'
+            except (OSError, ValueError):
+                bundle["incomplete"].append("Image unavailable or changed since view: " + relative)
+                replacement = 'data-evidence-image-unavailable=""'
+            bundle["html"] = re.sub(pattern, replacement, bundle["html"], flags=re.I)
     evidence.update(revision=_save_bundle(page_dir, bundle), committed=True)
     return read_bundle(page_dir, evidence["revision"])
 

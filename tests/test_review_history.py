@@ -4,7 +4,8 @@ import json
 from test_decision_api import _call, _card, _events, _store
 from test_decision_api import server as server
 
-from agent_annotate.review_history import review_history, save_round
+from agent_annotate import paths
+from agent_annotate.review_history import latest_round, review_history, save_round
 
 
 def test_submitted_snapshot_is_immutable_and_drafts_stay_unsubmitted(server):
@@ -127,7 +128,6 @@ def test_sent_plain_feedback_has_a_stable_historical_snapshot(server):
 
 
 def test_latest_round_is_the_newest_send_with_content_and_its_paired_records():
-    from agent_annotate.review_history import latest_round
     rounds = [{"id": "empty", "answers": []},
               {"id": "push", "send_id": "s2", "kind": "push", "receipt": [{"label": "a"}]},
               {"id": "older", "send_id": "s1", "answers": [{"verdict": "accept"}]},
@@ -136,13 +136,41 @@ def test_latest_round_is_the_newest_send_with_content_and_its_paired_records():
     assert latest_round({"rounds": [{"id": "empty"}]}) == {"rounds": []}
 
 
-def test_history_latest_query_serves_only_the_newest_round(server):
-    httpd, _, _ = server
-    _, card = _call(httpd, "POST", "/api/comments", _card(prompt="CHA-1: ship?"))
-    for text in ("first", "second"):
-        _call(httpd, "POST", f"/api/comments/{card['id']}/decision", {"verdict": "comment", "text": text, "defer_push": True}, author="r@example.com")
-        _call(httpd, "POST", "/api/rounds/submit", {"version": "v1"}, author="r@example.com")
-    full = _call(httpd, "GET", "/api/history")[1]
-    latest = _call(httpd, "GET", "/api/history?latest=1")[1]
-    assert len(full["rounds"]) == 2 and "versions" in full
-    assert latest == {"rounds": full["rounds"][:1]}
+def test_history_latest_query_matches_full_history_projection(server, monkeypatch):
+    httpd, directory, bus = server
+    v1, v2, sent, v3, empty = (f"2026-10-0{day}T00:00:00Z" for day in range(1, 6))
+    meta = directory / "current.meta.json"
+    meta.write_text(json.dumps({"current": "v3", "history": [
+        {"version": version, "ts": ts} for version, ts in [("v1", v1), ("v2", v2), ("v3", v3)]]}))
+    store = directory / "comments.json"
+    answer = {"verdict": "reject", "text": "Earlier answer", "ts": v2}
+    comments = {"anchors": {"d:q1": [{"id": "q", "number": 1, "decision_history": [answer],
+        "decision": {"verdict": "accept", "text": "Later draft", "ts": sent, "round_pending": True}}]}}
+    store.write_text(json.dumps(comments))
+    save_round(directory, {"id": "snapshot", "send_id": "send", "ts": sent, "answers": [{"text": "Sent"}]})
+    save_round(directory, {"id": "receipt", "send_id": "send", "ts": sent, "receipt": [{"label": "Pushed"}]})
+    save_round(directory, {"id": "empty", "ts": empty, "answers": []})
+    bus.parent.mkdir()
+    legacy = {"event": "round_submitted", "round_id": "legacy", "ts": v2, "comment_ids": ["q"]}
+    duplicate = {**legacy, "round_id": "snapshot", "ts": empty, "note": "Superseded by the snapshot"}
+    bus.write_text("\n".join(map(json.dumps, (legacy, duplicate))) + "\n")
+    archive = directory / "archive"
+    monkeypatch.setattr(paths, "BUS_ARCHIVE_ROOT", archive)
+
+    def latest():
+        status, result = _call(httpd, "GET", "/api/history?latest=1")
+        assert status == 200
+        assert result == latest_round(_call(httpd, "GET", "/api/history")[1])
+        return result["rounds"]
+
+    assert [round_["id"] for round_ in latest()] == ["snapshot", "receipt"]
+    archived_bus = archive / "20261005" / bus.parent.name / bus.name
+    archived_bus.parent.mkdir(parents=True)
+    archived_bus.write_text(json.dumps({**legacy, "round_id": "newest", "ts": v3}) + "\n")
+    newest, = latest()
+    assert (newest["id"], newest["version"], newest["answers"][0]["text"]) == ("newest", "v3", "Earlier answer")
+    answer["text"] = "Corrected answer"
+    store.write_text(json.dumps(comments))
+    assert latest()[0]["answers"][0]["text"] == "Corrected answer"
+    meta.write_text(meta.read_text().replace('"version": "v3"', '"version": "v4"'))
+    assert latest()[0]["version"] == "v4"

@@ -1,5 +1,15 @@
 # agent-annotate — changelog
 
+## 2.32.12
+
+- Pages open faster (agent-annotate-uzd, part 2). The server reuses per-open work while its inputs are unchanged: shell asset stamps, `copy.json` validation, the content document and its asks, the plan list with topics, category counts, and the approval seal. Re-opening the same version no longer appends `seen_updated`, which forced a full History rebuild (1–4 s on FLD) during the first screen. Preview images named by hash are immutable. In the browser, the meta and seen reads start at load, `/api/copy` is read once, unchanged first reads come back as 304s, the document request leaves before the rail renders, and tables are measured in one layout. Sandbox copies at load 230–450, main → this release: FLD warm 5.9 → 1.2 s, cold 12.5 → 3.3 s; Rebex warm 7.3 → 0.7 s, cold 9.4 → 1.3 s.
+- Startup settles on one version for store, metadata and document, so a question reissued while the page opens takes its draft and Send on the shown version; a Send from Plans with stale Review feedback sends the reviewer to Open Review and Refresh.
+
+## 2.32.11
+
+- Slow responses to unchanged or rejected Answer later, decision, and Send requests no longer hold the page-store lock.
+- `api/history?latest=1`, which every page open calls, builds only the last Send instead of the whole History. It was the slowest request on the 2026-11-24 all-page check (FLD 4.3 s cold). On a copy of the FLD page under heavy load: cold 15.6 s → 2.7 s, server CPU 976 ms → 107 ms, same response bytes. Its cache follows the store backend and source files, so archiving a SQLite page's bus or a read-state write during the read no longer matters.
+
 ## 2.32.10
 
 - A slow or abandoned download no longer holds up the page's other requests: the server releases the page-store lock before it writes a response, and closes cancelled connections quietly instead of answering them with a second, failing 500. A slow client used to keep every other reader of that page waiting; under load on 2026-11-24 the Rebex server logged about 380 dropped connections.

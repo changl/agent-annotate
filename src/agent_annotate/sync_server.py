@@ -98,6 +98,7 @@ import json
 import os
 import re
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -105,7 +106,7 @@ import tomllib
 import urllib.error
 import urllib.parse
 import uuid
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -227,10 +228,45 @@ def _mtime_stamp(path) -> str:
     byte-different on every request and HTTP caching was defeated entirely."""
     if path is not None:
         try:
-            return str(int(hashlib.sha256(_asset_bytes(Path(path))).hexdigest()[:16], 16))
+            return _asset_stamp(_asset_bytes(Path(path)))
         except OSError:
             pass
     return "0"
+
+
+@functools.lru_cache(maxsize=32)
+def _asset_stamp(data: bytes) -> str:
+    return str(int(hashlib.sha256(data).hexdigest()[:16], 16))
+
+
+_FONTS = ("RobotoVariable.woff2", "RobotoVariable-Italic.woff2")
+
+
+def _file_key(path: Path):
+    try:
+        s = path.stat()
+        return (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+    except OSError:
+        return None
+
+
+def _metadata_stamp(path: Path):
+    from .categories import MAX_PLAN_BYTES
+
+    # A mapped JSON edit can leave the inode and timestamps unchanged.
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                with os.fdopen(fd, "rb", closefd=False) as source:
+                    return hashlib.sha256(source.read(MAX_PLAN_BYTES + 1)).digest()
+        finally:
+            os.close(fd)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        pass
+    return _file_key(path)
 
 
 def _asset_bytes(path: Path) -> bytes:
@@ -238,9 +274,10 @@ def _asset_bytes(path: Path) -> bytes:
     if path.suffix == ".css":
         # CSS and its fonts need independent immutable keys. Include the font
         # hashes in the served CSS bytes so changing a font also changes its key.
-        for name in ("RobotoVariable.woff2", "RobotoVariable-Italic.woff2"):
-            data = data.replace(f"url({name})".encode(),
-                                f"url(../{_mtime_stamp(path.with_name(name))}/{name})".encode())
+        for name in _FONTS:
+            ref = f"url({name})".encode()
+            if ref in data:
+                data = data.replace(ref, f"url(../{_mtime_stamp(path.with_name(name))}/{name})".encode())
     return data
 
 
@@ -583,14 +620,34 @@ def _card_anchors(body) -> set[str] | None:
             for m in re.findall(r"data-anchor-id=['\"]([^'\"]+)", tag)}
 
 
-def _plan_stamps(artifact_dir: Path) -> tuple:
-    """Each plan's meta.json mtime: a plan publish moves its current version without touching the store."""
+# uzd: pure, and re-run on every /content read of the same version (~30-45 ms each on FLD).
+_content_document = functools.lru_cache(maxsize=4)(build_content_document)
+
+
+@functools.lru_cache(maxsize=4)
+def _implicit_asks(source: str) -> tuple:
+    from .pagegen import implicit_ask_anchors
+    return tuple(implicit_ask_anchors(source))
+
+
+def _plan_stamps(artifact_dir: Path) -> tuple | None:
+    """Fingerprint plan metadata even when the comment store is unchanged."""
+    from .categories import safe_path
+
     stamps = []
-    for path in (artifact_dir / "plans").glob("*/meta.json"):
-        try:
-            stamps.append((path.parent.name, path.stat().st_mtime_ns))
-        except OSError:
-            pass
+    try:
+        entries = os.scandir(safe_path(artifact_dir, "plans"))
+    except ValueError:
+        return None
+    except OSError:
+        return ()
+    with entries:
+        for entry in entries:
+            if entry.is_symlink():
+                stamps.append((entry.name, None))
+            elif entry.is_dir(follow_symlinks=False):
+                if (stamp := _metadata_stamp(Path(entry.path) / "meta.json")) is not None:
+                    stamps.append((entry.name, stamp))
     return tuple(sorted(stamps))
 
 
@@ -1067,6 +1124,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     _store_responses = {}
     _store_revision = None
     _page_marks = {}
+    _count_rows = (None, None, {})
+    _plans_listed = (None, None)
+    _stamp_checked = {}
 
     def handle_one_request(self):
         from .page_names import resolution_scope
@@ -1453,7 +1513,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                       extra_headers={"Location": url + "#" + tab_fragment(moved, parsed.query)})
         return True
 
-    def _refuse_moved_write(self, route_path: str) -> bool:
+    def _refuse_moved_write(self, route_path: str, *, respond=None) -> bool:
         # A reviewer session only issues a cookie, which the read-only view needs.
         if route_path == "/api/reviewer/session":
             return False
@@ -1464,7 +1524,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         body = {"error": ("this page is archived; it is read-only" if moved.get("archived") else
                           f"this page moved to {target.get('project')}/{target.get('slug')}; it is read-only"),
                 "moved_to": self._moved_to(moved)}
-        self._respond(410, json.dumps(body).encode(), "application/json", cache_control="no-store")
+        (respond or self._respond)(410, json.dumps(body).encode(), cache_control="no-store")
         return True
 
     # ── GET ──────────────────────────────────────────────────────────
@@ -1860,6 +1920,21 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if len(cls._page_marks) > 4096:
                 del cls._page_marks[next(iter(cls._page_marks))]
 
+    @contextmanager
+    def _store_response(self):
+        """Prepare one early response and write it only after the store transaction exits successfully."""
+        response = None
+
+        def defer(*args, **kwargs):
+            nonlocal response
+            response = args, kwargs
+
+        with _locked_store(self.artifact_dir):
+            yield defer
+        if response is not None:
+            args, kwargs = response
+            self._respond(*args, **kwargs)
+
     def _v2_get_store(self, parsed=None):
         view = (urllib.parse.parse_qs(parsed.query).get("view") or [None])[0] if parsed else None
         poll = view in ("poll", "page")
@@ -1874,20 +1949,25 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             except FileNotFoundError:
                 draft_stamp = None
             published = tuple(h.get("version") for h in meta.get("history") or [] if isinstance(h, dict))
-            try:  # view=page reads the body's question cards; a republish rewrites them in place
-                body_stamp = _version_file(self.artifact_dir, current_version).stat().st_mtime_ns
-            except (OSError, ValueError):
-                body_stamp = None
-            revision_signature = (self._store_signature(), current_version, published, draft_stamp)
-            signature = (*revision_signature, body_stamp, _plan_stamps(self.artifact_dir))
+            signature = (self._store_signature(), current_version, published, draft_stamp)
+            projection = None
+            if view == "page":
+                try:  # The projected store includes question anchors from the current body.
+                    body_stamp = _version_file(self.artifact_dir, current_version).stat().st_mtime_ns
+                except (OSError, ValueError):
+                    body_stamp = None
+                projection = (body_stamp, _plan_stamps(self.artifact_dir))
             cache = type(self)._store_responses
             if cache.get("signature") != signature:
                 cache.clear()
                 cache["signature"] = signature
             # Keep one marked variant per view and encoding, even when tabs sent different marks.
-            key = (view if poll else None, compressed, agent, bool(since))
+            key = (view if poll else None, compressed, agent)
+            if since:
+                key += ("marked",)
+            variant = (projection, since)
             cached = cache.get(key)
-            if cached is None or cached[0] != since:
+            if cached is None or cached[0] != variant:
                 from .review_versions import visible_store
                 store = visible_store(self.artifact_dir, self._v2_load(read_only=True), meta)
                 if agent:
@@ -1900,7 +1980,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                                for anchor, items in store.get(area, {}).items()}
                                          for area in ("anchors", "archived")}}
                     if not agent and (view == "page" or since):
-                        self._mark_store(revision_signature, store, page=view == "page", since=since)
+                        self._mark_store(signature, store, page=view == "page", since=since)
                     # Label migration must not look like a content change to the shell.
                     numbers = _pin_item_numbers(store)
                     if view == "page":
@@ -1910,7 +1990,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
                 packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
                 representation = (packed, compressed) if len(packed) < len(body) else (body, False)
-                cache[key] = (since, representation)
+                cache[key] = (variant, representation)
             else:
                 representation = cached[1]
         self._respond(200, b"", "application/json", conditional=True, representation=representation,
@@ -1993,7 +2073,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _v2_history_representation(self, parsed):
         from .paths import BUS_ARCHIVE_ROOT
-        from .review_history import history_buses, latest_round, review_history
+        from .review_history import history_buses, review_history
+        from .store import backend
 
         bus = self.bus_dir / f"{self.slug}.ndjson" if self.bus_dir else None
         compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
@@ -2001,8 +2082,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
         def disk_signature():
             paths = [self._store_path(), self._meta_path(), self.artifact_dir / "rounds.ndjson",
-                     self.artifact_dir / "versions", self.artifact_dir / "content",
                      *history_buses(bus, BUS_ARCHIVE_ROOT)]
+            if not latest:
+                paths.extend(self.artifact_dir / kind for kind in ("versions", "content"))
             signature = []
             for path in paths:
                 try:
@@ -2011,9 +2093,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                       stat.st_mtime_ns, stat.st_ctime_ns))
                 except FileNotFoundError:
                     signature.append((str(path),))
-            return signature
+            # SQLite indexes the bus. The read transaction can update its WAL even when History inputs are unchanged.
+            return (backend(self.artifact_dir) if bus is not None else None, signature)
 
-        cache = type(self)._history_responses
+        responses = type(self)._history_responses
+        cache = responses.get(latest, {})
         for _ in range(3):
             # Check even cache hits under the transaction lock, so a
             # reader waiting on a writer cannot return its old revision.
@@ -2021,12 +2105,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 signature = disk_signature()
                 if cache.get("signature") == signature:
                     break
-                meta_bytes = self._meta_path().read_bytes()
-                store_bytes = self._store_path().read_bytes() if self._store_path().exists() else b"{}"
+                meta_bytes = store_bytes = None
+                if not latest:
+                    meta_bytes = self._meta_path().read_bytes()
+                    store_bytes = self._store_path().read_bytes() if self._store_path().exists() else b"{}"
             try:
                 history = review_history(self.artifact_dir, bus, BUS_ARCHIVE_ROOT,
                                          meta_bytes=meta_bytes, store_bytes=store_bytes,
-                                         bus_cache=type(self)._history_bus_cache)
+                                         bus_cache=type(self)._history_bus_cache, latest=latest)
             except (OSError, ValueError):
                 with _locked_store(self.artifact_dir, write=False):
                     if disk_signature() != signature:
@@ -2037,19 +2123,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             with _locked_store(self.artifact_dir, write=False):
                 if disk_signature() != signature:
                     continue
-            body = json.dumps(history, ensure_ascii=False).encode()
-            cache.clear()
-            cache.update(signature=signature, body=body,
-                         latest=json.dumps(latest_round(history), ensure_ascii=False).encode())
+            cache = responses[latest] = {"signature": signature, "body": json.dumps(history, ensure_ascii=False).encode()}
             break
         else:
             return None
-        key = (latest, compressed)
-        if key not in cache:
-            body = cache["latest" if latest else "body"]
+        if compressed not in cache:
+            body = cache["body"]
             packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
-            cache[key] = (packed, True) if len(packed) < len(body) else (body, False)
-        return cache[key]
+            cache[compressed] = (packed, True) if len(packed) < len(body) else (body, False)
+        return cache[compressed]
 
     def _v2_get_comments(self, parsed):
         params = urllib.parse.parse_qs(parsed.query)
@@ -2163,20 +2245,28 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         return 200, data, "text/html; charset=utf-8"
 
     def _ensure_content_stamp(self, version: str, html: str, content_path: Path) -> None:
-        """Compute-and-cache content_stamps[version] into current.meta.json
-        the first time this version is served (or whenever the content
-        file's mtime moves past what's recorded). Cheap enough to check on
-        every request; the hash recompute itself only runs on a stale/
-        missing stamp, not on every GET.
-        """
+        """Persist the displayed version's content stamp when its input changes."""
+        key = (str(self.artifact_dir), version)
+        cache = type(self)._stamp_checked
+        meta_path = self._meta_path()
+        # Mapped writes can change bytes without changing any stat field.
+        try:
+            checked = (_file_key(content_path), _file_key(meta_path), html, meta_path.read_bytes())
+        except OSError:
+            checked = None
+        if checked is not None and cache.get(key) == checked:
+            return
         with _locked_store(self.artifact_dir):  # reuse the store lock; meta writes are rare & small
             meta = self._read_meta()
             existing = (meta.get("content_stamps") or {}).get(version)
-            mtime = content_path.stat().st_mtime
-            if existing and existing.get("_mtime") == mtime:
-                return  # up to date
             computed = compute_content_stamps(html)
-            computed["_mtime"] = mtime
+            computed["_mtime"] = content_path.stat().st_mtime
+            if existing and all(existing.get(field) == value for field, value in computed.items()):
+                if checked is not None:
+                    if key not in cache and len(cache) >= 4:
+                        del cache[next(iter(cache))]
+                    cache[key] = checked
+                return
             try:
                 self._merge_content_stamp(version, computed)
             except OSError:
@@ -2290,7 +2380,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             except OSError:
                 return 500, b"Read error"
             try:
-                html = build_content_document(raw, title=page_name(self.artifact_dir)) if has_canvas_sentinels(raw) else raw
+                html = _content_document(raw, title=page_name(self.artifact_dir)) if has_canvas_sentinels(raw) else raw
             except ExtractionError as exc:
                 return 500, json.dumps({"error": f"could not extract content for {v}: {exc}"}).encode()
             self._ensure_content_stamp(v, html, baked)
@@ -2321,10 +2411,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         adapter_v = _mtime_stamp((self.skill_dir / "adapter.js") if self.skill_dir else None)
         implicit_asks = []
         if plan_id is None:
-            from .pagegen import PageGenError, implicit_ask_anchors
+            from .pagegen import PageGenError
             try:
                 source = _contained_path(self.artifact_dir, f"source/{v}.md")
-                implicit_asks = implicit_ask_anchors(source.read_text(encoding="utf-8"))
+                implicit_asks = _implicit_asks(source.read_text(encoding="utf-8"))
             except (OSError, ValueError, PageGenError):
                 pass  # Missing or invalid source cannot safely distinguish an explicit section citation.
         content_meta = json.dumps({"version": v, "publicBasePath": base, "slug": self.slug,
@@ -2417,7 +2507,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     data = _asset_bytes(target)
                 except OSError:
                     continue
-                if stamp != str(int(hashlib.sha256(data).hexdigest()[:16], 16)):
+                if stamp != _asset_stamp(data):
                     return self._respond(404, b"Asset hash mismatch", cache_control="no-store")
                 self._respond(200, data, _mime(target.suffix), cache_control=_IMMUTABLE)
                 return
@@ -3212,17 +3302,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if not isinstance(payload, dict) or not isinstance(payload.get("on"), bool):
             return self._respond(400, b'{"error":"expected {\"on\": true|false}"}')
         author = self._author(parsed)
-        with _locked_store(self.artifact_dir):
+        with self._store_response() as defer:
             store = self._v2_load()
             c = next((c for items in store["anchors"].values() for c in items if c.get("id") == comment_id), None)
             if c is None:
-                return self._respond(404, b'{"error":"not found"}')
+                return defer(404, b'{"error":"not found"}')
             if payload["on"]:
                 if not _is_set_aside({**c, "answer_later": True}) or c.get("status") in ("archived", "addressed_by_agent", "resolved_in_version"):
-                    return self._respond(409, b'{"error":"only an unanswered question can be answered later"}')
+                    return defer(409, b'{"error":"only an unanswered question can be answered later"}')
                 c["answer_later"] = {"ts": _now_iso(), "by": author}
             elif not c.get("answer_later"):
-                return self._respond(200, json.dumps(c, ensure_ascii=False).encode(), "application/json")
+                return defer(200, json.dumps(c, ensure_ascii=False).encode())
             else:
                 c["answer_later"] = False  # brought back on purpose: a later re-ask must not restore an older mark
             self._v2_save(store)
@@ -3605,7 +3695,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         identity = self._identity()
         author = identity["email"] or "anonymous"
 
-        with _locked_store(self.artifact_dir):
+        with self._store_response() as defer:
             store = self._v2_load()
             found = None
             for anchor_id, items in store.get("anchors", {}).items():
@@ -3616,8 +3706,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 if found:
                     break
             if not found:
-                self._respond(404, b'{"error":"not found"}')
-                return
+                return defer(404, b'{"error":"not found"}')
             anchor_id, c = found
             now = _now_iso()
             old_status = c.get("status")
@@ -3626,7 +3715,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             prior_decision = c.get("decision")
             if (isinstance(prior_decision, dict) and prior_decision.get("round_pending")
                     and prior_decision.get("by") not in self._reviewer_authors(author)):
-                return self._respond(403, b'{"error":"another reviewer owns the pending answer"}')
+                return defer(403, b'{"error":"another reviewer owns the pending answer"}')
             from .approval_catalog import bind_evidence, persist_evidence, promote
             evidence = bind_evidence(self.artifact_dir, store, c, payload.get("evidence"))
             prior_evidence = (prior_decision or {}).get("evidence") or {}
@@ -3639,8 +3728,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     and prior_evidence.get("view_revision") == incoming_revision
                     and prior_evidence.get("request") == evidence.get("request")
                     and prior_evidence.get("version") == evidence.get("version")):
-                return self._respond(200, json.dumps({**c, "delivery": "noop", "delivery_id": None,
-                    "monitor_count": 0, "monitor_owner": None}).encode(), "application/json")
+                return defer(200, json.dumps({**c, "delivery": "noop", "delivery_id": None,
+                    "monitor_count": 0, "monitor_owner": None}).encode())
             is_revision = prior_decision is not None
             if is_revision:
                 c.setdefault("decision_history", []).append(prior_decision)
@@ -3768,8 +3857,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         note = str(payload.get("note") or "").strip() or None
         author = self._author(parsed)
         reviewer_authors = self._reviewer_authors(author)
-        with _locked_store(self.artifact_dir):
-            if self._refuse_moved_write("/api/rounds/submit"):  # see push-session
+        with self._store_response() as defer:
+            if self._refuse_moved_write("/api/rounds/submit", respond=defer):  # see push-session
                 return
             store = self._v2_load()
             now = _now_iso()
@@ -3869,17 +3958,16 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             if not comment_ids and not edits and not note:
                 if cleared_archived:
                     self._v2_save(store)
-                self._respond(200, json.dumps({"ok": True, "delivery": "noop", "comment_count": 0,
+                return defer(200, json.dumps({"ok": True, "delivery": "noop", "comment_count": 0,
                                               "comment_ids": [], "verdict_counts": verdict_counts,
                                               "undecided_count": len(undecided_ids),
                                               "edits": [], "edit_count": 0,
-                                              "undecided_ids": undecided_ids, **skipped}).encode(), "application/json")
-                return
+                                              "undecided_ids": undecided_ids, **skipped}).encode())
             owner = self._read_meta().get("owner") or {}
             version = payload.get("version") or self._read_meta().get("current")
             if version and (not isinstance(version, str) or not _VERSION_ID.fullmatch(version)
                             or version not in {h.get("version") for h in self._read_meta().get("history", [])}):
-                return self._respond(400, b'{"error":"unknown review version"}')
+                return defer(400, b'{"error":"unknown review version"}')
             fingerprint = {"answers": [(c["id"], c["decision"]) for c in pending],
                            "edits": edits, "reopens": [(c["id"], c["reopened"][-1]) for c in reopens],
                            "pushed": [{k: v for k, v in c.items() if k not in ("flagged_at", "flagged_by", "flagged_for_session")}
@@ -4123,7 +4211,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         return result
 
     def _get_categories(self):
-        from .categories import CATEGORIES, category_counts, comment_category, list_plans, load_categories
+        from .categories import (
+            CATEGORIES,
+            category_counts,
+            comment_category,
+            list_plans,
+            load_categories,
+            safe_path,
+        )
         from .copy_state import load_copy
         from .plan_topics import file_plans
         from .project_state import linked_pages
@@ -4133,12 +4228,30 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 with _READ_LOCK:
                     read = self._reviewer_state(_load_read_state(self.artifact_dir), author)
                 from .review_versions import visible_store
-                store = visible_store(self.artifact_dir, self._v2_load(read_only=True), self._read_meta())
+                raw = self._v2_load(read_only=True)
+                store = visible_store(self.artifact_dir, raw, self._read_meta())
+                rows = None
                 if self._agent_reader():
-                    store = store_view(store)
-                plans = list_plans(self.artifact_dir, store=store)
-                topics = file_plans(self.artifact_dir, plans)
-                counts = category_counts(self.artifact_dir, author, read_state=read, store=store, plans=plans, submitted_only=self._agent_reader())
+                    store = store_view(store)  # fresh comment objects: no memo by id
+                else:
+                    # uzd: per-comment counting work, kept while this snapshot (and so every id) is alive and unchanged.
+                    signature = self._store_signature()
+                    memo = type(self)._count_rows
+                    if memo[0] != signature or memo[1] is not raw:
+                        memo = type(self)._count_rows = (signature, raw, {})
+                    rows = memo[2]
+                # uzd: ~60 plan metas and their topics took ~110 ms on FLD; they change only with these files.
+                topics_stamp = _metadata_stamp(safe_path(self.artifact_dir, "plan-topics.json"))
+                plans_key = (self._store_signature(), self._agent_reader(), _plan_stamps(self.artifact_dir), topics_stamp)
+                cached = type(self)._plans_listed
+                if cached[0] == plans_key:
+                    plans, topics = cached[1]  # read-only below
+                else:
+                    plans = list_plans(self.artifact_dir, store=store)
+                    topics = file_plans(self.artifact_dir, plans)
+                    type(self)._plans_listed = (plans_key, (plans, topics))
+                counts = category_counts(self.artifact_dir, author, read_state=read, store=store, plans=plans,
+                                         submitted_only=self._agent_reader(), rows=rows)
                 category_data = load_categories(self.artifact_dir)
                 try:
                     library = load_copy(self.artifact_dir)
@@ -4398,6 +4511,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             data = _load_seen(self.artifact_dir)
             key = _author_key(author)
             data.setdefault(key, {})
+            before = data[key].get(version)
+            # uzd: re-opening the same version is no news, and every bus append rebuilds History (1-4 s on FLD).
+            changed = not (isinstance(before, dict) and before.get("whole_hash") == stamps.get("whole"))
             data[key][version] = {
                 "ts": _now_iso(),
                 "whole_hash": stamps.get("whole"),
@@ -4408,11 +4524,12 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         rec.pop("section_hashes", None)
             _save_seen(self.artifact_dir, data)
 
-        _bus_append(self.bus_dir, self.slug, {
-            "event": "seen_updated",
-            "author": author,
-            "version": version,
-        })
+        if changed:
+            _bus_append(self.bus_dir, self.slug, {
+                "event": "seen_updated",
+                "author": author,
+                "version": version,
+            })
         self._respond(200, json.dumps({"ok": True, "author": author, "version": version}, ensure_ascii=False).encode(), "application/json")
 
     # ── Static fallthrough ──────────────────────────────────────────
@@ -4623,11 +4740,14 @@ def make_handler(
     BoundHandler.local_author_name = local_author_name
     BoundHandler.proxy_urls = proxy_urls
     BoundHandler.trusted_access_origins = trusted_access_origins
-    # At most four immutable bodies: full/poll × identity/gzip, one file revision.
+    # Cache the current revision per view, encoding and reader, with a separate marked variant.
     BoundHandler._store_responses = {}
     BoundHandler._store_snapshot = None
     BoundHandler._store_revision = None
     BoundHandler._page_marks = {}
+    BoundHandler._count_rows = (None, None, {})
+    BoundHandler._plans_listed = (None, None)
+    BoundHandler._stamp_checked = {}
     BoundHandler._meta_snapshot = None
     BoundHandler._meta_responses = {}
     BoundHandler._meta_response_lock = threading.Lock()
