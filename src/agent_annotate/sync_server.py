@@ -4759,6 +4759,33 @@ def make_handler(
     return BoundHandler
 
 
+_WARM_ROUTES = ("/comments.json?view=page", "/api/categories", "/api/history?latest=1")
+
+
+def _warm_after_change(port: int, base: str, watched: list[Path], interval: float = 1.0, stop=None) -> None:
+    """uzd: rebuild what an open reads as soon as the page changes, so the reviewer's next open finds it built.
+
+    Agents add cards every few minutes (FLD ~16 an hour), and each change made
+    the next open rebuild the page store, categories and the last Send
+    (FLD ~0.5 s at load 8, 2.7 s at load 25). A same-origin read is a browser
+    read, so it fills the exact cache entries a reviewer's open asks for."""
+    import urllib.request
+    warmed = None
+    while not (stop and stop.is_set()):
+        stamp = tuple(_file_key(path) for path in watched)
+        if stamp != warmed:
+            warmed = stamp
+            for route in _WARM_ROUTES:
+                request = urllib.request.Request(f"http://127.0.0.1:{port}{base}{route}",
+                                                 headers={"Accept-Encoding": "gzip", "Sec-Fetch-Site": "same-origin"})
+                try:
+                    with urllib.request.urlopen(request, timeout=120) as response:
+                        response.read()
+                except (OSError, ValueError):
+                    pass  # The reviewer's own read reports any error.
+        (stop or threading.Event()).wait(interval)
+
+
 def _load_signin() -> None:
     """A thread, so a slow or offline Infisical never delays the listener; share links work meanwhile."""
     from . import signin
@@ -4910,6 +4937,8 @@ def main():
                     pass
                 threading.Event().wait(30)
         threading.Thread(target=delivery_loop, daemon=True).start()
+        watched = [slug_dir / "comments.json", slug_dir / "current.meta.json", bus_dir / f"{slug}.ndjson"]
+        threading.Thread(target=_warm_after_change, args=(port, public_base_path, watched), daemon=True).start()
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n  Server stopped.")

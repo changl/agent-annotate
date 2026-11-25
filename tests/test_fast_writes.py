@@ -478,3 +478,38 @@ def test_removed_store_formats_are_refused_without_changing_the_file(tmp_path, r
         sync_server._load_v2_store(path)
     assert path.read_bytes() == before
     assert list(tmp_path.iterdir()) == [path]
+
+
+def test_a_change_rebuilds_what_the_next_open_reads_as_a_browser_read(server, monkeypatch):
+    httpd, root, _, _ = server
+    handler = httpd.RequestHandlerClass
+    seen = []
+    original = handler.do_GET
+
+    def record(self):
+        seen.append((self.path, self._agent_reader()))
+        return original(self)
+
+    def wait_for(n):
+        deadline = time.monotonic() + 5
+        while len(seen) < n and time.monotonic() < deadline:
+            time.sleep(.02)
+
+    monkeypatch.setattr(handler, "do_GET", record)
+    stop = threading.Event()
+    watched = [root / "comments.json", root / "current.meta.json"]
+    warm = threading.Thread(target=sync_server._warm_after_change, args=(httpd.server_port, "", watched, .05, stop), daemon=True)
+    warm.start()
+    try:
+        round_ = [(route, False) for route in sync_server._WARM_ROUTES]
+        wait_for(3)
+        assert seen == round_  # at start
+        time.sleep(.3)
+        assert len(seen) == 3  # nothing changed, nothing read
+        assert request(httpd, "/api/comments", "POST", {"anchor_id": "s:test", "text": "Agent card"})[0] == 201
+        wait_for(6)
+        time.sleep(.3)
+        assert seen == round_ * 2
+    finally:
+        stop.set()
+        warm.join(timeout=2)

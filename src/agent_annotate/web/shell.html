@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>annotate</title>
 <link rel="icon" href="data:,">
+<!-- uzd: the first screen's reads leave before the stylesheets and scripts load and run (FLD ~150 ms); shell.js pollJson takes each answer once. A private review link opens its session first. -->
+<script>try{if(!/(^|&)review=/.test(location.hash.slice(1))){var R=window.__aaReads={};['./current.meta.json','./comments.json?view=page','./api/categories','./api/project'].forEach(function(u){R[u]=fetch(u,{cache:'no-cache',signal:AbortSignal.timeout(10000)});R[u].catch(function(){})})}}catch(e){}</script>
 <link rel="stylesheet" href="daisyui.css">
 <link rel="stylesheet" href="shell.css">
 <link rel="stylesheet" href="quill.snow.css">
