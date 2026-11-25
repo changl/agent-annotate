@@ -44,7 +44,7 @@ Proto.tab({key: 'questions',                     // questions|reference|running|
 **ctx**
 - `base`: the page's URL, ending in `/`. Use relative paths.
 - `data(area, fresh)`: promise of `GET proto/data/<area>.json`, cached until Reload or `fresh`.
-- `api(path, body, method)`: today's API helper (GET without body, POST with one). Shortcuts: `api.meta() comments() project() history() board() identity() capabilities() delivery() categories() seen() readState() copy()`. Answers, notes and Send use today's endpoints (`api/comments`, `api/rounds/submit`, ...); they save in this copy and the server is sandboxed so nothing is delivered.
+- `api(path, body, method)`: today's API helper (GET without body, POST with one). Shortcuts: `api.meta() comments() project() history() board() identity() (read once per visit) capabilities() delivery() categories() seen() readState() copy()`. Answers, notes and Send use today's endpoints (`api/comments`, `api/rounds/submit`, ...); they save in this copy and the server is sandboxed so nothing is delivered.
 - `prefs.get(k, d)` / `prefs.set(k, v)`: localStorage under `annotate-proto:`, the theme included, so nothing set here reaches an ordinary page on the same origin.
 - `icon(name, label)`: same as `Proto.icon`; the set is `Proto.ICONS` in `icons.js`. Add a glyph there only, never inline.
 - `go(tab, anchor)`: switch tab and scroll to the element with that id.

@@ -33,6 +33,21 @@ finishTake('r1').then(() => {
 """)
 
 
+def test_identity_is_read_once_per_visit(tmp_path):
+    """Questions 3: a Save's PUT waits for no identity read, so no redraw or reload can come between Save and the store."""
+    line = grab(FRAME, "    identity: () =>", ")),")
+    node(tmp_path, """
+const assert = require('assert');
+let reads = 0, fail = true;
+const api = () => { reads++; return fail ? Promise.reject(new Error('down')) : Promise.resolve({email: 'a@example.invalid'}); };
+const o = {""" + line.strip() + """};
+o.identity().catch(() => {
+  fail = false; return o.identity();  // a failed read is tried again
+}).then(i => { assert.ok(i.email); const n = reads; return o.identity().then(() => assert.strictEqual(reads, n, 'answered from the first read')); })
+  .catch(e => { console.error(e); process.exit(1); });
+""")
+
+
 def test_notice_style_matches_the_mock():
     """Frame 3, reference 3: field corners, no shadow, 4 px between wrapped rows, at every width."""
     css = _src("frame.css")

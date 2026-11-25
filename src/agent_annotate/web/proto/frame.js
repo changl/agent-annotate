@@ -101,7 +101,10 @@
   // Today's page API, as the live shell calls it. Writes land in this copy only; delivery is sandboxed.
   Object.assign(api, {
     meta: () => api('current.meta.json'), comments: () => api('comments.json'), project: () => api('api/project'),
-    history: () => api('api/history'), board: () => api('api/board'), identity: () => api('api/identity'),
+    history: () => api('api/history'), board: () => api('api/board'),
+    // the one read per visit, the frame's at load: a tab's first write (Questions' ?author=) waits for no network, so a Save
+    // lands before any redraw can close its editor on the old words or a reload can lose it (r12 fix53 questions 3)
+    identity: () => api.idP || (api.idP = api('api/identity').catch(e => { api.idP = null; throw e; })),
     capabilities: () => api('api/capabilities'), delivery: () => api('api/delivery'), categories: () => api('api/categories'),
     seen: () => api('api/seen'), readState: () => api('api/read-state'), copy: () => api('api/copy'),
   });
