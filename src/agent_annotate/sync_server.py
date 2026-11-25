@@ -89,6 +89,7 @@ USAGE (directory layout, version-pivot, comment lifecycle)
 
 import argparse
 import difflib
+import faulthandler
 import functools
 import gzip
 import hashlib
@@ -97,6 +98,7 @@ import ipaddress
 import json
 import os
 import re
+import signal
 import socket
 import stat
 import subprocess
@@ -4225,8 +4227,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         try:
             with _locked_store(self.artifact_dir, write=False):
                 author = self._author()
-                with _READ_LOCK:
-                    read = self._reviewer_state(_load_read_state(self.artifact_dir), author)
+                # Read-state writes replace the file atomically and may need the store lock.
+                read = self._reviewer_state(_load_read_state(self.artifact_dir), author)
                 from .review_versions import visible_store
                 raw = self._v2_load(read_only=True)
                 store = visible_store(self.artifact_dir, raw, self._read_meta())
@@ -4863,6 +4865,7 @@ def main():
         local_author=local_author,
         local_author_name=local_author_name,
     )
+    faulthandler.register(signal.SIGUSR1, all_threads=True)
     server = ReviewHTTPServer(("localhost", port), handler)
     if public_base_path:
         url = f"http://localhost:{port}{public_base_path}/"

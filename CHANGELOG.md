@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## 2.32.15
+
+- A page on page.db no longer freezes when a category poll and a read-state save arrive together (agent-annotate-azq). The poll held the store lock and waited for the read-state lock; the save held the read-state lock and waited for the store lock. Every later request, including Send, then queued behind them forever. The poll now reads the atomically replaced read-state file without that lock. On 2026-11-24 this froze the Rebex page twice within minutes, and Send could not go out. Page servers now dump all Python thread stacks to the page log on SIGUSR1.
+
 ## 2.32.14
 
 - A page owner that resumed in a new terminal keeps its page when another session publishes to it (agent-annotate-akg). Before a publish takes over a page whose recorded owner process has exited, it looks for the same owner session live in its original Orca worktree; if found, the page rebinds to that terminal and pending Sends go there. On 2026-11-24 an image worker's section publish took over the Rebex page this way after its orchestrator resumed, and two Sends (10 answers) went to the worker instead. A truly departed owner is still taken over as before.

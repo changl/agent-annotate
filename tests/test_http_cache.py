@@ -191,6 +191,42 @@ def test_history_disconnect_closes_without_trying_a_500(server, monkeypatch):
     assert not errors
 
 
+def test_sqlite_categories_can_poll_while_read_state_is_saving(server, monkeypatch):
+    from agent_annotate import sync_server
+
+    _, root, _ = server
+    store.import_page(root)
+    (root / ".comments.json.lock").touch()
+    saving, resume = threading.Event(), threading.Event()
+    save = sync_server._save_read_state
+    poll_finished = False
+
+    def pause_save(*args):
+        saving.set()
+        assert resume.wait(5)
+        # On a failed poll, let POST release its lock without entering the deadlock.
+        if poll_finished:
+            save(*args)
+
+    def mark_read():
+        with connection(server) as conn:
+            return request(conn, "/review/api/read-state", method="POST",
+                           body=json.dumps({"items": [{"id": "card", "sig": "read"}]}))[0].status
+
+    monkeypatch.setattr(sync_server, "_save_read_state", pause_save)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(mark_read)
+        try:
+            assert saving.wait(5)
+            with connection(server) as conn:
+                assert request(conn, "/review/api/categories")[0].status == 200
+            poll_finished = True
+        finally:
+            resume.set()
+        assert pending.result(timeout=5) == 200
+    assert store.snapshot(root).sidecar("read-state")["anonymous"]["card"]["sig"] == "read"
+
+
 def test_stamped_assets_validate_bytes_and_keep_immutable_policy_on_304(server):
     _, _, web = server
     path = f"/review/assets/{_mtime_stamp(web / 'shell.js')}/shell.js"
