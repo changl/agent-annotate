@@ -48,8 +48,8 @@ Proto.tab({key: 'questions',                     // questions|reference|running|
 - `prefs.get(k, d)` / `prefs.set(k, v)`: localStorage under `annotate-proto:`, the theme included, so nothing set here reaches an ordinary page on the same origin.
 - `icon(name, label)`: same as `Proto.icon`; the set is `Proto.ICONS` in `icons.js`. Add a glyph there only, never inline.
 - `go(tab, anchor)`: switch tab and scroll to the element with that id.
-- `toast(msg, {undo})`: a toast with an Undo link that runs `undo()`.
-- `inert(msg, undo)`: see below. `phone`: true at 900 px and under. `esc(s)`: HTML escape.
+- `toast(msg, {undo})`: a toast with an Undo link that runs `undo()`. Notices float over the page; while they show, the page keeps room at its end so any control can be scrolled clear of them, and only a notice's own box takes the pointer.
+- `inert(msg, undo)`: see below. `phone`: true at 900 px and under. `me`: his name for a reply he posts (`You` on a copy). `esc(s)`: HTML escape.
 
 **Data module.** `src/agent_annotate/proto_data/<area>.py` defines `build(page_dir: Path) -> dict` (JSON-safe). No module means `{}`. Read the page dir; read other systems read-only (`bd ... --readonly`, Orca worker list, Windmill job list). Never write outside the page dir. Errors return 500 with the message.
 

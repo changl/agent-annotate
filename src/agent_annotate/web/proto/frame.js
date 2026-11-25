@@ -222,15 +222,18 @@
     toastTimer = setTimeout(() => { el.innerHTML = ''; clearUnder(); }, opts.undo ? 9000 : 5000);
     setTimeout(clearUnder);
   }
-  // The notices stay where the mock puts them; a page control under them scrolls the least distance that leaves none covered,
-  // with room added below the page when it is too short to scroll (r12 audit45 frame 2, reference 2). Text lines ([data-line]) are not controls.
-  // shortcut: checked when a notice shows or leaves, not on his own scroll; upgrade to a scroll listener if covering while scrolling matters
+  // The notices stay where the mock puts them and float over the page as it scrolls under them. At rest no page control sits
+  // under them: the page scrolls the least distance that leaves none covered (r12 audit45 frame 2, reference 2). While they
+  // show, the page keeps room at its end as tall as their band, so any control can be scrolled clear of them, and only a
+  // notice's own box takes the pointer (frame.css) (r12 audit46 running 1). Text lines ([data-line]) are not controls.
   const CTRL = 'a[href],button,input,select,textarea,summary,[role=button]';
   const pinned = e => { for (; e && e !== document.body; e = e.parentElement) if (/fixed|sticky/.test(getComputedStyle(e).position)) return true; return false; };
   function clearUnder() {
     const el = document.getElementById('p-toast'), b = document.body;
     const r = el && el.children.length && !/\b(p-locked|qsheet-open)\b/.test(b.className) ? el.getBoundingClientRect() : null, top = r && r.top - 6, bot = r && r.bottom + 6, R = 600;
     if (!r || !r.height) { b.style.paddingBottom = ''; return; }
+    const band = Math.ceil(innerHeight - top);  // the page sets no padding of its own below (frame.css)
+    b.style.paddingBottom = band + 'px';
     const cs = [...document.querySelectorAll(CTRL)].map(c => [c, c.getBoundingClientRect()])
       .filter(([c, x]) => x.width && x.height && x.right > r.left && x.left < r.right && x.bottom > top - R && x.top < bot + R && !el.contains(c) && !pinned(c)).map(([, x]) => x);
     const clear = d => cs.every(x => x.bottom - d <= top || x.top - d >= bot);  // d: how far the page scrolls down
@@ -238,7 +241,7 @@
     const d = ds.find(clear);
     if (!d) return;
     const room = document.documentElement.scrollHeight - innerHeight - scrollY;
-    if (d > room) b.style.paddingBottom = Math.ceil(d - room) + 'px';
+    if (d > room) b.style.paddingBottom = band + Math.ceil(d - room) + 'px';
     scrollBy({top: d, behavior: 'instant'});
   }
   // a refused write already said so: a caller that does not catch it logs nothing (r12 audit35 frame 1)
@@ -257,6 +260,7 @@
     go(tab, anchor) { location.hash = tab + (anchor ? '/' + encodeURIComponent(anchor) : ''); },
     goTo: id => goTarget(id, () => true),
     get phone() { return phoneQ.matches; },
+    get me() { return COPY ? 'You' : myName(); },  // his reply's author as the store names it: a copy names his notes You (r12 audit46 running 2)
     refreshChips: () => { drawTabs(); refreshTop(); },
     // take(id, path) -> Undo: the note is hidden now and its DELETE goes when Undo is gone; taken(id); takeNow(): every pending one goes (before a Send)
     take, taken: id => TAKEN.has(id), takeNow: () => Promise.all([...TAKEN.keys()].map(id => finishTake(id, true))),  // Send's own: its round waits for them

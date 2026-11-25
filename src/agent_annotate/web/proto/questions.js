@@ -119,7 +119,8 @@
     reoQ: n => { const r = P.ctx && NK.reo(P.ctx)[n.id]; return !!r && typeof r === 'object'; },
     // a closed note never goes, as the server's round skips an archived one: every sheet, count and round read this (r12 audit41 questions 1)
     // a removed one (its Undo open, or its DELETE gone) never goes, from any copy of it a reader still holds (r12 audit44 reference 1)
-    out: n => { NK.settle(n); return !n.closed && !NK.reoQ(n) && !NK.rmd.has(n.id) && !(P.ctx && P.ctx.taken && P.ctx.taken(n.id)) && (!n.sent || !!n.edited || (n.replies || []).some(r => r.unsent) || n.id in NK.loc()); },
+    // a saved Send row no feed holds takes this visit's Close too (life1): a closed note's record never lists (r12 audit46 frame 2)
+    out: n => { NK.settle(n); NK.life1(n); return !n.closed && !NK.reoQ(n) && !NK.rmd.has(n.id) && !(P.ctx && P.ctx.taken && P.ctx.taken(n.id)) && (!n.sent || !!n.edited || (n.replies || []).some(r => r.unsent) || n.id in NK.loc()); },
     // a Send took it, with its edit and replies; another reviewer's stays pending, as the server leaves it (r12 audit22 frame 2)
     // and a peer's reply or edit on it stays pending too (r12 audit25 running 1)
     // a closed note's edit waits for its Re-open, as the server's round skips an archived one (r12 audit42 running 2)
@@ -404,9 +405,11 @@
     async reply(c, n, text, redraw) {
       const t = String(text || '').trim();
       if (!t) return false;
-      try { await c.api(`api/comments/${encodeURIComponent(n.id)}/reply`, {text: t}); } catch (e) { c.toast('Not posted: ' + e.message); return false; }
+      let res;
+      try { res = await c.api(`api/comments/${encodeURIComponent(n.id)}/reply`, {text: t}); } catch (e) { c.toast('Not posted: ' + e.message); return false; }
       NK.typed.delete(n.id);
-      (n.replies = n.replies || []).push({agent: false, who: 'You', text: t, ts: new Date().toISOString(), unsent: true});
+      // reply_ts: a copy's store stamps it, so a read that already holds it never lists it twice (noteSim)
+      (n.replies = n.replies || []).push({agent: false, who: c.me, text: t, ts: (res && res.reply_ts) || new Date().toISOString(), unsent: true});
       NK.put1(n.id, {replies: [{text: t}]});
       if (stOf(n) && stOf(n) !== 'open') n.status = 'open';
       redraw();
@@ -480,12 +483,12 @@
         html: `${rep ? 'Reply' : 'Edited'} · ${r.img && !r.on ? 'At a spot on a picture' : `On “${esc(cut(r.on || TABN[r.tab] || 'a note', 50))}”`}: ${esc(cut(w, 140))}`,
         go: () => { const h = NK.hooks[r.tab]; if (h && h.go) h.go(r); else c.go(r.tab || 'questions'); },
         save: async () => { const u = `api/comments/${encodeURIComponent(r.id)}`;
-          await (rep ? c.api(u + '/reply', {text: w}, undefined, true) : c.api(u, NK.body(r, w), 'PUT', true));
+          const res = await (rep ? c.api(u + '/reply', {text: w}, undefined, true) : c.api(u, NK.body(r, w), 'PUT', true));
           // written, not delivered: the kit's record keeps it as his edit or reply on a sent note, so every reader's row lists it
           // until a round goes, as a reload does, and a failed round leaves it in Send (r12 audit36 running 1)
           NK.put1(r.id, rep ? {replies: [{text: w}]} : {text: w});
           const n = (rep ? NK.th : NK.eds).get(r.id);
-          if (n && rep) (n.replies = n.replies || []).push({agent: false, who: 'You', text: w, ts: new Date().toISOString(), unsent: true});
+          if (n && rep) (n.replies = n.replies || []).push({agent: false, who: c.me, text: w, ts: (res && res.reply_ts) || new Date().toISOString(), unsent: true});
           if (n && !rep) Object.assign(n, {text: w, edited: true, flagged: false});
           const now = NK.ty()[k]; if (now && now.text === r.text) { NK.tySet(k, null); if (!rep) unedit(r); else NK.redo(r.tab); }
           else if (now && !rep) NK.tySet(k, {...now, was: w});  // changed since: its base is the edit this round delivers, so the earlier wording is a change (r12 audit34 running 2)
@@ -536,7 +539,11 @@
       const cur = (D && D.questions.find(x => x.id === nid)) || {}, prev = cur.sent && cur.decision;
       set({sent: true, read: false, decision: {...body, ts}, ...(prev ? {earlier: [{v: D.version, t: String(prev.ts || '').slice(0, 10), q: cur.prompt, a: (prev.text || '').split('\n\n')[0], own: true}, ...(cur.earlier || [])]} : {})});
     }
-    else if (act === 'reply') { const cur = (D && D.questions.find(x => x.id === nid)) || {}; set({replies: [...(cur.replies || []), {you: true, text: body.text, ts, sent: true}]}); }
+    else if (act === 'reply') { const cur = D && D.questions.find(x => x.id === nid);
+      // a note's reply in its feed's shape (questions.py), named as the store names it, and the note re-opened as the server does:
+      // every reader's read puts it back in its thread after a reload (noteSim) (r12 audit46 running 2)
+      if (cur) set({replies: [...(cur.replies || []), {you: true, text: body.text, ts, sent: true}]});
+      else { set({replies: [...((SIM[nid] || {}).replies || []), {agent: false, who: P.ctx.me, text: body.text, ts, unsent: true}], status: 'open'}); return {ok: true, reply_ts: ts}; } }
     // its simulated state goes too: a Send never carries a deleted id (r12 audit44 reference 1)
     else if (id && !act && method === 'DELETE') { if (added) NOTES.add.splice(NOTES.add.indexOf(added), 1); else NOTES.gone.add(nid); delete SIM[nid]; delete NOTES.text[nid]; }
     else if (id && !act && method === 'PUT' && body.text != null) { if (added) added.text = body.text; else NOTES.text[nid] = body.text; set({...(body.status ? {status: body.status} : {}), edited: true}); }  // edited: the feed keeps it only on a sent note
@@ -555,6 +562,7 @@
     for (const n of NOTES.add) if (!NOTES.sent.has(n.id) && !(SIM[n.id] || {}).closed) ids.add(n.id);
     for (const [id, s] of Object.entries(SIM)) if (s.edited && !s.closed) { ids.add(id); s.edited = false; }  // a closed one's edit waits for its Re-open
     ids.forEach(id => NOTES.sent.add(id));
+    ids.forEach(id => ((SIM[id] || {}).replies || []).forEach(r => { if (!r.you) r.unsent = false; }));  // the round took his note replies
     simSave();
     return {ok: true, comment_ids: [...ids]};
   }
@@ -573,9 +581,12 @@
       .concat(NOTES.add.filter(n => FEED[area].test(n.anchor || '') && !have.has(n.id))
         .map(n => ({id: n.id, a: n.anchor, l: n.label || '', text: n.text, who: 'You', at: n.at || '', v: n.version, target: n.target, sent: !!n.sent || NOTES.sent.has(n.id)})))
       // a note's Close, Re-open and Move on the copy, as Questions shows them (r12 fix17)
-      .map(n => { const s = SIM[n.id]; return !s ? n : {...n, ...('status' in s ? {status: s.status} : {}), ...('closed' in s ? {closed: s.closed} : {}), ...(s.edited && n.sent ? {edited: true, flagged: false} : {}), ...(s.anchor ? {a: s.anchor, l: s.label || '', target: s.target} : {})}; });
+      .map(n => { const s = SIM[n.id]; return !s ? n : {...n, ...('status' in s ? {status: s.status} : {}), ...('closed' in s ? {closed: s.closed} : {}), ...(s.edited && n.sent ? {edited: true, flagged: false} : {}), ...(s.anchor ? {a: s.anchor, l: s.label || '', target: s.target} : {}), ...(s.replies ? {replies: noteSim(n.replies, s.replies)} : {})}; });
     return d;
   };
+  // the copy's replies on a note after the feed's own, each once (a cached read has been through here already); a question's
+  // (you) stay with Questions' sim()
+  const noteSim = (rs, sr) => [...(rs || []), ...sr.filter(r => !r.you && !(rs || []).some(x => x.ts === r.ts && x.text === r.text))];
   // a newer version asks the same question again under a new id: his unsent answer and a copy's simulated one move to it (audit5 #02),
   // after a browser reload too, when the old version is no longer in memory: each keeps its question's words (p) (r12 audit7 frame 1, questions 1)
   function carry(old, d) {
@@ -619,6 +630,7 @@
         for (const k of NOTEP) if (k in s) o[k] = s[k];
         // his edit since the copy's Send, as the server answers it: edited, and un-flagged, so Remove shows as in the ordinary reader (r12 audit44 frame 4)
         if (s.edited && o.sent) Object.assign(o, {edited: true, flagged: false});
+        if (s.replies) o.replies = noteSim(o.replies, s.replies);
         return o; });
     return d;
   }

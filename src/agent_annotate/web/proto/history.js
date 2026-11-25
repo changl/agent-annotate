@@ -270,10 +270,11 @@
   const oneC = (ctx, d) => d && !P.notes.hit([...allC(), ...ctx.prefs.get('draft:hcnotes', [])], d, x => 'chart:' + (x.a || x.v)) ? d : null;
   const savedC = ctx => { if (!QR) QR = ctx.data('questions').then(q => { if (q && q !== QD) { QD = q; pruneC(ctx); ctx.refreshTop && ctx.refreshTop(); } }).catch(() => {}).finally(() => { QR = null; });
     const m = ctx.prefs.get('draft:hcnotes', []);
-    if (!QD) return [...m, ...CN.filter(n => P.notes.out(n) && !m.some(x => x.id === n.id))];
+    // a saved record is listed only while the kit still sends it: never once closed in this visit (r12 audit46 frame 2)
+    if (!QD) return [...m.filter(P.notes.out), ...CN.filter(n => P.notes.out(n) && !m.some(x => x.id === n.id))];
     // a saved record the read predates stays: no late or stale read removes its row (r12 audit14 running 1)
     const inQ = new Set((QD.notes || []).map(n => n.id)), l0 = allC().filter(n => P.notes.out(n) && !n.closed);
-    const l = [...l0, ...m.filter(r => !inQ.has(r.id) && !l0.some(x => x.id === r.id) && r.at && QD.at && Date.parse(r.at) >= Date.parse(QD.at) && !ctx.taken(r.id))];
+    const l = [...l0, ...m.filter(r => !inQ.has(r.id) && !l0.some(x => x.id === r.id) && r.at && QD.at && Date.parse(r.at) >= Date.parse(QD.at) && !ctx.taken(r.id) && P.notes.out(r))];
     const s = l.map(n => ({id: n.id, anchor: n.anchor, label: n.label, text: n.text, at: n.at, ...P.notes.state(n)}));
     if (JSON.stringify(s) !== JSON.stringify(m)) ctx.prefs.set('draft:hcnotes', s);
     return l; };
