@@ -238,9 +238,10 @@ body.p-gated :is(#p-top,#p-tabs,#p-main,#p-layer,#p-fab,.skip){display:none!impo
 
 /* toast */
 /* centred between 12 px margins, not from left:50%, so a long message gets the screen's width instead of half of it (fix3) */
-.p-toastwrap{position:fixed;left:12px;right:12px;bottom:20px;width:fit-content;margin:0 auto;z-index:40}
+.p-toastwrap{position:fixed;left:12px;right:12px;bottom:18px;width:fit-content;margin:0 auto;z-index:40}
 body:has(.qsend.sending [data-sendundo]) .p-toastwrap{display:none}  /* an earlier notice goes away while Send counts down: nothing covers its Undo (r12 fix10 frame 2); past the countdown a notice shows (r12 fix37) */
-.p-toast{display:flex;flex-wrap:wrap;row-gap:4px;align-items:center;gap:12px;background:var(--color-base-content);color:var(--color-base-100);border-radius:var(--radius-box);padding:8px 14px;box-shadow:0 8px 24px color-mix(in oklab,var(--color-base-content) 25%,transparent)}
+/* the mock's .toast: field corners, no shadow, 12 px between items and 4 px between wrapped rows (row-gap after gap, which resets it) (r12 audit45 frame 3) */
+.p-toast{display:flex;flex-wrap:wrap;align-items:center;gap:12px;row-gap:4px;background:var(--color-base-content);color:var(--color-base-100);border-radius:var(--radius-field);padding:8px 14px}
 .p-toast+.p-toast{margin-top:6px}  /* a plain notice above a pending Undo (r12 audit44 reference 2) */
 .p-toast .lk{color:var(--color-base-100);text-decoration:underline;white-space:nowrap}  /* the mock's: on a phone the links wrap as whole links */
 .p-toast .p-inert{color:inherit;border-color:currentColor}  /* the toast is inverted: the marker takes its text colour */
@@ -299,7 +300,7 @@ a.mi{text-decoration:none}
   .fab{display:inline-flex;align-items:center;gap:8px;position:fixed;right:14px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:9;height:52px;padding:0 20px 0 16px;border:0;border-radius:26px;background:var(--color-primary);color:var(--color-primary-content);font-weight:700;font-size:var(--fs-base);box-shadow:0 4px 14px color-mix(in oklab,#000 30%,transparent);cursor:pointer}
   .fab svg.pi{width:20px;height:20px;stroke-width:1.8}
   .fab.unk{background:var(--color-base-100);color:inherit;border:1px solid var(--line)}
-  .p-toastwrap{bottom:82px}.p-toast{border-radius:var(--radius-field)}  /* the mock's phone toast: above the floating Send */
+  .p-toastwrap{bottom:82px}  /* the mock's phone toast: above the floating Send */
   body:has(.qsend.sending) .p-toastwrap{bottom:132px}  /* and above the Sending bar (bottom 70 px) while a round is going (r12 fix37) */
   .sheet{padding:12px 8px}
   .sheet .box{max-height:calc(100vh - 24px);padding:14px}

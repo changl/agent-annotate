@@ -217,8 +217,8 @@ def test_second_audit_fixes_stay():
     # RR1 a read-only copy shows its own (simulated) Send in the header, never "Read-only copy"
     assert "const sendable = () => !!sendP;" in js and "roChip" not in js and "${beadsCtl()}${sendBtn('hide-ph')}" in js
     # fix3: the phone toast takes the screen's width (not half of it), wraps its links whole and sits above the floating Send
-    assert ".p-toastwrap{position:fixed;left:12px;right:12px;bottom:20px;width:fit-content;margin:0 auto" in css
-    assert "flex-wrap:wrap;row-gap:4px" in css and "text-decoration:underline;white-space:nowrap" in css and ".p-toastwrap{bottom:82px}" in css
+    assert ".p-toastwrap{position:fixed;left:12px;right:12px;bottom:18px;width:fit-content;margin:0 auto" in css
+    assert "gap:12px;row-gap:4px" in css and "text-decoration:underline;white-space:nowrap" in css and ".p-toastwrap{bottom:82px}" in css
 
 
 def test_fourth_check_frame_fixes_stay():

@@ -478,8 +478,10 @@
   // a failed save's words: the kit's second-spot rule (the typed draft again, or with another spot typed or open, a draft at their own spot)
   // the kit's prune as the feed first lands: a typed note a reload cut off from its Save's answer is that saved note (r12 audit42 running 3)
   const prune = c => { const t = P.notes.prune(c, [...LD.notes || [], ...mine], 'draft:lnote', BK); if (t && S.note === t.a) { S.note = ''; S.tgt = null; } };
-  // a draft whose Save the store has is that saved note's row, never a second one (r12 audit43 frame 2)
-  const one = (c, d) => d && !P.notes.hit([...(LD ? LD.notes || [] : c.prefs.get('draft:lnotes', [])), ...mine], d) ? d : null;
+  // a draft whose Save the store has is that saved note's row, never a second one (r12 audit43 frame 2); matched only against
+  // the notes this tab lists (unsent's own source): no other reader lists a doc: note, so another feed holding it (a copy's
+  // Questions feed during a held 201) left the words in no row (r12 audit45 frame 1)
+  const one = (c, d) => d && !P.notes.hit([...(LD ? LD.notes || [] : c.prefs.get('draft:lnotes', [])), ...mine], d, undefined, true) ? d : null;
   const putBack = (c, d) => P.notes.failed(c, BK, d, typed(c), S.note ? {a: S.note, tgt: S.tgt} : null, x => c.prefs.set('draft:lnote', x));
   const noteHtml = (c, d) => `On “${c.esc(cut((d.tgt && d.tgt.quote) || d.line || d.l || 'Pages & links', 50))}”:${c.esc(cut(d.text.trim(), 140))}`;
   const goTyped = async (c, d) => { openAt(await c.data('links'), d.a); S.note = d.a; S.tgt = d.tgt || null; S.hl = '';

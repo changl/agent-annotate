@@ -21,7 +21,7 @@ FRAME, Q, RUN = SRC["frame.js"], SRC["questions.js"], SRC["running.js"]
 def test_the_shared_toast_undo_asks_the_gate():
     toast = grab(FRAME, "  function toast(msg, opts = {}) {", "\n  }")
     assert "const keys = opts.going === undefined ? [true] : [].concat(opts.going);" in toast
-    assert "if (undo) undo.onclick = () => { if (P.going && keys.some(k => P.going(typeof k === 'function' ? k() : k))) return; el.innerHTML = ''; opts.undo(); };" in toast
+    assert "if (undo) undo.onclick = () => { if (P.going && keys.some(k => P.going(typeof k === 'function' ? k() : k))) return; el.innerHTML = ''; clearUnder(); opts.undo(); };" in toast
     assert "const inert = (msg, undo, going) => toast(msg, {inert: true, undo: undo || (() => {}), going: undo ? going : false});" in FRAME
     # true: any Undo naming no row is refused while the round is held; a note id the round carries counts too
     assert "key === false || !(key === true || GOING.has(key) || GOING.has('x:' + key) || CARRY.has(key))" in Q

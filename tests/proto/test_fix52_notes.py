@@ -6,7 +6,7 @@ from test_fix17_notes import KIT, STUBS, grab, node
 
 
 def test_remove_takes_the_reopen_row_and_undo_puts_it_back(tmp_path):
-    take = grab(FRAME, "  const TAKEN = new Map()", "TAKEN.has(n.id))} : d;")
+    take = grab(FRAME, "  const TAKEN = new Map()", "!gone(n.id))} : d;")
     node(tmp_path, STUBS + KIT + "\nconst ctx = c, prefs = c.prefs, sendP = null, toast = () => {}; let sends = 0; const refreshSend = () => { sends++; };\n"
          + take + """
 P.notes = NK; P.ctx = c;

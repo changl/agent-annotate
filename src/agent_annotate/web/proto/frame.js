@@ -78,7 +78,8 @@
   function finishTake(id, own) {
     const path = TAKEN.get(id); clearTimeout(takenT[id]); delete takenT[id];
     if (!path) return Promise.resolve();
-    return api(path, undefined, 'DELETE', own).then(() => { if (P.notes && P.notes.rmd) P.notes.rmd.add(id); }).catch(e => { if (!/not found/i.test(e.message)) toast('A note you removed could not be removed: ' + e.message); })
+    const rm = () => { if (P.notes && P.notes.rmd) P.notes.rmd.add(id); };  // not found: an earlier visit's DELETE already went
+    return api(path, undefined, 'DELETE', own).then(rm).catch(e => { if (/not found/i.test(e.message)) rm(); else toast('A note you removed could not be removed: ' + e.message); })
       .finally(() => { TAKEN.delete(id); keepTaken(); });
   }
   const take = (id, path) => {
@@ -94,7 +95,9 @@
   // a saved-draft list with the removed record id back at its old place, from was (the list before Remove); later changes kept
   P.putBack = (now, was, id) => { const i = was.findIndex(x => x.id === id), l = now.filter(x => x.id !== id); if (i >= 0) l.splice(Math.min(i, l.length), 0, was[i]); return l; };
   // and every read takes his Close and Re-open of this visit first (the notes kit's lc), however late it answers (r12 audit42 reference 1)
-  const unTaken = d => (d = P.notes && P.notes.lc ? P.notes.lc(d) : d) && Array.isArray(d.notes) && TAKEN.size ? {...d, notes: d.notes.filter(n => !TAKEN.has(n.id))} : d;
+  // a read the store answered before its DELETE landed (a reload with the Remove pending) never shows the note again (r12 audit45 questions 2)
+  const gone = id => TAKEN.has(id) || !!(P.notes && P.notes.rmd && P.notes.rmd.has(id));
+  const unTaken = d => (d = P.notes && P.notes.lc ? P.notes.lc(d) : d) && Array.isArray(d.notes) && d.notes.some(n => gone(n.id)) ? {...d, notes: d.notes.filter(n => !gone(n.id))} : d;
   // Today's page API, as the live shell calls it. Writes land in this copy only; delivery is sandboxed.
   Object.assign(api, {
     meta: () => api('current.meta.json'), comments: () => api('comments.json'), project: () => api('api/project'),
@@ -201,8 +204,8 @@
     // a plain notice never takes a pending Undo away: it shows above it for its 5 s, and the Undo stays until used or timed out (r12 audit44 reference 2)
     if (!opts.undo && !opts.hold && el.querySelector('[data-undo]')) {
       const x = document.createElement('div'); x.className = 'p-toast'; x.setAttribute('role', 'status');
-      x.innerHTML = `<span>${esc(msg)}</span>${mark ? P.inertMark() : ''}`; el.prepend(x); setTimeout(() => x.remove(), 5000);
-      return;
+      x.innerHTML = `<span>${esc(msg)}</span>${mark ? P.inertMark() : ''}`; el.prepend(x); setTimeout(() => { x.remove(); clearUnder(); }, 5000);
+      setTimeout(clearUnder); return;  // after the caller's redraw
     }
     clearTimeout(toastTimer);
     if (S.sentPaint) { S.sentPaint = false; drawTop(); drawFab(); if (S.menu === 'nav') drawLayer(); }  // the last-Send chip changes with the receipt (r12 fix10 frame 4)
@@ -212,8 +215,28 @@
     // keys or note ids) is refused and leaves everything as it is; an Undo naming no row is refused while the round is held.
     // going set to false only for an Undo that touches no Send row (test_fix40_send lists them)
     const keys = opts.going === undefined ? [true] : [].concat(opts.going);
-    if (undo) undo.onclick = () => { if (P.going && keys.some(k => P.going(typeof k === 'function' ? k() : k))) return; el.innerHTML = ''; opts.undo(); };
-    toastTimer = setTimeout(() => { el.innerHTML = ''; }, opts.undo ? 9000 : 5000);
+    if (undo) undo.onclick = () => { if (P.going && keys.some(k => P.going(typeof k === 'function' ? k() : k))) return; el.innerHTML = ''; clearUnder(); opts.undo(); };
+    toastTimer = setTimeout(() => { el.innerHTML = ''; clearUnder(); }, opts.undo ? 9000 : 5000);
+    setTimeout(clearUnder);
+  }
+  // The notices stay where the mock puts them; a page control under them scrolls the least distance that leaves none covered,
+  // with room added below the page when it is too short to scroll (r12 audit45 frame 2, reference 2). Text lines ([data-line]) are not controls.
+  // shortcut: checked when a notice shows or leaves, not on his own scroll; upgrade to a scroll listener if covering while scrolling matters
+  const CTRL = 'a[href],button,input,select,textarea,summary,[role=button]';
+  const pinned = e => { for (; e && e !== document.body; e = e.parentElement) if (/fixed|sticky/.test(getComputedStyle(e).position)) return true; return false; };
+  function clearUnder() {
+    const el = document.getElementById('p-toast'), b = document.body;
+    const r = el && el.children.length && !/\b(p-locked|qsheet-open)\b/.test(b.className) ? el.getBoundingClientRect() : null, top = r && r.top - 6, bot = r && r.bottom + 6, R = 600;
+    if (!r || !r.height) { b.style.paddingBottom = ''; return; }
+    const cs = [...document.querySelectorAll(CTRL)].map(c => [c, c.getBoundingClientRect()])
+      .filter(([c, x]) => x.width && x.height && x.right > r.left && x.left < r.right && x.bottom > top - R && x.top < bot + R && !el.contains(c) && !pinned(c)).map(([, x]) => x);
+    const clear = d => cs.every(x => x.bottom - d <= top || x.top - d >= bot);  // d: how far the page scrolls down
+    const ds = [0, ...cs.flatMap(x => [x.bottom - top, x.top - bot])].filter(d => d >= -scrollY && Math.abs(d) <= R).sort((p, q) => Math.abs(p) - Math.abs(q));
+    const d = ds.find(clear);
+    if (!d) return;
+    const room = document.documentElement.scrollHeight - innerHeight - scrollY;
+    if (d > room) b.style.paddingBottom = Math.ceil(d - room) + 'px';
+    scrollBy({top: d, behavior: 'instant'});
   }
   // a refused write already said so: a caller that does not catch it logs nothing (r12 audit35 frame 1)
   addEventListener('unhandledrejection', e => { if (P.carried(e.reason)) e.preventDefault(); });

@@ -68,7 +68,7 @@ def test_the_receipt_is_never_replaced_by_an_undo_toast(tmp_path):
     node(tmp_path, """
 const assert = require('assert');
 const el = {innerHTML: '', querySelector: () => null}, document = {getElementById: () => el};
-const S = {}, COPY = false, esc = s => s, P = {inertMark: () => ''};
+const S = {}, COPY = false, esc = s => s, P = {inertMark: () => ''}, clearUnder = () => {};
 let later = [], now = 1000; Date.now = () => now;
 const setTimeout = (f, ms) => { later.push([f, ms]); return later.length; }, clearTimeout = () => {};
 """ + fn + """

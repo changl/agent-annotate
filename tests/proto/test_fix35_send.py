@@ -71,7 +71,7 @@ assert.deepStrictEqual(got, [true, false, false]);
 
 def test_remove_on_a_carried_note_says_so_and_takes_nothing(tmp_path):
     """Questions 3: past the round check, Remove on a note the round carries never hides it, never queues its DELETE."""
-    fn = grab(FRAME, "  const TAKEN = new Map()", "TAKEN.has(n.id))} : d;")
+    fn = grab(FRAME, "  const TAKEN = new Map()", "!gone(n.id))} : d;")
     node(tmp_path, """
 const assert = require('assert');
 let said = ''; const prefs = {set: () => {}}, toast = t => { said = t; }, api = async () => {}, P = {};

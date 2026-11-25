@@ -51,7 +51,7 @@ S.countsIn = true; saved = 2; assert.strictEqual(sendNum(), 2);  // once read to
 
 def test_taken_note_stays_until_undo_is_gone(tmp_path):
     """Frame 4, questions 2: Remove hides the note; Undo cancels the DELETE, so the record never changes; later the DELETE goes."""
-    fn = grab(FRAME, "  const TAKEN = new Map()", "TAKEN.has(n.id))} : d;")
+    fn = grab(FRAME, "  const TAKEN = new Map()", "!gone(n.id))} : d;")
     node(tmp_path, f"""
 const assert = require('assert');
 const store = {{}}, calls = [], P = {{}}, sendP = null, refreshSend = () => {{}};
