@@ -159,7 +159,8 @@ def _open_anchors(page_dir: Path, cards: list[dict]) -> set[str] | None:
     from .categories import comment_category
     path = page_dir / "comments.json"
     try:
-        store = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"anchors": {}}
+        from .cold import merged
+        store = merged(page_dir, json.loads(path.read_text(encoding="utf-8"))) if path.exists() else {"anchors": {}}
     except (OSError, ValueError):
         return None
     anchors = store.get("anchors") if isinstance(store, dict) else None

@@ -4,7 +4,9 @@ Record files of a page directory: comments.json, current.meta.json,
 .review-drafts/vN.json, project.json, read-state.json, seen.json,
 categories.json, plan-topics.json, cards.json and rounds.ndjson. Outside it:
 the page's bus <bus root>/<project>/<slug>.ndjson and its delivery journal
-<state>/deliveries/<project>/<slug>.json.
+<state>/deliveries/<project>/<slug>.json. Settled feedback from older versions
+lives in comments.cold.json (cold.py): written only by the page server, never
+mirrored into page.db, and merged back in by read_comments.
 
 Every writer goes through this module, so the storage behind a page can
 change in one place. This is the JSON backend: each function does exactly
@@ -48,9 +50,19 @@ def read_json(path, default=None):
 
 
 def read_comments(slug_dir) -> dict:
+    """The whole store: comments.json and, merged in, its cold file (cold.py)."""
+    from .cold import merged
     from .sync_server import _validate_store
-    data = read_json(Path(slug_dir) / "comments.json")
-    return _validate_store(data) if data is not None else json.loads(json.dumps(_EMPTY_STORE))
+    for attempt in range(3):
+        data = read_json(Path(slug_dir) / "comments.json")
+        if data is None:
+            return json.loads(json.dumps(_EMPTY_STORE))
+        try:
+            return merged(slug_dir, _validate_store(data))
+        except ValueError:
+            if attempt == 2:  # a split replaced the cold file between the two reads; read both again
+                raise
+    raise AssertionError("unreachable")
 
 
 def read_meta(slug_dir) -> dict:
@@ -101,8 +113,15 @@ class DbSnapshot(Snapshot):
     def comments(self) -> dict:
         if "comments" not in self._parsed:
             from .sync_server import _validate_store
+            from .cold import merged
             value = self._value("comments.json", None)
-            self._parsed["comments"] = _validate_store(value) if isinstance(value, dict) else json.loads(json.dumps(_EMPTY_STORE))
+            try:
+                self._parsed["comments"] = (merged(self.dir, _validate_store(value)) if isinstance(value, dict)
+                                            else json.loads(json.dumps(_EMPTY_STORE)))
+            except ValueError:
+                if not (isinstance(value, dict) and "cold" in value):
+                    raise
+                self._parsed["comments"] = read_comments(self.dir)  # the cold file moved on since this commit
         return self._parsed["comments"]
 
     @property
@@ -434,6 +453,9 @@ def _record(path, write, text=None, value=None):
 def write_json(path, data) -> None:
     """Pretty JSON, atomically, keeping the file's mode (0600 when new)."""
     path = Path(path)
+    if path.name == "comments.json" and isinstance(data, dict):
+        from .cold import normalize
+        normalize(data)  # a writer that added or removed items under a cold summary
 
     def write():
         _refuse_if_moved(path.parent)
@@ -578,12 +600,16 @@ def append_round(directory, event: dict) -> None:
     directory = Path(directory)
     _refuse_if_moved(directory)
     path = directory / "rounds.ndjson"
+    # A line can only hold this id if it contains its text (FLD: 2.6 MB of rounds parsed per Send).
+    needle = event["id"] if isinstance(event["id"], str) and event["id"].isalnum() and event["id"].isascii() else ""
 
     def write():
         with path.open("a+", encoding="utf-8") as source:
             fcntl.flock(source.fileno(), fcntl.LOCK_EX)
             source.seek(0)
             for line in source:
+                if needle not in line:
+                    continue
                 try:
                     old = json.loads(line)
                 except ValueError:

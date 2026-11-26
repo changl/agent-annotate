@@ -1,0 +1,372 @@
+"""uzd.9: settled feedback from older versions lives in comments.cold.json; every view reads as before."""
+import copy
+import http.client
+import itertools
+import json
+import shutil
+import threading
+import uuid
+
+import pytest
+
+from agent_annotate import cold, delivery, store, sync_server
+from agent_annotate.sync_server import _docs_sig, _page_keep, _page_rules
+
+
+def _q(cid, aid, version, prompt, number, **extra):
+    return {"id": cid, "anchor_id": aid, "version": version, "number": number, "author": "agent:test",
+            "status": "open", "text": prompt, "replies": [],
+            "decision_request": {"prompt": prompt, "options": [{"id": "a", "label": "A"}]}, **extra}
+
+
+def _note(cid, aid, version, number, **extra):
+    return {"id": cid, "anchor_id": aid, "version": version, "number": number, "author": "reviewer@example.test",
+            "status": "addressed_by_agent", "text": f"Note {cid}", "replies": [], **extra}
+
+
+ANSWERED = {"verdict": "accept", "by": "reviewer@example.test", "ts": "2026-01-01T00:00:00Z"}
+COLD = {"settled", "body-new", "old-note", "gone", "plan-v1"}
+HOT = {"now", "open-old", "peer", "body-old", "unsent", "plan-v2", "plan-v3", "plan-q", "draft", "mixed-open"}
+
+
+def _store():
+    done = {"status": "addressed_by_agent", "decision": ANSWERED}
+    anchors = {
+        # A current card that reuses an old number (4) and asks a prompt answered before.
+        "d:now": [_q("now", "d:now", "v3", "Q2: Ship it?", 4)],
+        "d:open-old": [_q("open-old", "d:open-old", "v1", "Still open?", 1)],
+        "d:peer": [_q("peer", "d:peer", "v1", "Ship it?", 3, **done)],
+        "d:settled": [_q("settled", "d:settled", "v1", "Old and done?", 4, **done)],
+        "d:body": [_q("body-old", "d:body", "v2", "Baked in the body?", 5, **done),
+                   _q("body-new", "d:body", "v2", "Asked again?", 6, **done)],
+        "s:note": [_note("unsent", "s:note", "v1", 7,
+                         replies=[{"author": "reviewer@example.test", "text": "Not sent", "sent_at": None}]),
+                   _note("old-note", "s:note", "v2", 8)],
+        "plan:p": [{**_note(f"plan-{v}", "plan:p", v, 9 + n, category="plans", doc="plan:p"), "status": "resolved_in_version"}
+                   for n, v in enumerate(("v1", "v2", "v3"))]
+                  + [_q("plan-q", "plan:p", "v1", "Plan question?", 12, category="plans", doc="plan:p", **done)],
+        "d:draft": [_note("draft", "d:draft", "v9", 13)],
+    }
+    for k in range(40):
+        aid = f"d:old{k % 8}"
+        item = (_q(f"old-q-{k}", aid, ("v1", "v2")[k % 2], f"Old question {k}?", 20 + k, **done) if k % 2
+                else _note(f"old-n-{k}", aid, ("v1", "v2")[k % 3 == 0], 20 + k,
+                           replies=[{"author": "agent:test", "text": "Done", "sent_at": "2026-01-01T00:00:00Z"}]))
+        if k % 5 == 0:
+            item["carry_history"] = [{"from": "v1", "to": "v2"}]
+        anchors.setdefault(aid, []).append(item)
+    anchors["d:old0"].insert(2, _q("mixed-open", "d:old0", "v1", "Open between settled items?", 70))
+    archived = {"d:gone": [_q("gone", "d:gone", "v1", "Archived?", 71, status="archived", decision=ANSWERED)]}
+    return {"schema_version": 2, "anchors": anchors, "archived": archived}
+
+
+CARDS = '<div class="card" data-anchor-id="d:body">Q</div><div class="card" data-anchor-id="d:now">Q</div>'
+
+
+def _page(root, data=None):
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "versions").mkdir()
+    for v in ("v1", "v2", "v3"):
+        (root / "versions" / f"{v}.html").write_text(CARDS)
+    (root / "current.meta.json").write_text(json.dumps(
+        {"current": "v3", "history": [{"version": v} for v in ("v1", "v2", "v3")]}))
+    (root / "plans/p/versions").mkdir(parents=True)
+    (root / "plans/p/meta.json").write_text(json.dumps(
+        {"current": "v2", "history": [{"version": v} for v in ("v1", "v2", "v3")]}))
+    (root / "plans/p/versions/v2.html").write_text('<div class="card" data-anchor-id="plan:p">Q</div>')
+    (root / "comments.json").write_text(json.dumps(data or _store()))
+    return root
+
+
+def _publish_v4(root):
+    (root / "versions/v4.html").write_text(CARDS)
+    store.write_text(root / "current.meta.json", json.dumps(
+        {"current": "v4", "history": [{"version": v} for v in ("v1", "v2", "v3", "v4")]}))
+
+
+def _docs(root):
+    meta = json.loads((root / "current.meta.json").read_text())
+    whole = store.read_comments(root)
+    return {**sync_server._review_docs(root, meta), **sync_server._plan_docs(root, whole)}
+
+
+def _raw(root):
+    return json.loads((root / "comments.json").read_text())
+
+
+def _ids(data, areas=cold.AREAS):
+    return {c["id"] for area in areas for items in (data.get(area) or {}).values() for c in items}
+
+
+def request(httpd, path, method="GET", payload=None, headers=None):
+    connection = http.client.HTTPConnection(*httpd.server_address, timeout=5)
+    try:
+        connection.request(method, path, json.dumps(payload) if payload is not None else None, headers or {})
+        response = connection.getresponse()
+        return response.status, dict(response.getheaders()), response.read()
+    finally:
+        connection.close()
+
+
+@pytest.fixture
+def sandbox(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "project.json").write_text('{"slugs": {}}')
+    from agent_annotate import cli
+    for module in (sync_server, delivery, cli):
+        monkeypatch.setattr(module, "STATE_DIR", state)
+    monkeypatch.setattr(delivery, "_target_ready", lambda _: (True, ""))
+    monkeypatch.setattr(delivery, "_orca", lambda *a: {"send": {"accepted": True}})
+    monkeypatch.setattr(sync_server, "_now_iso", lambda: "2026-11-26T00:00:00Z")
+    monkeypatch.setattr(cold, "MIN_ITEMS", 5)
+    counter = {"n": itertools.count(1)}
+    monkeypatch.setattr(sync_server.uuid, "uuid4", lambda: uuid.UUID(int=next(counter["n"]) << 80))
+    servers = []
+
+    def serve(root, name, *, split=True):
+        handler = sync_server.make_handler(root, slug="page", bus_dir=root / name, local_author="reviewer@example.test")
+        if not split:
+            handler._split_store = lambda self: None
+        httpd = sync_server.ReviewHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        servers.append((httpd, thread))
+        return httpd, handler
+
+    serve.reset_ids = lambda: counter.update(n=itertools.count(1))
+    yield serve
+    for httpd, thread in servers:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=2)
+
+
+VIEWS = ("/comments.json?view=page", "/comments.json?view=poll", "/comments.json", "/api/comments",
+         "/api/categories", "/api/history", "/api/history?latest=1")
+
+
+def _views(httpd, headers=None):
+    out = {}
+    for path in VIEWS:
+        status, _, body = request(httpd, path, headers=headers)
+        assert status == 200, (path, body[:300])
+        data = json.loads(body)
+        if isinstance(data, dict):
+            data.pop("store_mark", None)
+        out[path] = json.dumps(data, ensure_ascii=False)
+    return out
+
+
+def _same(a, b, root_a, root_b):
+    for name in ("proj-a/page.ndjson",):  # the bus carries wall-clock seconds: History reads one copy
+        source = root_a / name
+        if source.exists():
+            (root_b / "proj-b").mkdir(exist_ok=True)
+            shutil.copyfile(source, root_b / "proj-b/page.ndjson")
+    for headers in (None, {"X-Annotate-Agent": "agent:test"}):
+        va, vb = _views(a, headers), _views(b, headers)
+        for path in VIEWS:
+            assert va[path] == vb[path], path
+    assert json.dumps(store.read_comments(root_a)) == json.dumps(store.read_comments(root_b))
+    assert json.dumps(store.snapshot(root_a).comments) == json.dumps(store.snapshot(root_b).comments)
+
+
+def _writes(httpd, serve):
+    serve.reset_ids()
+    agent = {"X-Annotate-Agent": "agent:test"}
+    steps = [
+        ("POST", "/api/comments/settled/reply", {"text": "Back to this"}, None),      # cold: reopens it
+        ("POST", "/api/comments/old-q-3/decision", {"verdict": "changes", "text": "Revise"}, None),  # cold, answered
+        ("PUT", "/api/comments/old-note", {"status": "archived"}, None),               # cold, moves area
+        ("POST", "/api/comments", {"anchor_id": "d:now", "text": "New note", "version": "v3"}, None),
+        ("POST", "/api/comments/batch", {"idempotency": "anchor", "items": [
+            {"anchor_id": "d:old1", "text": "Old question 1?", "version": "v4", "number": 21,
+             "decision_request": {"prompt": "Old question 1?", "options": [{"id": "a", "label": "A"}]}}]}, agent),
+        ("POST", "/api/rounds/submit", {}, None),
+    ]
+    out = []
+    for method, path, payload, headers in steps:
+        status, _, body = request(httpd, path, method, payload, headers)
+        assert status in (200, 201), (path, body[:300])
+        out.append(json.loads(body))
+    return out
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+def test_split_page_reads_and_writes_exactly_as_one_file(tmp_path, sandbox, backend):
+    root_a, root_b = _page(tmp_path / "a"), _page(tmp_path / "b")
+    original = json.dumps(_store())
+    if backend == "sqlite":
+        for root in (root_a, root_b):
+            store.import_page(root, project="p", slug="page")
+    a, _ = sandbox(root_a, "proj-a")
+    b, _ = sandbox(root_b, "proj-b", split=False)
+
+    # The first page view migrates: settled older feedback moves out, nothing else changes.
+    _same(a, b, root_a, root_b)
+    raw = _raw(root_a)
+    assert cold.KEY in raw and cold.exists(root_a) and not cold.exists(root_b)
+    cold_ids = _ids(json.loads((root_a / cold.NAME).read_text()))
+    assert COLD <= cold_ids and not (HOT & cold_ids) and not (_ids(raw) & cold_ids)
+    assert json.dumps(store.read_comments(root_a)) == original
+    if backend == "sqlite":
+        assert store.backend(root_a) == "sqlite"
+        conn = store.connect(root_a / store.DB_NAME)
+        assert json.loads(store.export_texts(conn)["comments.json"]) == raw
+        conn.close()
+
+    marks = [json.loads(request(s, "/comments.json?view=page")[2])["store_mark"] for s in (a, b)]
+    results = [_writes(s, sandbox) for s in (a, b)]
+    assert results[0] == results[1]
+    assert results[0][3]["number"] == 72  # one past the highest number, cold ones included
+    _same(a, b, root_a, root_b)
+    hot = _ids(_raw(root_a))
+    assert {"settled", "old-q-3", "old-note"} <= hot  # written: moved back
+    assert cold.KEY in _raw(root_a) and "body-new" not in hot
+    since = []
+    for s, mark in zip((a, b), marks):
+        page = json.loads(request(s, "/comments.json?view=page", headers={"X-Annotate-Store-Mark": mark})[2])
+        since.append(sorted(page.get("changed_after", [])))
+    assert since[0] == since[1] and "settled" in since[0] and "body-new" not in since[0]
+
+    # A new version re-splits for the new documents, appending to the cold file in place.
+    gen = _raw(root_a)[cold.KEY]["gen"]
+    before = json.loads((root_a / cold.NAME).read_text())
+    for root in (root_a, root_b):
+        _publish_v4(root)
+    _same(a, b, root_a, root_b)
+    after = json.loads((root_a / cold.NAME).read_text())
+    assert _raw(root_a)[cold.KEY]["gen"] == gen and _raw(root_a)[cold.KEY]["docs"] == _docs_sig(_docs(root_a))
+    assert _ids(after) > _ids(before) and all(after[area][aid][:len(items)] == items
+                                              for area in cold.AREAS for aid, items in before[area].items())
+    assert "settled" in _ids(after) and _ids(before) & _ids(_raw(root_a))  # moved-back copies stay in the file
+
+
+def test_reader_of_a_page_without_cold_store_is_unchanged(tmp_path):
+    root = _page(tmp_path / "p")
+    assert json.dumps(store.read_comments(root)) == json.dumps(_store())
+    assert cold.merged(root, _store()) == _store() and not cold.exists(root)
+
+
+def test_small_page_stays_one_file_until_it_grows(tmp_path, sandbox, monkeypatch):
+    # Big enough to try a split, too little would go cold.
+    monkeypatch.setattr(cold, "MIN_ITEMS", cold.count_items(_store()))
+    root = _page(tmp_path / "p")
+    calls = []
+    real = cold.rebalance
+    monkeypatch.setattr(cold, "rebalance", lambda *a, **k: calls.append(1) or real(*a, **k))
+    httpd, handler = sandbox(root, "proj")
+    for _ in range(3):
+        assert request(httpd, "/comments.json?view=page")[0] == 200
+        request(httpd, "/api/comments/now/reply", "POST", {"text": "More"})
+    assert not cold.exists(root) and cold.KEY not in _raw(root)
+    assert str(root) in handler._cold_declined and calls == [1]
+
+
+def _split_with(root, failing_call=None, monkeypatch=None):
+    """One server split, with store.write_bytes failing (before its rename) on call `failing_call`."""
+    handler = sync_server.make_handler(root, slug="page", bus_dir=None, local_author="reviewer@example.test")
+    real, count = store.write_bytes, itertools.count(1)
+
+    def write_bytes(path, body, **kw):
+        if next(count) == failing_call:
+            raise OSError("disk full")
+        return real(path, body, **kw)
+
+    monkeypatch.setattr(store, "write_bytes", write_bytes)
+    try:
+        handler._split_store(handler.__new__(handler))
+    finally:
+        monkeypatch.setattr(store, "write_bytes", real)
+
+
+@pytest.mark.parametrize("append", [True, False])
+def test_a_crash_at_any_write_of_a_split_leaves_the_whole_store(tmp_path, monkeypatch, append):
+    monkeypatch.setattr(cold, "MIN_ITEMS", 5)
+    if not append:  # as when stale copies outnumber live cold items
+        monkeypatch.setattr(cold, "_extend", lambda *a: None)
+    # First split: cold file, then comments.json. A re-split appends to the cold file, then writes comments.json;
+    # a fresh re-split writes the whole comments.json, the cold file, then the split comments.json.
+    for resplit, failing in ((False, 1), (False, 2), (True, 1), (True, 2)) + (() if append else ((True, 3),)):
+        root = _page(tmp_path / f"p{resplit}{failing}")
+        if resplit:
+            _split_with(root, None, monkeypatch)
+            hot = _raw(root)
+            assert cold.KEY in hot
+            hot["anchors"]["d:old0"].append(_note("fresh", "d:old0", "v3", 90))  # goes cold with v4
+            store.write_json(root / "comments.json", hot)
+            _publish_v4(root)
+        original = json.dumps(store.read_comments(root))
+        with pytest.raises(OSError):
+            _split_with(root, failing, monkeypatch)
+        assert json.dumps(store.read_comments(root)) == original
+        _split_with(root, None, monkeypatch)  # the next page view finishes it
+        raw = _raw(root)
+        assert cold.KEY in raw and raw[cold.KEY]["docs"] == _docs_sig(_docs(root))
+        assert json.dumps(store.read_comments(root)) == original
+        assert not resplit or "fresh" in _ids(json.loads((root / cold.NAME).read_text())) - _ids(raw)
+
+
+def test_a_cold_file_from_another_split_is_never_merged(tmp_path, monkeypatch):
+    monkeypatch.setattr(cold, "MIN_ITEMS", 5)
+    root = _page(tmp_path / "p")
+    _split_with(root, None, monkeypatch)
+    other = json.loads((root / cold.NAME).read_text())
+    other["gen"] = "elsewhere"
+    (root / cold.NAME).write_text(json.dumps(other))
+    with pytest.raises(ValueError):
+        cold.attach(root, _raw(root))
+    with pytest.raises(ValueError):
+        store.read_comments(root)
+
+
+def _split_hot(root, whole):
+    docs = _docs(root)
+    rules, sig = _page_rules(docs), _docs_sig(docs)
+    hot, data, count = cold.split(whole, rules, _page_keep(whole, docs, rules), sig, "g1")
+    (root / cold.NAME).write_text(json.dumps(data))
+    return cold.attach(root, json.loads(json.dumps(hot))), rules, sig
+
+
+def test_an_item_cold_again_is_read_from_its_new_copy(tmp_path, monkeypatch):
+    monkeypatch.setattr(cold, "MIN_ITEMS", 5)
+    root = _page(tmp_path / "p")
+    whole = _store()
+    hot, rules, sig = _split_hot(root, whole)
+    item = cold.anchor_items(hot, "d:old2", lambda c: True)[1]
+    item["text"] = "edited"
+    cold.settle(hot, rules, sig)  # moved back, the file keeps the old copy
+    docs = _docs(root)
+    hot = cold.rebalance(root, hot, rules, lambda w: _page_keep(w, docs, rules), sig,
+                         lambda h: store.write_json(root / "comments.json", h))
+    copies = cold.load_index(root).ids()[item["id"]]
+    assert len(copies) == 2 and item["id"] not in _ids(hot)
+    area, aid, i = cold.live_id(hot, item["id"])
+    assert (area, aid, i) == copies[1] and cold.load_index(root).lists[area][aid][i]["text"] == "edited"
+    expected = copy.deepcopy(whole)
+    expected["anchors"]["d:old2"][1]["text"] = "edited"
+    assert json.dumps(store.read_comments(root)) == json.dumps(expected)
+
+
+def test_a_changed_checkout_moves_back_in_place(tmp_path):
+    root = _page(tmp_path / "p")
+    whole = _store()
+    hot, rules, sig = _split_hot(root, whole)
+    assert json.dumps(cold.merge(hot)) == json.dumps(whole)
+    items = cold.anchor_items(hot, "d:old2", lambda c: True)
+    assert [c["id"] for c in items] == [c["id"] for c in whole["anchors"]["d:old2"]]
+    items[1]["status"] = "open"
+    expected = copy.deepcopy(whole)
+    expected["anchors"]["d:old2"][1]["status"] = "open"
+    cold.settle(hot, rules, sig)
+    assert items[1]["id"] in _ids(hot)
+    assert json.dumps(cold.merge(cold.attach(root, json.loads(json.dumps(hot))))) == json.dumps(expected)
+    # A writer that removes and appends hot items keeps every cold item in place.
+    hot = cold.attach(root, json.loads(json.dumps(hot)))
+    gone = hot["anchors"]["d:old0"].pop(0)
+    fresh = _note("fresh", "d:old0", "v3", 90)
+    hot["anchors"]["d:old0"].append(fresh)
+    store.write_json(root / "comments.json", hot)
+    expected["anchors"]["d:old0"] = [c for c in expected["anchors"]["d:old0"] if c["id"] != gone["id"]] + [fresh]
+    assert json.dumps(store.read_comments(root)) == json.dumps(expected)

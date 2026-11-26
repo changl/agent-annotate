@@ -2068,7 +2068,8 @@ def _carryover_blockers(slug_dir: Path, new_version: str) -> list[dict]:
     if not comments_path.exists():
         return []
     try:
-        raw = json.loads(comments_path.read_text(encoding="utf-8"))
+        from .cold import merged
+        raw = merged(slug_dir, json.loads(comments_path.read_text(encoding="utf-8")))
     except Exception as exc:
         return [{
             "id": "comments.json",
@@ -4189,7 +4190,8 @@ def cmd_archive(args) -> int:
     try:
         if restore and (directory / MARKER).exists() and not (directory / ARCHIVE_MARKER).exists():
             raise ValueError("this page was consolidated; standalone unarchive cannot undo consolidation")
-        store = _validate_store(json.loads((directory / "comments.json").read_text(encoding="utf-8")))
+        from .cold import merged
+        store = merged(directory, _validate_store(json.loads((directory / "comments.json").read_text(encoding="utf-8"))))
         if not (directory / "current.meta.json").is_file():
             raise ValueError("not a page directory: current.meta.json is missing")
         archived = (directory / ARCHIVE_MARKER).exists()
@@ -5004,7 +5006,8 @@ def _load_store(record: dict) -> dict:
     if not slug_dir:
         return {"anchors": {}, "archived": []}
     try:
-        data = json.loads((Path(slug_dir) / "comments.json").read_text(encoding="utf-8"))
+        from .cold import merged
+        data = merged(slug_dir, json.loads((Path(slug_dir) / "comments.json").read_text(encoding="utf-8")))
     except Exception:
         return {"anchors": {}, "archived": []}
     if not isinstance(data, dict):
@@ -5033,10 +5036,24 @@ def _iter_comments(store: dict, *, include_archived=False):
                     yield c.get("anchor_id"), c
 
 
-def _item_numbers(store: dict, current_version: str | None = None) -> dict[str, int | str]:
-    """{comment id: the number the page shows}, as shell.js computeNumbers."""
+def _claimed_number(comment: dict) -> int:
+    """The number a comment asks for (its own, else a leading Q<n> in its prompt); 0 for none."""
+    number = comment.get("number")
+    if type(number) is int and number > 0:
+        return number
+    prompt = str((comment.get("decision_request") or {}).get("prompt") or "")
+    match = re.match(r"^Q(\d+)(?![0-9A-Za-z])", prompt, re.IGNORECASE)
+    return int(match.group(1)) if match else 0
+
+
+def _item_numbers(store: dict, current_version: str | None = None, extra=None) -> dict[str, int | str]:
+    """{comment id: the number the page shows}, as shell.js computeNumbers.
+
+    `extra`: cold items to count with the store's (cold.phantoms; found by itself for a cold.Hot store)."""
+    from .cold import phantoms
     current_version = current_version or store.get("current_version")
     allocation = list(_iter_comments(store, include_archived=True))
+    allocation += [(None, c) for c in (phantoms(store) if extra is None else extra)]
     def priority(item):
         c = item[1]
         version = re.fullmatch(r"v(\d+)", c.get("version") or "")
@@ -5049,12 +5066,8 @@ def _item_numbers(store: dict, current_version: str | None = None) -> dict[str, 
     reserved: set[int] = set()
     duplicates: dict[int, int] = {}
     for _anchor_id, comment in allocation:
-        number = comment.get("number")
+        number = _claimed_number(comment)
         cid = comment.get("id")
-        if not (type(number) is int and number > 0):
-            prompt = str((comment.get("decision_request") or {}).get("prompt") or "")
-            match = re.match(r"^Q(\d+)(?![0-9A-Za-z])", prompt, re.IGNORECASE)
-            number = int(match.group(1)) if match else 0
         if number > 0:
             reserved.add(number)
             if cid and cid not in numbers:

@@ -40,7 +40,7 @@ MANIFEST = "consolidation.json"   # in the target page directory
 _SOURCE = re.compile(r"(?P<ref>[^:\s]+):(?P<tab>[a-z]+)(?:=(?P<id>[a-z0-9][a-z0-9-]{0,63}))?\Z")
 # The files a server or the CLI writes while a page is live. They are hashed
 # when read and again after the target is written; a change aborts the run.
-_MUTABLE = ("comments.json", "read-state.json", "seen.json", "current.meta.json", "rounds.ndjson",
+_MUTABLE = ("comments.json", "comments.cold.json", "read-state.json", "seen.json", "current.meta.json", "rounds.ndjson",
             "copy.json", "categories.json", "project.json")
 # Fields consolidation may set on a comment. Every other field is compared
 # byte for byte between source and target.
@@ -123,7 +123,11 @@ def _hashes(page_dir: Path) -> dict:
 def _read_json(path: Path, default):
     if not path.exists():
         return default
-    return json.loads(path.read_text(encoding="utf-8"))
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if path.name == "comments.json":
+        from .cold import merged
+        value = merged(path.parent, value)  # the whole store, cold items too
+    return value
 
 
 def _title(page_dir: Path, meta: dict, fallback: str) -> str:

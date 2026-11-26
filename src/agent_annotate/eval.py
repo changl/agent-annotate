@@ -371,8 +371,12 @@ def collect_slugs():
             store = read_json(os.path.join(sd, "comments.json"))
             meta = read_json(os.path.join(sd, "current.meta.json"))
         if isinstance(store, dict):
+            from .cold import merged
             from .submitted import store_view
-            store = store_view(store)
+            try:
+                store = store_view(merged(sd, store))
+            except ValueError:  # its cold file was replaced mid-read
+                store = store_view(store)
         info["store"] = {} if store is not None else None
         info["meta"] = meta
         info["comments"] = [c for c, _a in iter_comments(store)] if store else []

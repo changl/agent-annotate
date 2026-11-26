@@ -84,7 +84,12 @@ def _empty() -> dict:
 def _quality(slug_dir: object, aggregate: dict) -> None:
     if not isinstance(slug_dir, str) or not slug_dir:
         return
-    anchors = store_view(_read_object(Path(slug_dir) / "comments.json")).get("anchors")
+    from .cold import merged
+    try:
+        store = merged(slug_dir, _read_object(Path(slug_dir) / "comments.json"))
+    except ValueError:  # its cold file was replaced mid-read
+        return
+    anchors = store_view(store).get("anchors")
     if not isinstance(anchors, dict):
         return
     seen = set()

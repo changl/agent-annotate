@@ -363,8 +363,9 @@ class VersionTaken(PageGenError):
 def _taken_numbers(slug_dir: Path, version: str) -> set[int]:
     """Every number the page shows (archived and legacy included) or another draft reserved."""
     from .cli import _item_numbers
+    from .cold import merged
     try:
-        store = json.loads((slug_dir / "comments.json").read_text(encoding="utf-8"))
+        store = merged(slug_dir, json.loads((slug_dir / "comments.json").read_text(encoding="utf-8")))
     except (OSError, ValueError):
         store = {}
     taken = {n for n in _item_numbers(store if isinstance(store, dict) else {}).values() if type(n) is int}
@@ -505,9 +506,10 @@ def _h2_blocks(lines: list[str]) -> list[tuple[int, int, str]]:
 def _closed_numbers(slug_dir: Path) -> set[int]:
     """Numbers of questions the page holds that are answered or closed (none of their rows is still open)."""
     from .cli import _iter_comments
+    from .cold import merged
     from .sync_server import _can_withdraw
     try:
-        store = json.loads((slug_dir / "comments.json").read_text(encoding="utf-8"))
+        store = merged(slug_dir, json.loads((slug_dir / "comments.json").read_text(encoding="utf-8")))
     except (OSError, ValueError):
         return set()
     seen, open_ = set(), set()

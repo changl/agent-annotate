@@ -260,6 +260,8 @@ def _load_cards(slug_dir: str) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as fh:
             store = json.load(fh)
+        from agent_annotate.cold import merged
+        store = merged(slug_dir, store)
     except (OSError, ValueError):
         return cards
     from agent_annotate.submitted import store_view

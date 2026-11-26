@@ -278,7 +278,9 @@ def backfill_page(directory, *, apply=False, bus=None, archive=None):
         refuse_if_moved(directory)
         path = safe_path(directory, "comments.json")
         before = path.read_bytes()
-        store = json.loads(before)
+        from .cold import merged
+        # The whole store, cold items too; written back whole (cold.py: a later split re-files them).
+        store = merged(directory, json.loads(before))
         report, operations = inspect_page(directory, store, bus=bus, archive=archive)
         if not apply or not operations:
             return report

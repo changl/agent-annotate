@@ -138,8 +138,10 @@ def save_findings_sets(page_dir: Path | str, findings_sets: list[dict]) -> dict:
 
 
 def _comments(page_dir):
+    """comments.json as a cold.Hot (findings never go cold; labels count the cold items)."""
+    from .cold import attach
     from .sync_server import _load_v2_store
-    return _load_v2_store(safe_path(page_dir, "comments.json"))
+    return attach(page_dir, _load_v2_store(safe_path(page_dir, "comments.json")))
 
 
 def _finding(store: dict, identifier, current_version=None) -> dict:
@@ -546,7 +548,9 @@ def category_counts(page_dir: Path | str, author: str | None = None, *, read_sta
         return counts
     read = (read_state if read_state is not None else
             _json(safe_path(page_dir, "read-state.json"), {}).get(_author_key(author), {}) if author else {})
-    store = _comments(page_dir) if store is None else store
+    if store is None:
+        from .cold import merge
+        store = merge(_comments(page_dir))
     versions = _current_versions(page_dir, plans if plans is not None else list_plans(page_dir, store=store)) if author else {}
     for items in store["anchors"].values():
         for comment in items:
