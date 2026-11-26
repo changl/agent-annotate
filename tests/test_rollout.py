@@ -342,6 +342,15 @@ def test_check_fails_when_a_page_stays_old(rollout, tmp_path, capsys):
     assert "FAILED at check (not on 2.29.0: page p2)" in capsys.readouterr().out
 
 
+def test_a_callers_venv_never_shadows_the_live_launcher(rollout, tmp_path, monkeypatch):
+    """Under `uv run` doctor found the checkout's annotate, so a good apply failed and rolled back."""
+    venv = tmp_path / "checkout/.venv"
+    monkeypatch.setenv("VIRTUAL_ENV", str(venv))
+    monkeypatch.setenv("PATH", os.pathsep.join([str(venv / "bin"), "/usr/bin", "/bin"]))
+    env = dict(line.split("=", 1) for line in rollout.run(["/usr/bin/env"]).stdout.splitlines() if "=" in line)
+    assert "VIRTUAL_ENV" not in env and env["PATH"].split(os.pathsep) == ["/usr/bin", "/bin"]
+
+
 @pytest.mark.parametrize("fail", ["preflight", "disk"])
 def test_preflight_changes_nothing(rollout, tmp_path, capsys, fail):
     mac = FakeMac(tmp_path, rollout, fail=fail)

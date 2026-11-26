@@ -72,7 +72,12 @@ def asset_url(version, name):
 
 
 def run(argv, timeout=600, step=None):
-    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV")}
+    # Under `uv run` a checkout's venv leads PATH, so doctor would check its annotate, not the live one.
+    venv = os.environ.get("VIRTUAL_ENV")
+    if venv:
+        env["PATH"] = os.pathsep.join(p for p in env.get("PATH", "").split(os.pathsep)
+                                      if Path(p) != Path(venv) / "bin")
     proc = subprocess.run([str(a) for a in argv], capture_output=True, text=True, timeout=timeout, env=env)
     if step and proc.returncode:
         raise Failed(step, last_line(proc))
