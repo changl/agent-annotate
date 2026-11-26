@@ -881,6 +881,11 @@ def _bus_lines(data: bytes):
         yield start, event if isinstance(event, dict) else None, text
 
 
+def _universal_newlines(text: str) -> str:
+    """`text` as read_text() returns the file it came from: \\r\\n and \\r read as \\n."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _lines(text: str) -> list[str]:
     """NDJSON lines, split at \\n only."""
     parts = text.split("\n")
@@ -1602,6 +1607,8 @@ def _apply(conn, name: str, text: str | bytes | None, value=None, slug_dir=None,
         row = _draft_row(name, text, problems) if text is not None else None
         _sync_rows(conn, "versions", _VERSION_COLUMNS, 2, [row] if row else [], "state = 'draft' AND n = ?", (n,))
     elif name == "rounds.ndjson":
+        # Rows hold the lines as text readers (Sources, the audit) see them; the fingerprint keeps the raw bytes.
+        text = _universal_newlines(text) if text is not None else None
         rows = []
         for line in _lines(text or ""):
             try:

@@ -193,6 +193,23 @@ def test_the_row_cache_never_trusts_the_callers_dict(tmp_path):
     assert _diff(fixture) == []
 
 
+def test_a_foreign_crlf_rewrite_of_rounds_then_send_keeps_page_db(tmp_path, monkeypatch):
+    from agent_annotate import deployment
+    fixture = _imported(tmp_path)
+    page = fixture["page"]
+    rounds = page / "rounds.ndjson"
+    rounds.write_bytes(rounds.read_bytes().replace(b"\n", b"\r\n"))   # a foreign text writer restores it
+    store.append_round(page, {"id": "r3", "ts": "w"})                  # the next Send
+    assert _rows(fixture, "SELECT round, body_json FROM rounds ORDER BY seq") == [
+        ("r1", '{"id": "r1", "ts": "t"}'), ("r2", '{"id": "r2", "ts": "u"}'), ("r3", '{"id": "r3", "ts": "w"}')]
+    assert _diff(fixture) == []
+    import shutil
+    state = Path(shutil.copytree(fixture["state"], paths.STATE_DIR / tmp_path.name))   # the rollout reads STATE_DIR
+    monkeypatch.setattr(paths, "STATE_DIR", state)
+    record = {"project": "proj", "slug_dir": str(page), "bus_file": str(fixture["bus"])}
+    assert deployment._page_storage(record, False, False) == {"diff": 0, "backend": "page.db"}
+
+
 def _compact_bytes(data):
     return json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
 
