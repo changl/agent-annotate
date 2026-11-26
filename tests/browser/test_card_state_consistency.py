@@ -28,7 +28,7 @@ from agent_annotate.pagegen import generate  # noqa: E402
 
 EXAMPLE = (Path(__file__).parents[1] / "fixtures" / "full_review.md").read_text()
 
-CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+from single_page import CHROME  # noqa: E402
 
 
 def _card(cid, anchor, number, **extra):

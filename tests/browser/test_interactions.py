@@ -11,7 +11,7 @@ import pytest
 
 playwright = pytest.importorskip("playwright.sync_api")
 
-CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+from single_page import CHROME  # noqa: E402
 
 
 def _free_port():
