@@ -17,6 +17,11 @@
   // the other tabs' chips read their data only once the first reading is in: five reads at once kept Questions' waiting (r12 fix10 slowread)
   let firstRead;
   const firstIn = new Promise(r => { firstRead = r; });
+  // and every read the tab on screen does not need (other tabs' chips, the board, the other feeds) waits until that tab has drawn:
+  // started together they held its own reads on the server for seconds (r13 speed). Areas wait on P.shown for theirs.
+  let shownDone;
+  const firstShown = P.shown = new Promise(r => { shownDone = r; });
+  setTimeout(() => shownDone(), 4000);  // a tab whose read stalls lets the others read anyway
   P.tab = spec => {
     if (!spec || !byKey[spec.key]) return console.warn('Proto.tab: unknown key', spec && spec.key);
     Object.assign(byKey[spec.key], spec);
@@ -299,7 +304,7 @@
     nav.innerHTML = TABS.map(t => `<button class="tab ${t.tone}" role="tab" data-tab="${t.key}" aria-selected="${!S.home && t.key === S.tab}">${I(t.icon)}<span class="tl">${esc(t.label)}</span><span class="cw" data-chip="${t.key}"></span></button>`).join('');
     for (const t of TABS) {
       paintChip(t.key);
-      if (t.chip && !S.other) (t.key === 'questions' ? Promise.resolve() : firstIn).then(() => t.chip(ctx)).then(c => {
+      if (t.chip && !S.other) (t.key === 'questions' ? Promise.resolve() : Promise.all([firstIn, firstShown])).then(() => t.chip(ctx)).then(c => {
         S.chips[t.key] = c == null || c === '' ? null : typeof c === 'object' ? c : {text: String(c)};
         if (!S.other) paintChip(t.key);
         refreshSend();  // its tab's data is in: the drafts it restored now count in Send (r12 audit7 frame 2)
@@ -340,6 +345,7 @@
     const el = document.getElementById('p-main');
     el.className = 'p-main area-' + t.area + ' tab-' + t.key;
     if (!t.render) {
+      shownDone();
       el.innerHTML = `<div class="p-empty">${I(t.icon)}<p>${esc(t.label)}: not built yet.</p></div>`;
       if (t.key === 'questions') questionsPreview(el);
       return;
@@ -350,9 +356,11 @@
     const view = el.appendChild(Object.assign(document.createElement('div'), {className: 'p-view area-' + t.area + ' tab-' + t.key}));
     const live = () => view.isConnected;
     Promise.resolve().then(() => t.render(view, ctx, anchor)).then(() => {
+      shownDone();
       if (live() && anchor && /^[qn]-/.test(anchor)) goTarget(anchor, live);
       else { const target = live() && anchor && document.getElementById(anchor); if (target) scrollClear(target); }
     }).catch(e => {
+      shownDone();
       if (!live()) return;
       view.innerHTML = `<div class="p-empty">${I('warn')}<p>${esc(t.label)} could not be read: ${esc(e.message)}</p><button class="btn sm" data-again>Try again</button></div>`;
       view.querySelector('[data-again]').onclick = () => { reread(); again(); route(); };  // the failed reads are dropped, so this reads afresh, the frame's stalled reads too
@@ -726,8 +734,8 @@
     if (!S.home) return;  // he left Home while it read: never draw over the tab he opened (#2)
     if (!fd) { el.innerHTML = `<div class="p-empty">${I('warn')}<p>Home could not load its counts.</p></div>`; return; }
     S.fd = fd;
-    if (!S.run) await readRun();
-    if (!S.home) return;
+    // the rows draw at once; workers and jobs ("—" until then) fill in when Running's read lands (r13 speed)
+    if (!S.run) readRun().then(() => { if (S.home && S.run) drawHome(); });
     const days = fd.days || 14;
     const ago = h => h == null ? 'no page yet' : h < 1 ? 'under an hour ago' : h < 48 ? `${Math.round(h)} h ago` : `${Math.round(h / 24)} days ago`;
     // 'other' gathers unrelated projects, so its workers belong to no one row
@@ -793,8 +801,8 @@
     drawStall();
     if (key === 'project' && !S.other && S.fd) { location.replace('#home'); return; }
     if (S.other && S.other.href != null) { location.replace(ROOT + S.other.href + '#' + (byKey[sub] ? sub : 'questions')); return; }  // a project with its own prototype page
-    if (S.home) { drawTabs(); drawAll(); drawHome(); return; }
-    if (S.other) { S.tab = byKey[sub] ? sub : 'questions'; drawTabs(); drawAll(); drawOther(); return; }
+    if (S.home) { drawTabs(); drawAll(); drawHome().finally(() => shownDone()); return; }
+    if (S.other) { S.tab = byKey[sub] ? sub : 'questions'; drawTabs(); drawAll(); drawOther(); shownDone(); return; }
     const tab = byKey[key] ? key : remember('tab') ? prefs.get('tab', 'questions') : 'questions';
     S.tab = byKey[tab] ? tab : 'questions';
     prefs.set('tab', S.tab);
@@ -1072,7 +1080,17 @@
     const scripts = Promise.all(AREAS.flatMap(a => [load('link', {rel: 'stylesheet', href: `proto/${a}.css`}), load('script', {src: `proto/${a}.js`})]));
     scripts.then(scriptsDone, scriptsDone);  // on their own: the frame's read below waits for them on a copy, so start() must not hold them (fix26 deadlock)
     let why = '';
-    const [meta, who, fd, proj, board] = await Promise.all([api.meta().catch(e => { why = e.message; return null; }), ...[api.identity(), data('frame'), api.project(), api.board()].map(p => p.catch(() => null))]);
+    // Questions' document starts with the version, beside its data, not after it (r13 speed): questions.js loadDoc takes it over
+    const k0 = location.hash.replace(/^#/, '').split('/')[0], nav0 = performance.getEntriesByType('navigation')[0];
+    const qFirst = !k0 || k0 === 'questions' || (byKey[k0] && nav0 && nav0.type === 'reload' && !remember('tab'));
+    // the name and version alone: the whole metadata grows with every version, and is read once the tab has drawn (r13 speed)
+    const metaP = api('proto/data/head.json');
+    if (qFirst) metaP.then(m => {
+      if (!m || !m.current || P.docPre) return;
+      const r = fetch(base + 'content?v=' + encodeURIComponent(m.current), {cache: 'no-store'}); r.catch(() => {});
+      P.docPre = {v: m.current, r};
+    }, () => {});
+    const [meta, who, fd, proj, board] = await Promise.all([metaP.catch(e => { why = e.message; return null; }), ...[api.identity(), data('frame'), api.project(), api.board()].map(p => p.catch(() => null))]);
     S.who = who; S.fd = fd; S.board = board;
     S.boardUrl = (proj && proj.board && proj.board.url) || (board && board.board && board.board.url) || '';
     document.title = ((meta && meta.name) || 'This project') + ' · Agent Annotate';
@@ -1092,7 +1110,7 @@
     route();
     addEventListener('hashchange', route);
     // the board comes from the same read as Running's: Beads changes in the same paint as Tasks, not after Questions (r12 audit13 running 4)
-    readRun();  // putRun paints Beads when it lands
+    firstShown.then(readRun);  // putRun paints Beads when it lands; after the tab on screen has drawn (r13 speed)
     if (S.loadedV || S.warm) { drawTop(); drawFab(); }
     putCounts(await readCounts());
     S.loadedV = meta && meta.current; S.settling = false;
@@ -1100,7 +1118,9 @@
     drawTop(); drawFab();
     firstRead();
     if (COPY) checkNewer().then(() => drawTop());  // a copy refresh already running shows from the first paint on
-    refreshTop();  // counts, workers, the board and the last Send
+    firstShown.then(() => refreshTop());  // counts, workers, the board and the last Send
+    // the whole metadata (History's ← → walk its versions), for the version just shown; a newer one waits for Reload as before
+    firstShown.then(() => api.meta()).then(m => { if (m && S.meta && m.current === S.meta.current) S.meta = m; }, () => {});
     setInterval(() => { checkNewer().then(() => { if (!S.menu) drawTop(); }); }, 60000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();

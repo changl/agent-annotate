@@ -607,8 +607,9 @@
   let RB = null;
   const runBeads = d => { if (!RB || !d) return; d.beads = d.beads || {};
     for (const [id, b] of Object.entries(RB)) if (!d.beads[id]) d.beads[id] = {title: b.t || '', status: b.st || '', state: RST[b.st] || 'none'}; };
+  // after the tab on screen has drawn (P.shown): the board is 1.3 MB and only fills in task titles (r13 speed)
   const readRun = () => { if (RB || !ctx) return; RB = {};
-    ctx.data('running').then(r => { RB = ((r || {}).board || {}).beads || {}; if (!D) return; runBeads(D);
+    (P.shown || Promise.resolve()).then(() => ctx.data('running')).then(r => { RB = ((r || {}).board || {}).beads || {}; if (!D) return; runBeads(D);
       if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); }).catch(() => {}); };
   function sim(d) {
     if (!d) return d;
@@ -818,9 +819,17 @@
     }
     for (const tpl of node.querySelectorAll('template')) unmark(doc, tpl.content);  // "Earlier updates" keep theirs in a template
   }
-  async function loadDoc(v) {
-    if (loadDoc.v === v && loadDoc.html) return loadDoc.html;
-    const r = await fetch(ctx.base + 'content?v=' + encodeURIComponent(v), {cache: 'no-store'});
+  // one read per version: the draws a first load starts at once (its data, the board, Reference) share it, never three reads (r13 speed)
+  function loadDoc(v) {
+    if (loadDoc.v === v && loadDoc.html) return Promise.resolve(loadDoc.html);
+    if (loadDoc.pv !== v || !loadDoc.p) { loadDoc.pv = v; loadDoc.p = readDoc(v); loadDoc.p.catch(() => { if (loadDoc.pv === v) loadDoc.p = null; }); }
+    return loadDoc.p;
+  }
+  async function readDoc(v) {
+    const pre = P.docPre && P.docPre.v === v ? P.docPre.r : null;  // the frame's read, started with the version (r13 speed); a body reads once
+    P.docPre = null;
+    const get = () => fetch(ctx.base + 'content?v=' + encodeURIComponent(v), {cache: 'no-store'});
+    const r = pre ? await pre.catch(get) : await get();
     if (!r.ok) throw new Error('the document did not load (HTTP ' + r.status + ')');
     const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
     for (const l of doc.querySelectorAll('link[rel=stylesheet][href*="content.css"]'))
@@ -2161,7 +2170,7 @@
       // the Send opened over another tab now shows in this bar; General feedback's focus, selection and caret move with it, in the
       // same task as the draw below, so no keystroke lands between (r12 audit32 running 4)
       if (host) { HELD = typingIn(); host.remove(); host = null; }
-      if (!REF) c.data('reference').then(r => { REF = r; if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); }).catch(() => { REF = {}; });
+      if (!REF) (P.shown || Promise.resolve()).then(() => c.data('reference')).then(r => { REF = r; if (root && root.isConnected && root.classList.contains('tab-questions')) draw(true); }).catch(() => { REF = {}; });
       if (!S.note && ctx.prefs.get('q:newnote', null)) S.note = ctx.prefs.get('q:newnote', null);  // the note he was typing before a reload
       const q0 = anchor && anchor.startsWith('q-') && qOf(anchor.slice(2));
       if (q0) reveal(q0);

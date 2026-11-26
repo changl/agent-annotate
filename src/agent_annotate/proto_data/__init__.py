@@ -211,6 +211,33 @@ def _pooled(area: str, page_dir, viewer=_KEEP) -> bytes:
         return prepared(area, page_dir, viewer)
 
 
+_heads: dict = {}  # meta path -> (its stamp, its current version)
+
+
+def head(handler) -> dict:
+    """What the frame's first paint needs of current.meta.json: the page's name, as the meta route injects it, and its current
+    version. The meta grows with every version (270 KB at 1,064); the frame reads it whole after the tab on screen has drawn (r13 speed)."""
+    p = handler._meta_path()
+    try:
+        st = p.stat()
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return {}
+    hit = _heads.get(str(p))
+    if not hit or hit[0] != key:
+        try:
+            current = json.loads(p.read_text(encoding="utf-8")).get("current")
+        except (OSError, ValueError, AttributeError):
+            current = None
+        hit = _heads[str(p)] = (key, current)
+    try:
+        name = handler._project_payload()["name"]
+    except (OSError, ValueError, KeyError):
+        from ..page_names import page_name
+        name = page_name(handler.artifact_dir)
+    return {"name": name, "current": hit[1]} if hit[1] else {"name": name}
+
+
 def serve(handler, route_path: str):
     from .. import sync_server
 
@@ -244,6 +271,8 @@ def serve(handler, route_path: str):
         if not pic:
             return handler._respond(404, b"Not found")
         return handler._respond(200, pic.read_bytes(), sync_server._mime(pic.suffix.lower()), cache_control="private, max-age=300")
+    if route_path == "/proto/data/head.json":
+        return handler._respond(200, json.dumps(head(handler)).encode(), "application/json", cache_control="no-store")
     if match := _AREA.fullmatch(route_path):
         t0 = time.perf_counter()
         try:

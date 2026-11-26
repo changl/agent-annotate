@@ -2126,7 +2126,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         # Both injected refs carry content hashes for immutable caching.
         base = self.public_base_path or ""
         evidence_tokens = {}
-        if plan_id is None and not self._moved():
+        # the prototype never reads the evidence tokens (its Questions drops the document's scripts) and answers without one; sealing
+        # hashed every card's pictures, ~1 s of CPU per read under the GIL every other read waits on (r13 speed)
+        if plan_id is None and not self._moved() and not self._is_proto():
             from .approval_catalog import seal_review
             with _locked_store(self.artifact_dir, write=False):
                 html, evidence_tokens = seal_review(self.artifact_dir, html, v, self._v2_load(read_only=True), base)

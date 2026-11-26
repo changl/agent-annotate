@@ -102,7 +102,8 @@ def test_first_reading_waits_on_questions_alone():
     """Only Questions' read runs before the first reading; the version waits for its counts with no cap (audit9 frame 2)."""
     from pathlib import Path
     js = (Path(frame.__file__).parents[1] / "web" / "proto" / "frame.js").read_text()
-    assert "(t.key === 'questions' ? Promise.resolve() : firstIn).then(() => t.chip(ctx))" in js
+    # and, since r13 speed, until the tab on screen has drawn
+    assert "(t.key === 'questions' ? Promise.resolve() : Promise.all([firstIn, firstShown])).then(() => t.chip(ctx))" in js
     start = js[js.index("async function start()"):]
     assert start.index("putCounts(await readCounts());") < start.index("firstRead();") and "Promise.race([readCounts()" not in js
     # a stuck read fails at 20 s and the tab offers Try again (audit9 reference)
