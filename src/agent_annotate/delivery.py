@@ -165,12 +165,11 @@ def _resumed_pids(session: str, expected: str, processes=None) -> list[int]:
                 continue
         return [pid for pid in found if (_claude_session(pid) or {}).get("sessionId") == session]
     table = processes() if processes else None
-    if table is not None:
-        found = {pid: argv for pid, argv in table.items() if any(session in arg for arg in argv)}
-    else:
-        # A full `ps` listing took over 10 s on the busy M1Max; pgrep returns only candidates.
-        found = {int(pid): _argv(int(pid)) for pid in subprocess.run(
-            ["pgrep", "-f", session], capture_output=True, text=True, timeout=10, cwd=Path.home()).stdout.split()}
+    if table is not None and not any(session in arg for argv in table.values() for arg in argv):
+        return []  # the shared pass only rules a session out: argv can change by exec after it
+    # A full `ps` listing took over 10 s on the busy M1Max; pgrep returns only candidates.
+    found = {int(pid): _argv(int(pid)) for pid in subprocess.run(
+        ["pgrep", "-f", session], capture_output=True, text=True, timeout=10, cwd=Path.home()).stdout.split()}
     pids = []
     for pid, argv in found.items():
         # Exact argv, not `ps` text: a prompt argument can mention the id or the word resume.

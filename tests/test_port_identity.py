@@ -177,6 +177,33 @@ def test_running_servers_never_map_a_spaced_directory_to_its_prefix(tmp_path, mo
         str(spaced.resolve()): [{"pid": 41, "port": 8802, "public_base_path": None}]}
 
 
+def test_of_duplicate_servers_close_picks_the_one_the_record_names(tmp_path, monkeypatch):
+    # Listing order is no identity: `ps` sorts by terminal first, the process table by pid.
+    servers = [{"pid": 41, "port": 18760}, {"pid": 42, "port": 18761}]
+    monkeypatch.setattr(cli, "_running_servers", lambda: {str(tmp_path.resolve()): list(servers)})
+    assert cli._live_server_for({"slug_dir": str(tmp_path), "pid": 42, "port": 18761})["pid"] == 42
+    assert cli._live_server_for({"slug_dir": str(tmp_path), "pid": 9, "port": 18761})["pid"] == 42
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="libproc")
+def test_process_table_grows_a_full_pid_buffer_instead_of_dropping_pids(monkeypatch):
+    import ctypes
+    sizes = []
+
+    class Libproc:  # 300 processes now, more than the first count (3) plus its cushion
+        def proc_listallpids(self, pids, size):
+            if pids is None:
+                return 3
+            sizes.append(len(pids))
+            for i in range(min(len(pids), 300)):
+                pids[i] = i + 1
+            return min(len(pids), 300)
+    monkeypatch.setattr(ctypes, "CDLL", lambda path, **kwargs: Libproc())
+    monkeypatch.setattr(cli, "_procargs_reader", lambda: lambda pid: [str(pid)])
+    monkeypatch.setattr(cli, "_procargs_argv", lambda raw: raw)
+    assert len(cli._process_table()) == 300 and sizes == [259, 518]
+
+
 @pytest.fixture
 def runtime(tmp_path, monkeypatch):
     """Run worktree source, including isolated deployment subprocesses, only."""

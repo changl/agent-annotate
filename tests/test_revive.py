@@ -136,17 +136,30 @@ def test_empty_stale_snapshot_adopts_fresh_server_without_creating_duplicate(est
     assert estate.started == []
 
 
-@pytest.mark.parametrize("broken", ["no current.html", "no recorded port"])
-def test_a_page_that_cannot_come_back_is_skipped_without_listing_processes(estate, monkeypatch, broken):
-    if broken == "no current.html":
-        (estate.slug_dir / "current.html").unlink()
-    else:
-        state = cli._load_state_for_project("reviews")
-        state["slugs"]["demo"]["port"] = None
-        cli._save_state_for_project("reviews", state)
+def test_a_page_with_no_document_is_skipped_without_listing_processes(estate, monkeypatch):
+    (estate.slug_dir / "current.html").unlink()
     monkeypatch.setattr(cli, "_running_servers", lambda: pytest.fail("a second process listing every minute"))
-    outcome, detail = cli._revive_one("reviews", "demo", {}, False)
-    assert (outcome, detail.split(" in ")[0]) == ("skipped", broken)
+    assert cli._revive_one("reviews", "demo", {}, False)[0] == "skipped"
+    assert estate.started == []
+
+
+def test_revive_rechecks_the_document_after_the_fresh_listing(estate, monkeypatch):
+    def listing():  # the document goes while the fresh listing runs
+        (estate.slug_dir / "current.html").unlink()
+        return {}
+    monkeypatch.setattr(cli, "_running_servers", listing)
+    assert cli._revive_one("reviews", "demo", {}, False)[0] == "skipped"
+    assert estate.started == []
+
+
+def test_a_page_with_no_recorded_port_adopts_the_server_the_fresh_listing_finds(estate, monkeypatch):
+    state = cli._load_state_for_project("reviews")
+    state["slugs"]["demo"]["port"] = None
+    cli._save_state_for_project("reviews", state)
+    found = {str(estate.slug_dir.resolve()): [{"pid": 4321, "port": 18742}]}
+    monkeypatch.setattr(cli, "_running_servers", lambda: found)
+    assert cli._revive_one("reviews", "demo", {}, False)[0] == "adopted"
+    assert cli._load_state_for_project("reviews")["slugs"]["demo"]["port"] == 18742
     assert estate.started == []
 
 

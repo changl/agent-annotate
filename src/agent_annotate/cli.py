@@ -1854,9 +1854,13 @@ def _process_table() -> dict[int, list[str]] | None:
     try:
         import ctypes
         libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
-        count = libproc.proc_listallpids(None, 0)
-        pids = (ctypes.c_int * (max(count, 0) + 256))()  # room for processes started since
-        count = libproc.proc_listallpids(pids, ctypes.sizeof(pids))
+        size = max(libproc.proc_listallpids(None, 0), 0) + 256  # room for processes started since
+        while True:
+            pids = (ctypes.c_int * size)()
+            count = libproc.proc_listallpids(pids, ctypes.sizeof(pids))
+            if count < size:
+                break
+            size *= 2  # a full buffer may have dropped pids beyond it
     except (OSError, AttributeError):
         return None
     if not read or count <= 0:
@@ -1900,7 +1904,7 @@ def _running_servers(strict: bool = False) -> dict:
                     continue
                 candidates[pid] = _process_argv(pid)
     found: dict[str, list[dict]] = {}
-    for pid, argv in sorted(candidates.items()):  # pid order, as `ps` listed them
+    for pid, argv in sorted(candidates.items()):
         if not argv or not any("sync_server" in arg for arg in argv):
             continue
 
@@ -3322,6 +3326,8 @@ def _live_server_for(record: dict) -> dict | None:
     except OSError:
         return None
     procs = _running_servers().get(key) or []
+    # Of duplicates, the one the record names: list order is no identity (`ps` sorts by terminal first).
+    procs.sort(key=lambda p: (p["pid"] != record.get("pid"), p["port"] != record.get("port")))
     return procs[0] if procs else None
 
 
@@ -3672,16 +3678,13 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
         if (_project_config(project).get("transport") == "funnel"
                 and record.get("transport") != "funnel"):
             return "skipped", "non-Funnel page needs explicit publication; no legacy route created"
+        slug_dir = Path(record.get("slug_dir") or "")
         dead = _entry_is_dead(record, live)
         if dead:
-            # Checked before the rescan: each rescan lists every process (~160 ms CPU on a busy Mac),
-            # and a page that can never come back cost one every minute (2026-11-26).
-            slug_dir = Path(record.get("slug_dir") or "")
+            # Before the rescan too: each rescan lists every process, and a page with no document
+            # cost one every minute (2026-11-26). Checked again below, closer to the start.
             if not (slug_dir / "current.html").exists():
                 return "skipped", f"no current.html in {slug_dir}"
-            port = int(record.get("port") or 0)
-            if not port:
-                return "skipped", "no recorded port"
             live = _running_servers()
             dead = _entry_is_dead(record, live)
         if not dead:
@@ -3707,6 +3710,11 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
             if moved and moved[0] == "rerouted":
                 _save_state_for_project(project, state)
             return moved or ("alive", "")
+        if not (slug_dir / "current.html").exists():
+            return "skipped", f"no current.html in {slug_dir}"
+        port = int(record.get("port") or 0)
+        if not port:
+            return "skipped", "no recorded port"
         try:
             free = _find_free_port_after(port, registered_pid=record.get("pid"), slug_dir=slug_dir)
         except RuntimeError as e:
