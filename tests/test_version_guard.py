@@ -311,6 +311,15 @@ def test_the_session_notice_reads_page_runtimes_from_the_registry_only(estate, m
     assert version_guard.session_notice("sess") is None
 
 
+def test_the_session_notice_scans_pages_once_per_session(estate, monkeypatch):
+    _install_everything(estate)
+    monkeypatch.chdir(estate.root.parent)  # no page here, so no per-page marker either
+    assert version_guard.session_notice("no-page") is None
+    import agent_annotate.workspace as workspace
+    monkeypatch.setattr(workspace, "candidates", lambda *a, **k: pytest.fail("scanned on a later prompt"))
+    assert version_guard.session_notice("no-page") is None
+
+
 def test_runtime_diagnostics_use_canonical_names_and_keep_slug_in_fix_commands(estate):
     directory = estate.root / "opaque-slug"
     directory.mkdir()

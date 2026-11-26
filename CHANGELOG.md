@@ -1,5 +1,9 @@
 # agent-annotate — changelog
 
+## 2.32.16
+
+- A stalled Mac no longer holds every prompt for 30 s (agent-annotate-lku). Each prompt waits for the annotate prompt hook. `annotate hook-check` now skips building the full command parser, and the version notice scans the pages once per session instead of on every prompt. A new install gives the prompt hook a 5 s timeout; other hooks keep 30 s. Existing timeouts are not rewritten. On 2026-11-24, while a system process kept the M1 Max at load 280–565, every prompt timed out on this hook.
+
 ## 2.32.15
 
 - A page on page.db no longer freezes when a category poll and a read-state save arrive together (agent-annotate-azq). The poll held the store lock and waited for the read-state lock; the save held the read-state lock and waited for the store lock. Every later request, including Send, then queued behind them forever. The poll now reads the atomically replaced read-state file without that lock. On 2026-11-24 this froze the Rebex page twice within minutes, and Send could not go out. Page servers now dump all Python thread stacks to the page log on SIGUSR1.

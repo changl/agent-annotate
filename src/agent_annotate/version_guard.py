@@ -469,16 +469,21 @@ def session_notice(session_id: str, *, dry_run: bool = False) -> str | None:
     session. Local files only; silent without an installed release. Never raises."""
     if not passive_enabled():
         return None
+    provider = "codex" if os.environ.get("CODEX_THREAD_ID") else "claude"
+    # The page scan below costs seconds on a busy Mac; checked first, it runs once per session.
+    checked = paths.HOOK_OFFSET_ROOT / _safe_component(session_id) / f"version-guard-{provider}-checked"
+    if checked.exists():
+        return None
     try:
         from .workspace import candidates, selected_page
         selected = selected_page(candidates(Path.cwd(), entries=_registry()))
         if not selected:
+            _mark(checked, "none", session_id, dry_run)
             return None
         project, slug, _record = selected
-        provider = "codex" if os.environ.get("CODEX_THREAD_ID") else "claude"
-        marker = paths.HOOK_OFFSET_ROOT / _safe_component(session_id) / (
-            "version-guard-" + _safe_component(f"{provider}-{project}-{slug}"))
+        marker = checked.with_name("version-guard-" + _safe_component(f"{provider}-{project}-{slug}"))
         if marker.exists():
+            _mark(checked, "ok", session_id, dry_run)
             return None
         result = check(local_only=True, scope=(project, slug), provider=provider)
     except Exception:
@@ -486,13 +491,19 @@ def session_notice(session_id: str, *, dry_run: bool = False) -> str | None:
     line = None
     if result["release"]["version"] and not result["ok"]:
         line = (f"[annotate] {result['summary']}. Details and fix commands: {result['invocation']} doctor --versions")
-    if not dry_run and session_id != "unknown":  # unknown sessions would share one marker
-        try:
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text((line or "ok") + "\n", encoding="utf-8")
-        except OSError:
-            pass
+    _mark(marker, line or "ok", session_id, dry_run)
+    _mark(checked, "ok", session_id, dry_run)
     return line
+
+
+def _mark(path: Path, text: str, session_id: str, dry_run: bool) -> None:
+    if dry_run or session_id == "unknown":  # unknown sessions would share one marker
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text + "\n", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _update_in_progress() -> bool:
