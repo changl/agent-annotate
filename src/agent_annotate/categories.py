@@ -138,8 +138,11 @@ def save_findings_sets(page_dir: Path | str, findings_sets: list[dict]) -> dict:
 
 
 def _comments(page_dir):
+    """comments.json as a cold.Hot (findings never go cold; labels count the cold items).
+    An unreadable file raises store.Unreadable, never reads as empty."""
+    from .cold import attach
     from .sync_server import _load_v2_store
-    return _load_v2_store(safe_path(page_dir, "comments.json"))
+    return attach(page_dir, _load_v2_store(safe_path(page_dir, "comments.json")))
 
 
 def _finding(store: dict, identifier, current_version=None) -> dict:
@@ -246,7 +249,7 @@ def mark_finding_fixed(page_dir: Path | str, number_or_id, *, by: str, note: str
     proof = validate_proof(page_dir, proof)
     with _locked_store(page_dir):
         store = _comments(page_dir)
-        comment = _finding(store, number_or_id, _json(safe_path(page_dir, "current.meta.json"), {}).get("current"))
+        comment = _finding(store, number_or_id,_json(safe_path(page_dir, "current.meta.json"), {}).get("current"))
         now = datetime.now(timezone.utc).isoformat()
         if comment.get("fixed"):
             comment.setdefault("fixed_history", []).append(comment["fixed"])
@@ -446,6 +449,13 @@ def comment_section(comment: dict) -> str | None:
     return "done" if status != "open" else "waiting"
 
 
+def unanswered_card(comment) -> bool:
+    """A live card nobody has decided (what `annotate close` retires)."""
+    return (isinstance(comment, dict) and isinstance(comment.get("decision_request"), dict)
+            and comment.get("status") not in ("archived", "resolved_in_version")
+            and not isinstance(comment.get("decision"), dict))
+
+
 def comment_sig(comment: dict) -> str:
     """Mirror shell.js's unsigned djb2 hash over JavaScript UTF-16 code units."""
     replies = comment.get("replies")
@@ -546,7 +556,9 @@ def category_counts(page_dir: Path | str, author: str | None = None, *, read_sta
         return counts
     read = (read_state if read_state is not None else
             _json(safe_path(page_dir, "read-state.json"), {}).get(_author_key(author), {}) if author else {})
-    store = _comments(page_dir) if store is None else store
+    if store is None:
+        from .cold import merge
+        store = merge(_comments(page_dir))
     versions = _current_versions(page_dir, plans if plans is not None else list_plans(page_dir, store=store)) if author else {}
     for items in store["anchors"].values():
         for comment in items:

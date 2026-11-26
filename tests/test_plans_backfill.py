@@ -172,7 +172,9 @@ def test_restore_refuses_later_edits_or_corrupt_backup(tmp_path):
     report = backfill_page(tmp_path, apply=True)
     path = tmp_path / "comments.json"
     body = path.read_bytes()
-    path.write_bytes(body + b" ")
+    edited = json.loads(body)
+    edited["anchors"]["d:q1"][0]["text"] = "edited after the backfill"  # restore compares content, not bytes
+    path.write_text(json.dumps(edited))
     with pytest.raises(ValueError, match="changed since"):
         restore_page(tmp_path, report["backup"])
     path.write_bytes(body)

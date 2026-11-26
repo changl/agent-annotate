@@ -371,8 +371,13 @@ def collect_slugs():
             store = read_json(os.path.join(sd, "comments.json"))
             meta = read_json(os.path.join(sd, "current.meta.json"))
         if isinstance(store, dict):
+            from .cold import Unreadable, merged
             from .submitted import store_view
-            store = store_view(store)
+            try:
+                store = store_view(merged(sd, store))
+            except Unreadable as exc:  # counted as unreadable, never as a page with fewer comments
+                info["unreadable"] = str(exc)
+                store = None
         info["store"] = {} if store is not None else None
         info["meta"] = meta
         info["comments"] = [c for c, _a in iter_comments(store)] if store else []
@@ -582,6 +587,7 @@ def section1(slugs, since):
             "delivery": dict(delivery),
             "versions": nver,
             "has_store": info.get("store") is not None,
+            **({"unreadable": info["unreadable"]} if info.get("unreadable") else {}),
         })
     return rows
 
@@ -1200,7 +1206,7 @@ def render_md(res):
         v = r["verdicts"]
         rows.append([
             ("**" if r["in_window"] else "") + page_label(r["slug"]) + ("**" if r["in_window"] else ""),
-            (r["created"] or "")[:10], r["comments"], r["decision_requests"],
+            (r["created"] or "")[:10], "unreadable" if r.get("unreadable") else r["comments"], r["decision_requests"],
             f"{v['accept']}/{v['reject']}/{v['changes']}/{v['none']}/{v['closed']}",
             fmt_min(r["time_to_verdict_min"]["median"]),
             fmt_min(r["time_to_verdict_min"]["p90"]),
@@ -1220,6 +1226,9 @@ def render_md(res):
       f"{a['agent_events']} agent vs {a['reviewer_events']} reviewer events "
       f"({a['agent_share_pct']}% agent), {a['session_push']} session pushes "
       f"{a['delivery']}.")
+    unreadable = [page_label(r["slug"]) for r in res["s1"] if r.get("unreadable")]
+    if unreadable:
+        A(f"Unreadable, so left out of every count: {', '.join(unreadable)}.")
     A("")
 
     A("## 2. Reviewer round shape (gap > 10 min = new round)")

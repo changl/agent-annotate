@@ -17,7 +17,7 @@ _SAFE_NAME = re.compile(r"[A-Za-z0-9_.-]+\Z")
 _DELIVERY_STATES = ("started", "accepted", "pending", "uncertain", "superseded", "acknowledged")
 _COUNT_KEYS = (
     "active_pages", "events", "decision_requests", "reviewer_decisions", "submitted_rounds",
-    "legacy_rounds_without_id", "publish_successes", "publish_failures",
+    "legacy_rounds_without_id", "publish_successes", "publish_failures", "unreadable_pages",
 )
 _LIMITATIONS = (
     "Estate-local: only pages in the current top-level project registries are included; retired pages are excluded.",
@@ -84,7 +84,13 @@ def _empty() -> dict:
 def _quality(slug_dir: object, aggregate: dict) -> None:
     if not isinstance(slug_dir, str) or not slug_dir:
         return
-    anchors = store_view(_read_object(Path(slug_dir) / "comments.json")).get("anchors")
+    from .cold import Unreadable, merged
+    try:
+        store = merged(slug_dir, _read_object(Path(slug_dir) / "comments.json"))
+    except Unreadable:  # counted, never read as a page without cards
+        aggregate["unreadable_pages"] += 1
+        return
+    anchors = store_view(store).get("anchors")
     if not isinstance(anchors, dict):
         return
     seen = set()

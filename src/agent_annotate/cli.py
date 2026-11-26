@@ -2068,7 +2068,8 @@ def _carryover_blockers(slug_dir: Path, new_version: str) -> list[dict]:
     if not comments_path.exists():
         return []
     try:
-        raw = json.loads(comments_path.read_text(encoding="utf-8"))
+        from .cold import merged
+        raw = merged(slug_dir, json.loads(comments_path.read_text(encoding="utf-8")))
     except Exception as exc:
         return [{
             "id": "comments.json",
@@ -3238,15 +3239,16 @@ def _store_file(record: dict) -> Path | None:
     return Path(slug_dir) / "comments.json" if slug_dir else None
 
 
-def _read_store_file(path: Path) -> dict:
+def _read_store_file(path: Path, strict=False) -> dict:
     """The store exactly as written, not the flattened view `_load_store` gives.
 
     `close` has to write this back, so it may not lose `schema_version` or
-    turn the `archived` map into a list on the way through.
+    turn the `archived` map into a list on the way through. `strict`: its
+    read before that write (store.read_json_strict).
     """
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    from .store import read_json, read_json_strict
+    data = read_json_strict(path) if strict else read_json(path)
+    if data is None:
         return {"schema_version": 2, "anchors": {}, "archived": {}}
     if not isinstance(data, dict) or not isinstance(data.get("anchors"), dict):
         raise ValueError("expected a v2 comment store with anchors")
@@ -3262,20 +3264,16 @@ def _unanswered_cards(store: dict) -> list[tuple[str, dict]]:
     A plain reviewer comment has no `decision_request` and is never in scope:
     `close` retires questions the agent asked, not things the reviewer said.
     """
-    out = []
-    for anchor_id, items in (store.get("anchors") or {}).items():
-        if not isinstance(items, list):
-            continue
-        for c in items:
-            if not isinstance(c, dict):
-                continue
-            if not isinstance(c.get("decision_request"), dict):
-                continue
-            if c.get("status") in ("archived", "resolved_in_version") \
-                    or isinstance(c.get("decision"), dict):
-                continue
-            out.append((c.get("anchor_id") or anchor_id, c))
-    return out
+    from .categories import unanswered_card
+    return [(c.get("anchor_id") or anchor_id, c) for anchor_id, items in (store.get("anchors") or {}).items()
+            if isinstance(items, list) for c in items if unanswered_card(c)]
+
+
+def _closable(c: dict, older_than: float, now: datetime | None = None) -> bool:
+    """What `close` archives: a card nobody answered, at least `older_than` seconds old."""
+    from .categories import unanswered_card
+    age = _age_seconds(c.get("created_at"), now)
+    return unanswered_card(c) and age is not None and age >= older_than
 
 
 def _archive_comment_in_store(store: dict, comment_id: str, author: str, now: str) -> bool:
@@ -3354,14 +3352,15 @@ def cmd_close(args) -> int:
         print(f"ERROR: {project}/{slug} has no comment store at {store_path}", file=sys.stderr)
         return 2
 
+    from .cold import merged
     now = datetime.now(UTC)
-    store = _read_store_file(store_path)
+    store = merged(store_path.parent, _read_store_file(store_path))  # cold items too
     stale, young = [], 0
     for anchor_id, c in _unanswered_cards(store):
-        age = _age_seconds(c.get("created_at"), now)
-        if age is None or age < threshold:
+        if not _closable(c, threshold, now):
             young += 1
             continue
+        age = _age_seconds(c.get("created_at"), now)
         stale.append({
             "id": c.get("id") or "?",
             "anchor_id": anchor_id,
@@ -3389,7 +3388,7 @@ def cmd_close(args) -> int:
 
     author = _resolve_author(getattr(args, "author", None))
     ids = [row["id"] for row in stale]
-    archived_ids, failures = [], []
+    archived_ids, failures, answered = [], [], []
     live = _live_server_for(record)
     if live:
         # The page is serving: its server owns comments.json, so go through
@@ -3400,20 +3399,30 @@ def cmd_close(args) -> int:
         if live.get("port"):
             target["local_url"] = f"http://localhost:{live['port']}/"
         for cid in ids:
-            code, payload = _api(target, "POST", f"/api/comments/{cid}/archive", {}, author)
+            # Conditional: a card answered since it was listed is left for Send.
+            code, payload = _api(target, "POST", f"/api/comments/{cid}/archive",
+                                 {"if_unanswered_older_than": threshold}, author)
             if code == 200:
                 archived_ids.append(cid)
+            elif code == 409:
+                answered.append(cid)
             else:
                 failures.append((cid, code, payload))
     else:
         stamp = _now_iso()
         try:
+            from .cold import attach, promote_id
             from .store import transaction as _locked_store
             from .store import write_json as _atomic_write_json
             with _locked_store(store_path.parent):
-                store = _read_store_file(store_path)
+                store = attach(store_path.parent, _read_store_file(store_path, strict=True))
                 for cid in ids:
-                    if _archive_comment_in_store(store, cid, author, stamp):
+                    promote_id(store, cid)  # a cold card comes back hot first, in this transaction
+                    card = next((c for items in (store.get("anchors") or {}).values() if isinstance(items, list)
+                                 for c in items if isinstance(c, dict) and c.get("id") == cid), None)
+                    if card is not None and not _closable(card, threshold):  # answered since it was listed
+                        answered.append(cid)
+                    elif _archive_comment_in_store(store, cid, author, stamp):
                         archived_ids.append(cid)
                     else:
                         failures.append((cid, 0, "not found in store"))
@@ -3422,7 +3431,7 @@ def cmd_close(args) -> int:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 4
 
-    remaining = len(_unanswered_cards(_read_store_file(store_path)))
+    remaining = len(_unanswered_cards(merged(store_path.parent, _read_store_file(store_path))))
     _bus_emit(record.get("bus_file"), {
         "event": "page_closed",
         "slug": slug,
@@ -3434,6 +3443,8 @@ def cmd_close(args) -> int:
         "older_than": args.older_than,
     })
     print(f"  archived {len(archived_ids)} card(s); {remaining} unanswered card(s) remain.")
+    if answered:
+        print(f"  left {len(answered)} answered while closing: {', '.join(answered)}")
     for cid, code, payload in failures:
         print(f"  FAILED {cid}: HTTP {code} {payload}", file=sys.stderr)
     return 2 if failures else 0
@@ -4189,7 +4200,8 @@ def cmd_archive(args) -> int:
     try:
         if restore and (directory / MARKER).exists() and not (directory / ARCHIVE_MARKER).exists():
             raise ValueError("this page was consolidated; standalone unarchive cannot undo consolidation")
-        store = _validate_store(json.loads((directory / "comments.json").read_text(encoding="utf-8")))
+        from .cold import merged
+        store = merged(directory, _validate_store(json.loads((directory / "comments.json").read_text(encoding="utf-8"))))
         if not (directory / "current.meta.json").is_file():
             raise ValueError("not a page directory: current.meta.json is missing")
         archived = (directory / ARCHIVE_MARKER).exists()
@@ -5003,8 +5015,11 @@ def _load_store(record: dict) -> dict:
     slug_dir = record.get("slug_dir")
     if not slug_dir:
         return {"anchors": {}, "archived": []}
+    from .cold import Unreadable, merged
     try:
-        data = json.loads((Path(slug_dir) / "comments.json").read_text(encoding="utf-8"))
+        data = merged(slug_dir, json.loads((Path(slug_dir) / "comments.json").read_text(encoding="utf-8")))
+    except Unreadable:
+        raise  # never an empty page: main() says which page and why
     except Exception:
         return {"anchors": {}, "archived": []}
     if not isinstance(data, dict):
@@ -5033,10 +5048,24 @@ def _iter_comments(store: dict, *, include_archived=False):
                     yield c.get("anchor_id"), c
 
 
-def _item_numbers(store: dict, current_version: str | None = None) -> dict[str, int | str]:
-    """{comment id: the number the page shows}, as shell.js computeNumbers."""
+def _claimed_number(comment: dict) -> int:
+    """The number a comment asks for (its own, else a leading Q<n> in its prompt); 0 for none."""
+    number = comment.get("number")
+    if type(number) is int and number > 0:
+        return number
+    prompt = str((comment.get("decision_request") or {}).get("prompt") or "")
+    match = re.match(r"^Q(\d+)(?![0-9A-Za-z])", prompt, re.IGNORECASE)
+    return int(match.group(1)) if match else 0
+
+
+def _item_numbers(store: dict, current_version: str | None = None, extra=None) -> dict[str, int | str]:
+    """{comment id: the number the page shows}, as shell.js computeNumbers.
+
+    `extra`: cold items to count with the store's (cold.phantoms; found by itself for a cold.Hot store)."""
+    from .cold import phantoms
     current_version = current_version or store.get("current_version")
     allocation = list(_iter_comments(store, include_archived=True))
+    allocation += [(None, c) for c in (phantoms(store) if extra is None else extra)]
     def priority(item):
         c = item[1]
         version = re.fullmatch(r"v(\d+)", c.get("version") or "")
@@ -5049,12 +5078,8 @@ def _item_numbers(store: dict, current_version: str | None = None) -> dict[str, 
     reserved: set[int] = set()
     duplicates: dict[int, int] = {}
     for _anchor_id, comment in allocation:
-        number = comment.get("number")
+        number = _claimed_number(comment)
         cid = comment.get("id")
-        if not (type(number) is int and number > 0):
-            prompt = str((comment.get("decision_request") or {}).get("prompt") or "")
-            match = re.match(r"^Q(\d+)(?![0-9A-Za-z])", prompt, re.IGNORECASE)
-            number = int(match.group(1)) if match else 0
         if number > 0:
             reserved.add(number)
             if cid and cid not in numbers:
@@ -6141,7 +6166,12 @@ def main():
         # Runs before every prompt; building the full parser costs over a second on a busy Mac.
         sys.exit(cmd_hook_check(None))
     args = build_parser().parse_args()
-    sys.exit(run_command(args))
+    from .store import Unreadable
+    try:
+        sys.exit(run_command(args))
+    except Unreadable as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

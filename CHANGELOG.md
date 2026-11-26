@@ -1,5 +1,17 @@
 # agent-annotate — changelog
 
+## 2.34.0
+
+- Every reader and writer handles a split page (agent-annotate-uzd.9, first of two releases). This release never splits: writers still write one comments.json. 2.35.0 turns splitting on, so rolling 2.35.0 back to this release touches no data.
+- A split page keeps settled feedback from older versions (done, answered, not waiting on anyone) in `.cold/<n>.json`. Generations are numbered, read-only (comments.json's read bits, so 0400 when it is private), written once, and never renamed or reused; comments.json names one and its digest. The digest is checked on the first read and the parse is cached by the file's stat; every cache over merged data includes that stat. A generation is removed an hour after comments.json stopped naming it; the server keeps at most two parsed generations per page.
+- A missing or changed generation is one error, `earlier feedback is unreadable`. The server answers 500 and refuses writes. `annotate eval`, `annotate metrics`, the CLI and the comment-bus hook report the page as unreadable rather than as a page with fewer comments.
+- A comments.json that exists but cannot be read or parsed no longer reads as empty: a save fails with an error and nothing is written, and a page view gets an error and caches nothing, so the next request reads the file again. In 2.33.0 an I/O error there made the next save replace the whole store with one item, and the server kept serving the empty page after the disk recovered.
+- `scripts/rollout.py` applies a release that splits (2.35.0 or later) only over 2.34.0 or later. Once one is installed it keeps a floor of 2.34.0 on that Mac (synced to disk with its directory) and refuses anything older, whether or not a page is split yet.
+- `scripts/rollout.py` runs one apply or rollback per Mac at a time: a second one is refused while the first holds `rollout.lock` in its state folder. `plan` reports what `apply` refuses: a release below the floor, or a splitting release over one older than 2.34.0.
+- On another Mac, the controller already there (`rollout.py`, its release in `controller.json`) takes the requested release as data. Under the same lock it replaces itself only with a release newer than both the floor and its own, so `plan` or `apply` of an older release never swaps in an updater that ignores the floor, even while another apply raises it. Only 2.34.0 or later places a first controller: each request downloads it into a folder of its own and checks it, and the download places itself under the same lock, after checking again that none is placed, writing `controller.json` last. A missing, empty or cut-off `controller.json` means no controller, so the next such apply places it again; until then, `rollback` and older releases are refused there.
+- Save receipts and bus events show the request's own write, never a later writer's (also in 2.33.0).
+- `annotate close` archives a card only if it is still unanswered and old enough when its archive is written; a card answered meanwhile is left for Send and listed.
+
 ## 2.33.0
 
 - Pages open 2–5x faster (agent-annotate-uzd). The first reads leave from the HTML head, a server thread rebuilds the page's answers after each change, the categories answer is reused until its inputs change, and stamped assets are gzipped once. On sandbox copies under load 17–50, an FLD cold open went from 2.7 s to 1.0 s, and a warm open from 2.3 s to 0.65 s.

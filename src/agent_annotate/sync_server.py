@@ -107,6 +107,7 @@ import subprocess
 import sys
 import threading
 import tomllib
+import types
 import urllib.error
 import urllib.parse
 import uuid
@@ -301,7 +302,11 @@ def _asset_bytes(path: Path) -> bytes:
 # ────────────────────────────────────────────────────────────────────────────
 # V2 storage helpers (file lock + shape coercion)
 # ────────────────────────────────────────────────────────────────────────────
-from .store import _STORE_LOCAL, _STORE_LOCK  # noqa: E402,F401  (tests inspect the held locks)
+from .store import (  # noqa: E402,F401  (tests inspect the held locks)
+    _STORE_LOCAL,
+    _STORE_LOCK,
+    Unreadable,  # noqa: E402  (cold.Unreadable is one)
+)
 from .store import bus_append as _bus_append  # noqa: E402
 from .store import transaction as _locked_store  # noqa: E402
 from .store import write_json as _atomic_write_json  # noqa: E402
@@ -326,6 +331,23 @@ def _insert_in_head(html: str, tag: str) -> str:
 
 def _now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+_RECEIPTS: dict = {}
+
+
+def _receipts(path) -> list:
+    """rounds.ndjson parsed, reused while the file is unchanged (read-only: callers must not mutate)."""
+    from .review_history import _events
+    try:
+        st = Path(path).stat()
+        stat = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+    except FileNotFoundError:
+        stat = None
+    hit = _RECEIPTS.get(str(path))
+    if stat is None or not hit or hit[0] != stat:
+        hit = _RECEIPTS[str(path)] = (stat, list(_events(path)))
+    return hit[1]
 
 
 def _iso_timestamp(value: Any) -> float:
@@ -467,10 +489,11 @@ def _published_after(a: dict, b: dict, order: dict) -> bool:
 
 
 def _later_copies(store: dict, card: dict, order: dict) -> list[dict]:
+    from .cold import anchor_items
     root = card.get("origin_id") or card["id"]
-    return [c for c in store["anchors"].get(card.get("anchor_id"), [])
-            if c is not card and (c.get("origin_id") or c["id"]) == root and c.get("doc") == card.get("doc")
-            and c.get("number") == card.get("number") and _published_after(c, card, order) and _is_live_card(c)]
+    return anchor_items(store, card.get("anchor_id"), lambda c: (
+        c is not card and (c.get("origin_id") or c["id"]) == root and c.get("doc") == card.get("doc")
+        and c.get("number") == card.get("number") and _published_after(c, card, order) and _is_live_card(c)))
 
 
 def _unanswered_copies(store: dict, card: dict, order: dict) -> list[dict]:
@@ -600,10 +623,12 @@ def _normalize_item_number(value: Any) -> int | None:
     return value
 
 
-def _pin_item_numbers(store: dict) -> dict[str, int | str]:
-    """Pin displayed labels on a mutable store or its browser response copy."""
+def _pin_item_numbers(store: dict, extra=None) -> dict[str, int | str]:
+    """Pin displayed labels on a mutable store or its browser response copy.
+
+    `extra`: cold items the labels depend on (cold.phantoms), never pinned."""
     from .cli import _item_numbers, _iter_comments
-    numbers = _item_numbers(store)
+    numbers = _item_numbers(store, extra=extra)
     # Pin legacy labels before a new maximum can move their fallback numbers.
     for _, other in _iter_comments(store, include_archived=True):
         shown = numbers.get(other.get("id"))
@@ -635,6 +660,29 @@ def _card_anchors(body) -> set[str] | None:
         return None
     return {m for tag in re.findall(r"<[a-zA-Z][^>]*\bclass=['\"][^'\"]*\bcard\b[^>]*>", markup)
             for m in re.findall(r"data-anchor-id=['\"]([^'\"]+)", tag)}
+
+
+_BODY_ANCHORS: dict = {}
+
+
+def _review_docs(artifact_dir: Path, meta: dict) -> dict:
+    """The page view's Review document (see _page_store), body anchors cached by the file's stat."""
+    current = meta.get("current")
+    published = [h.get("version") for h in meta.get("history") or [] if isinstance(h, dict) and h.get("version")]
+    try:
+        path = _version_file(artifact_dir, current)
+        st = path.stat()
+        key = (str(path), st.st_ino, st.st_size, st.st_mtime_ns)
+    except (OSError, ValueError):
+        key = None
+    hit = _BODY_ANCHORS.get(str(artifact_dir))
+    if key is not None and hit and hit[0] == key:
+        anchors = hit[1]
+    else:
+        anchors = _card_anchors(lambda: _version_file(artifact_dir, current))
+        if key is not None:
+            _BODY_ANCHORS[str(artifact_dir)] = (key, anchors)
+    return {"review": (current, published, anchors)}
 
 
 # uzd: pure, and re-run on every /content read of the same version (~30-45 ms each on FLD).
@@ -671,20 +719,54 @@ def _plan_stamps(artifact_dir: Path) -> tuple | None:
 def _plan_docs(artifact_dir: Path, store: dict) -> dict:
     """{"plan:<id>": (current, published versions in order, body card anchors)} for the plans the store has comments on."""
     from .categories import _json, safe_path, validate_plan_id
+    from .cold import KEY, Hot
     docs = {c.get("doc") for area in ("anchors", "archived") for items in (store.get(area) or {}).values()
             if isinstance(items, list) for c in items if isinstance(c, dict) and str(c.get("doc") or "").startswith("plan:")}
+    if isinstance(store, Hot) and store.index is not None and KEY in store:
+        docs |= store.index.plan_docs()
     out = {}
     for doc in docs:
         try:
             plan = validate_plan_id(doc[5:])
-            meta = _json(safe_path(artifact_dir, f"plans/{plan}/meta.json"), {})
+            meta_path = safe_path(artifact_dir, f"plans/{plan}/meta.json")
         except (OSError, ValueError):
             continue
-        history = [h.get("version") for h in meta.get("history") or [] if isinstance(h, dict) and h.get("version")]
-        current = meta.get("current")
-        if current in history:
-            out[doc] = (current, history, _card_anchors(functools.partial(safe_path, artifact_dir, f"plans/{plan}/versions/{current}.html")))
+        # Reused while the plan's meta.json and current body are unchanged: a save reads neither (stat only).
+        key = (str(artifact_dir), doc)
+        hit = _PLAN_DOCS.get(key)
+        stamp = (_file_stat(meta_path), hit and hit[2] and _file_stat(hit[2]))
+        if hit and hit[0] == stamp:
+            value = hit[1]
+        else:
+            try:
+                meta = _json(meta_path, {})
+            except (OSError, ValueError):
+                continue
+            history = [h.get("version") for h in meta.get("history") or [] if isinstance(h, dict) and h.get("version")]
+            current = meta.get("current")
+            value, body, body_stat = None, None, None
+            if current in history:
+                try:
+                    body = safe_path(artifact_dir, f"plans/{plan}/versions/{current}.html")
+                except ValueError:
+                    pass
+                body_stat = body and _file_stat(body)  # before the read: a later edit misses the cache
+                value = (current, history, _card_anchors(functools.partial(safe_path, artifact_dir, f"plans/{plan}/versions/{current}.html")))
+            _PLAN_DOCS[key] = ((stamp[0], body_stat), value, body)
+        if value is not None:
+            out[doc] = value
     return out
+
+
+_PLAN_DOCS: dict = {}  # (page dir, "plan:<id>") -> ((meta.json stat, body stat), document, body path)
+
+
+def _file_stat(path):
+    try:
+        st = os.stat(path)
+    except (OSError, ValueError):
+        return None
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
 def _item_stamp(area: str, anchor: str, comment: dict) -> bytes:
@@ -694,16 +776,14 @@ def _item_stamp(area: str, anchor: str, comment: dict) -> bytes:
     return hashlib.blake2b(body, digest_size=12).digest()
 
 
-def _page_store(store: dict, numbers: dict, docs: dict) -> dict:
-    """The browser's first read (view=page): what each document's latest version shows and what a Send needs.
+def _answered_question(c: dict) -> bool:
+    d = c.get("decision") if isinstance(c.get("decision"), dict) else {}
+    return bool(c.get("decision_request") and (d.get("verdict") or any(
+        isinstance(h, dict) and h.get("verdict") for h in c.get("decision_history") or [])))
 
-    `docs`: {"review" | "plan:<id>": (current version, published versions in
-    order, anchors of its body's question cards or None)}. Settled Review and
-    Plans feedback from older versions stays out; the shell reads the whole
-    store (view=poll) when Earlier feedback, Not in this Send, History or an
-    older version is opened. `omitted` counts what was left out per document
-    for those headers. Library, Findings and plans without a readable meta come whole.
-    """
+
+def _page_rules(docs: dict) -> types.SimpleNamespace:
+    """What the page view (view=page) asks of one item, for these documents (see _page_store)."""
     from .categories import comment_category
     orders = {key: {v: i for i, v in enumerate(versions)} for key, (_, versions, _) in docs.items()}
 
@@ -728,43 +808,105 @@ def _page_store(store: dict, numbers: dict, docs: dict) -> dict:
         replies = c.get("replies") if isinstance(c.get("replies"), list) else []
         return any(isinstance(r, dict) and "sent_at" in r and not r["sent_at"] for r in replies) or _comment_needs_push(c)
 
+    def card(c, aid):
+        """The document whose body question card on `aid` could show this item, else None."""
+        key = doc_of(c)
+        if key is None or not c.get("decision_request") or newer(c):
+            return None
+        anchors = docs[key][2]
+        return key if anchors is None or aid in anchors else None
+
+    def listed(c):
+        """On a published version of its document (so shown to the reviewer: review_versions.visible_store)."""
+        return c.get("version") in orders.get(doc_of(c), {})
+
+    review = docs.get("review")
+    published = {*review[1], review[0]} - {None} if review else set()
+
+    def visible(c):
+        """review_versions.visible_store, or more when the page has no published version."""
+        return (not published or not c.get("version") or bool(c.get("doc")) or comment_category(c) != "review"
+                or c["version"] in published)
+
+    return types.SimpleNamespace(doc_of=doc_of, newer=newer, hot=hot, card=card, listed=listed, visible=visible)
+
+
+def _page_keep(store: dict, docs: dict, rules=None) -> set:
+    """id() of every item the page view shows."""
+    rules = rules or _page_rules(docs)
     areas = {area: [(aid, c) for aid, items in (store.get(area) or {}).items() if isinstance(items, list)
                     for c in items if isinstance(c, dict)] for area in ("anchors", "archived")}
-    keep = {id(c) for items in areas.values() for _, c in items if hot(c)}
+    keep = {id(c) for items in areas.values() for _, c in items if rules.hot(c)}
     # "You answered this on …" reads earlier sent answers to the same prompt.
     asked = set().union(*(_prompt_keys(c) for items in areas.values() for _, c in items if id(c) in keep and c.get("decision_request")))
     # The body's question cards show the first live (else the last archived) question on their anchor.
     first, last = {}, {}
     for area, target in (("anchors", first), ("archived", last)):
         for aid, c in areas[area]:
-            key = doc_of(c)
-            if key is None or not c.get("decision_request") or newer(c):
-                continue
-            anchors = docs[key][2]
-            if (anchors is None or aid in anchors) and (area == "archived" or (key, aid) not in target):
+            key = rules.card(c, aid)
+            if key is not None and (area == "archived" or (key, aid) not in target):
                 target[key, aid] = c
     keep |= {id(c) for c in first.values()} | {id(c) for at, c in last.items() if at not in first}
     for items in areas.values():
         for _, c in items:
-            d = c.get("decision") if isinstance(c.get("decision"), dict) else {}
-            answered = d.get("verdict") or any(isinstance(h, dict) and h.get("verdict") for h in c.get("decision_history") or [])
-            if id(c) not in keep and answered and c.get("decision_request") and _prompt_keys(c) & asked:
+            if id(c) not in keep and _answered_question(c) and _prompt_keys(c) & asked:
                 keep.add(id(c))
+    return keep
+
+
+_RULES: list = [None]  # (documents, their _page_rules, their _docs_sig), the last ones asked for
+
+
+def _rules_for(docs: dict) -> tuple:
+    """(_page_rules, _docs_sig) of these documents, reused while they are unchanged."""
+    hit = _RULES[0]
+    if hit is None or hit[0] != docs:
+        hit = _RULES[0] = (docs, _page_rules(docs), _docs_sig(docs))
+    return hit[1], hit[2]
+
+
+def _docs_sig(docs: dict) -> str:
+    rows = sorted((key, current, list(versions), None if anchors is None else sorted(anchors))
+                  for key, (current, versions, anchors) in docs.items())
+    return hashlib.blake2b(json.dumps(rows).encode(), digest_size=12).hexdigest()
+
+
+def _page_store(store: dict, numbers: dict, docs: dict, cold_rows=()) -> dict:
+    """The browser's first read (view=page): what each document's latest version shows and what a Send needs.
+
+    `docs`: {"review" | "plan:<id>": (current version, published versions in
+    order, anchors of its body's question cards or None)}. Settled Review and
+    Plans feedback from older versions stays out; the shell reads the whole
+    store (view=poll) when Earlier feedback, Not in this Send, History or an
+    older version is opened. `omitted` counts what was left out per document
+    for those headers. Library, Findings and plans without a readable meta come whole.
+    `cold_rows`: (document, rest, rest missing) for each cold item (cold.py), all left out.
+    """
+    rules = _page_rules(docs)
+    keep = _page_keep(store, docs, rules)
     omitted = {}
-    out = {area: {} for area in areas}
-    for area, items in areas.items():
-        for aid, c in items:
-            if id(c) in keep:
-                out[area].setdefault(aid, []).append(c)
-            elif not newer(c) and not (area == "anchors" and c.get("withdrawn")):
-                left = omitted.setdefault(doc_of(c), {"earlier": 0, "rest": 0, "rest_missing": 0})
-                left["earlier"] += 1
-                if area == "anchors" and c.get("decision_request") and c.get("status") not in ("archived", "resolved_in_version"):
-                    left["rest"] += 1
-                    left["rest_missing"] += not (c.get("decision") or {}).get("verdict")
+    out = {area: {} for area in ("anchors", "archived")}
+    for area in out:
+        for aid, items in (store.get(area) or {}).items():
+            for c in items if isinstance(items, list) else ():
+                if not isinstance(c, dict):
+                    continue
+                if id(c) in keep:
+                    out[area].setdefault(aid, []).append(c)
+                elif not rules.newer(c) and not (area == "anchors" and c.get("withdrawn")):
+                    left = omitted.setdefault(rules.doc_of(c), {"earlier": 0, "rest": 0, "rest_missing": 0})
+                    left["earlier"] += 1
+                    if area == "anchors" and c.get("decision_request") and c.get("status") not in ("archived", "resolved_in_version"):
+                        left["rest"] += 1
+                        left["rest_missing"] += not (c.get("decision") or {}).get("verdict")
+    for doc, rest, missing in cold_rows:
+        left = omitted.setdefault(doc, {"earlier": 0, "rest": 0, "rest_missing": 0})
+        left["earlier"] += 1
+        left["rest"] += rest
+        left["rest_missing"] += missing
     shown = [c["id"] for items in out.values() for cs in items.values() for c in cs if c.get("id") in numbers]
     # approved_plans is the server's approval catalog; the browser never reads it (FLD: 75 KB).
-    return {**{k: v for k, v in store.items() if k != "approved_plans"}, **out, "partial": True, "omitted": omitted,
+    return {**{k: v for k, v in store.items() if k not in ("approved_plans", "cold")}, **out, "partial": True, "omitted": omitted,
             "numbers": {cid: numbers[cid] for cid in shown},
             "number_max": max((n for n in numbers.values() if type(n) is int), default=0)}
 
@@ -772,9 +914,10 @@ def _page_store(store: dict, numbers: dict, docs: dict) -> dict:
 def _assign_item_number(store: dict, comment: dict, number: int | None = None, *, existing=False) -> None:
     """Reserve labels under the store lock, including archived/legacy labels."""
     from .cli import _iter_comments
-    numbers = _pin_item_numbers(store)
+    from .cold import has_id, numbered, phantoms
+    numbers = _pin_item_numbers(store, phantoms(store, () if number is None else (number,)))
     next_number = max((n for n in numbers.values() if type(n) is int), default=0) + 1
-    if not existing and comment["id"] in numbers:
+    if not existing and (comment["id"] in numbers or has_id(store, comment["id"])):
         raise DecisionRequestError(f"comment id {comment['id']} is already used", 409)
     if existing and number is not None and number == comment.get("number"):
         return
@@ -782,7 +925,8 @@ def _assign_item_number(store: dict, comment: dict, number: int | None = None, *
         previous = comment.get("number") or numbers.get(comment["id"])
         comment["number"] = previous if type(previous) is int and previous > 0 else next_number
         return
-    for _, other in _iter_comments(store):
+    cold = numbered(store, number)
+    for _, other in [*_iter_comments(store), *((aid, c) for area, aid, c in cold if area == "anchors")]:
         same_question = (other.get("anchor_id") == comment.get("anchor_id")
                          and other.get("doc") == comment.get("doc")
                          and (other.get("status") in ("archived", "resolved_in_version")
@@ -792,7 +936,7 @@ def _assign_item_number(store: dict, comment: dict, number: int | None = None, *
             raise DecisionRequestError(f"card number {number} is already used by {other['id']} on {other.get('version', '?')}; use #{next_number}", 409)
     archived = store.get("archived") or {}
     values = archived.values() if isinstance(archived, dict) else archived if isinstance(archived, list) else []
-    for value in values:
+    for value in [*values, [c for area, _, c in cold if area == "archived"]]:
         for other in [value] if isinstance(value, dict) else value if isinstance(value, list) else []:
             if isinstance(other, dict) and (numbers.get(other.get("id")) == number or other.get("number") == number):
                 raise DecisionRequestError(f"card number {number} is reserved by archived comment {other.get('id')} on {other.get('version', '?')}; use #{next_number}", 409)
@@ -974,8 +1118,9 @@ def _anchor_miss(artifact_dir: Path, version: str, anchor_id: str, what: str) ->
 
 
 def _load_v2_store(path: Path) -> dict:
-    from .store import read_json
-    raw = read_json(path)
+    """comments.json, validated; empty only when missing: any other read error raises store.Unreadable."""
+    from .store import read_json_strict
+    raw = read_json_strict(path)
     if raw is None:
         return {"schema_version": 2, "anchors": {}, "archived": {}}
     return _validate_store(raw)
@@ -1138,6 +1283,8 @@ def _public_monitor_owner(lease: dict | None) -> dict | None:
 # ────────────────────────────────────────────────────────────────────────────
 class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     _store_snapshot = None
+    _store_merged = None  # (snapshot signature, cold.merge of that snapshot)
+    _cold_declined = {}  # page dir -> (docs signature, item count) when a split found too little cold
     _store_responses = {}
     _store_revision = None
     _page_marks = {}
@@ -1153,6 +1300,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 return super().handle_one_request()
             except ConnectionError:
                 self.close_connection = True
+            except Unreadable as exc:  # raised by the store load, before any response: say so, never serve less
+                self.close_connection = True
+                self._respond(500, json.dumps({"error": str(exc)}).encode())
 
     protocol_version = "HTTP/1.1"
     timeout = 15  # Bound idle keep-alive sockets, including abandoned browser connections.
@@ -1286,7 +1436,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 and self._is_identity_probe()):
             return True  # Process health must not depend on page-store I/O.
         try:
-            for name in ("comments.json", "current.meta.json", "project.json", "copy.json", "rounds.ndjson", "seen.json", "read-state.json"):
+            for name in ("comments.json", ".cold", "current.meta.json", "project.json", "copy.json", "rounds.ndjson", "seen.json", "read-state.json"):
                 _contained_path(self.artifact_dir, name)
         except PermissionError:
             self._respond(403, b'{"error":"runtime path leaves artifact directory"}')
@@ -1554,6 +1704,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     # ── GET ──────────────────────────────────────────────────────────
     def do_GET(self):
+        self._promote_ids = ()  # a kept-alive connection's last write must not reach this request
         if self._signin_route() or not self._allow_request():
             return
         parsed = urllib.parse.urlparse(self.path)
@@ -1663,6 +1814,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         route_path = self._strip_base(parsed.path)
         if self._refuse_moved_write(route_path):
             return
+        self._promote_ids = self._route_ids(route_path, self.command)
 
         if route_path == "/api/reviewer/session":
             return self._reviewer_session()
@@ -1721,6 +1873,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         route_path = self._strip_base(parsed.path)
         if self._refuse_moved_write(route_path):
             return
+        self._promote_ids = self._route_ids(route_path, self.command)
         if route_path.startswith("/api/comments/") and "/replies/" in route_path:
             return self._v2_reply_note(route_path, "PUT")
         if route_path.startswith("/api/comments/"):
@@ -1735,6 +1888,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         route_path = self._strip_base(parsed.path)
         if self._refuse_moved_write(route_path):
             return
+        self._promote_ids = self._route_ids(route_path, self.command)
         if route_path.startswith("/api/comments/") and "/replies/" in route_path:
             return self._v2_reply_note(route_path, "DELETE")
         if route_path.startswith("/api/comments/"):
@@ -1887,34 +2041,118 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         return self.artifact_dir / "current.meta.json"
 
     def _store_signature(self):
+        from .cold import stamp
+        # The cold generations' stat too (cold.py): a damaged generation never hides behind a warm cache.
         try:
             stat = self._store_path().stat()
-            return (str(self._store_path()), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+            hot = (str(self._store_path()), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
         except FileNotFoundError:
-            return (str(self._store_path()),)
+            hot = (str(self._store_path()),)
+        return hot + (stamp(self.artifact_dir),)
 
-    def _v2_load(self, *, read_only=False) -> dict:
+    _promote_ids = ()  # this request's target ids (see _route_ids)
+
+    @staticmethod
+    def _route_ids(route_path: str, method: str) -> tuple:
+        """The item a write route targets, raw and unquoted (handlers use either)."""
+        if not route_path.startswith("/api/comments/") or (method, route_path) == ("POST", "/api/comments/batch"):
+            return ()
+        cid = route_path[len("/api/comments/"):].split("/", 1)[0]
+        return tuple({cid, urllib.parse.unquote(cid)}) if cid else ()
+
+    def _v2_load(self, *, read_only=False, merged=False) -> dict:
+        """comments.json as a cold.Hot: what writes and the page view use. `merged`: the whole
+        store (cold items too, cold.merge), read-only, for readers that show or count everything.
+
+        A writer's load (not read_only) owns the snapshot; the item its route targets, if cold,
+        is moved back here, so promotion persists only with that transaction's save."""
+        from .cold import Hot, attach, merge, promote_id
+        cls = type(self)
         with _locked_store(self.artifact_dir, write=False):
             signature = self._store_signature()
-            snapshot = type(self)._store_snapshot
+            snapshot = cls._store_snapshot
             if snapshot is None or snapshot[0] != signature:
-                store = _load_v2_store(self._store_path())
+                # Unreadable (not missing) raises for readers too: a 500 caches nothing, so no empty
+                # projection or ETag outlives the fault, and the next request reads again.
+                store = attach(self.artifact_dir, _load_v2_store(self._store_path()))
                 snapshot = (self._store_signature(), store)
-                type(self)._store_snapshot = snapshot
+                cls._store_snapshot = snapshot
+            elif not isinstance(snapshot[1], Hot):
+                # A save's bytes (_write_hot), parsed now: no object its handler still reads.
+                body, index = snapshot[1]
+                snapshot = (snapshot[0], Hot(json.loads(body), index=index))
+                cls._store_snapshot = snapshot
+            if merged:
+                if cls._store_merged is None or cls._store_merged[0] != snapshot[0]:
+                    cls._store_merged = (snapshot[0], merge(snapshot[1]))
+                return cls._store_merged[1]
             if not read_only:
                 # Transfer ownership to this locked transaction. An aborted
                 # write leaves no mutated cache: the next reader reloads disk.
                 # A durable save returns the same snapshot to the cache.
-                type(self)._store_snapshot = None
+                cls._store_snapshot = None
+                # Read caches over this snapshot share its objects: none outlives a writer's edits.
+                cls._store_merged = None
+                cls._store_responses.clear()
+                for cid in self._promote_ids:
+                    promote_id(snapshot[1], cid)
             return snapshot[1]
 
+    def _cold_docs(self, store, meta=None) -> dict:
+        """The documents the page view shows (see _page_store) for this store."""
+        return {**_review_docs(self.artifact_dir, self._read_meta() if meta is None else meta),
+                **_plan_docs(self.artifact_dir, store)}
+
     def _v2_save(self, store: dict) -> None:
+        from .cold import KEY, attach, settle
+        store = attach(self.artifact_dir, store)
+        if KEY in store:
+            settle(store, *_rules_for(self._cold_docs(store)))
+        self._write_hot(store)
+
+    def _write_hot(self, store: dict) -> None:
         from .store import write_bytes as _atomic_bytes
-        _atomic_bytes(self._store_path(), json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode(), value=store)
-        type(self)._store_snapshot = (self._store_signature(), store)
+        body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
+        _atomic_bytes(self._store_path(), body, value=store)
+        # The cache keeps the bytes, never this writer's objects: its handler reads them after the lock
+        # (receipt, bus event) while the next writer would own and change them.
+        type(self)._store_snapshot = (self._store_signature(), (body, getattr(store, "index", None)))
         type(self)._store_responses.clear()
 
-    def _mark_store(self, signature, store: dict, *, page: bool, since: str) -> None:
+    def _split_due(self, store, sig) -> bool:
+        """Does comments.json need a new split for the page view's documents (`sig`)?"""
+        from . import cold
+        from .cold import KEY, MIN_ITEMS, count_items
+        if not cold.SPLIT:
+            return False  # 2.34.0: a split page is kept as it is, a whole one stays whole
+        if KEY in store:
+            return store[KEY].get("docs") != sig
+        count = count_items(store)
+        declined = type(self)._cold_declined.get(str(self.artifact_dir))
+        # A page found too small stays one file until it grows or its documents change.
+        return count >= MIN_ITEMS and not (declined and declined[0] == sig and count < declined[1] + MIN_ITEMS)
+
+    def _split_store(self) -> None:
+        """Split settled feedback from older versions off into a cold generation (cold.py)."""
+        from .cold import KEY, count_items, rebalance
+        from .review_versions import visible_store
+        with _locked_store(self.artifact_dir):
+            meta = self._read_meta()
+            store = self._v2_load(read_only=True)
+            docs = self._cold_docs(store, meta)
+            rules, sig = _rules_for(docs)
+            if not self._split_due(store, sig):
+                return
+            hot = rebalance(self.artifact_dir, store, rules,
+                            lambda whole: _page_keep(visible_store(self.artifact_dir, whole, meta), docs, rules),
+                            sig, self._write_hot)
+            if KEY not in hot:
+                type(self)._cold_declined[str(self.artifact_dir)] = (sig, count_items(hot))
+
+    def _store_cards(self, signature, store: dict, cold=None) -> tuple:
+        """(mark, revision, {id: (stamp, revision changed)}) for this store revision.
+        `cold`: the cold.Hot `store` was projected from; its live cold items count too."""
+        from .cold import live
         cls = type(self)
         last = cls._store_revision
         if last is None or last[0] != signature:
@@ -1922,28 +2160,74 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             revision = last[2] + 1 if last else 0
             mark = hashlib.blake2s(repr(signature).encode(), digest_size=12).hexdigest()
             cards = {}
+
+            def note(cid, stamp):
+                old = previous.get(cid)
+                cards[cid] = old if old and old[0] == stamp else (stamp, revision)
+
             for area in ("anchors", "archived"):
                 for anchor, items in store[area].items():
                     for c in items:
-                        if "id" not in c:
-                            continue
-                        stamp = _item_stamp(area, anchor, c)
-                        old = previous.get(c["id"])
-                        cards[c["id"]] = old if old and old[0] == stamp else (stamp, revision)
+                        if "id" in c:
+                            note(c["id"], _item_stamp(area, anchor, c))
+            for area, anchor, i, c in live(cold) if cold is not None else ():
+                note(c["id"], cold.index.stamp(area, anchor, i))
             cls._store_revision = (signature, mark, revision, cards)
-        _, mark, revision, cards = cls._store_revision
-        if since and since != mark:
-            base = cls._page_marks.get(since)
-            # An expired mark cannot distinguish history from new activity.
-            if base is None:
-                store["snapshot_expired"] = True
-            elif changed := [cid for cid, (_, changed_at) in cards.items() if changed_at > base]:
-                store["changed_after"] = changed
-        if page:
-            store["store_mark"] = mark
-            cls._page_marks[mark] = revision
-            if len(cls._page_marks) > 4096:
-                del cls._page_marks[next(iter(cls._page_marks))]
+        return cls._store_revision[1:]
+
+    def _since_fields(self, since: str, marks: tuple) -> dict:
+        """What changed after the tab's mark `since`."""
+        mark, _, cards = marks
+        if not since or since == mark:
+            return {}
+        base = type(self)._page_marks.get(since)
+        # An expired mark cannot distinguish history from new activity.
+        if base is None:
+            return {"snapshot_expired": True}
+        changed = [cid for cid, (_, changed_at) in cards.items() if changed_at > base]
+        return {"changed_after": changed} if changed else {}
+
+    def _store_base(self, view, agent, meta, signature, *, split=True):
+        """The store response before any tab's mark: (store, marks or None); None when the page
+        view first needs a new cold split (cold.py) and `split` allows one."""
+        from .cold import KEY, live, ordered, phantoms
+        from .review_versions import visible_store
+        hot = self._v2_load(read_only=True)
+        fast = False
+        if view == "page":
+            docs = self._cold_docs(hot, meta)
+            sig = _docs_sig(docs)
+            if split and not agent and self._split_due(hot, sig):
+                return None
+            # Cold items are what this view leaves out, so it reads comments.json alone.
+            fast = not agent and KEY in hot and hot.index is not None and hot[KEY].get("docs") == sig
+        store = visible_store(self.artifact_dir, ordered(hot) if fast else self._v2_load(read_only=True, merged=True), meta)
+        if agent:
+            store = store_view(store)
+        marks = None
+        if view in ("poll", "page"):
+            # Carry provenance remains on disk and in full comments.json;
+            # the shell does not render it. Decision history is rendered.
+            store = {**store, "current_version": meta.get("current"), **{area: {anchor: [{k: v for k, v in comment.items() if k != "carry_history"}
+                                                for comment in items]
+                                       for anchor, items in store.get(area, {}).items()}
+                                 for area in ("anchors", "archived")}}
+            if view == "page" and not agent:
+                marks = self._store_cards(signature, store, hot if fast else None)
+                store["store_mark"] = marks[0]
+                cls = type(self)
+                cls._page_marks[marks[0]] = marks[1]
+                if len(cls._page_marks) > 4096:
+                    del cls._page_marks[next(iter(cls._page_marks))]
+            # Label migration must not look like a content change to the shell.
+            numbers = _pin_item_numbers(store, phantoms(hot) if fast else None)
+            if view == "page":
+                rows = ()
+                if fast:
+                    derived = hot.index.derived(sig, _page_rules(docs))["rows"]
+                    rows = [derived[key] for area, aid, i, _ in live(hot) if (key := (area, aid, i)) in derived]
+                store = _page_store(store, numbers, docs, rows)
+        return store, marks
 
     @contextmanager
     def _store_response(self):
@@ -1966,58 +2250,56 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         agent = self._agent_reader()
         since = self.headers.get("X-Annotate-Store-Mark", "") if poll and not agent else ""
         compressed = _accepts_gzip(self.headers.get("Accept-Encoding", ""))
-        with _locked_store(self.artifact_dir, write=False):
-            meta = self._read_meta()
-            current_version = meta.get("current")
+        for attempt in range(2):
+            with _locked_store(self.artifact_dir, write=False):
+                meta = self._read_meta()
+                current_version = meta.get("current")
+                try:
+                    draft_stamp = (self.artifact_dir / ".review-drafts").stat().st_mtime_ns
+                except FileNotFoundError:
+                    draft_stamp = None
+                published = tuple(h.get("version") for h in meta.get("history") or [] if isinstance(h, dict))
+                signature = (self._store_signature(), current_version, published, draft_stamp)
+                projection = None
+                if view == "page":
+                    try:  # The projected store includes question anchors from the current body.
+                        body_stamp = _version_file(self.artifact_dir, current_version).stat().st_mtime_ns
+                    except (OSError, ValueError):
+                        body_stamp = None
+                    projection = (body_stamp, _plan_stamps(self.artifact_dir))
+                cache = type(self)._store_responses
+                if cache.get("signature") != signature:
+                    cache.clear()
+                    cache["signature"] = signature
+                # Keep one marked variant per view and encoding, even when tabs sent different marks.
+                key = (view if poll else None, compressed, agent)
+                if since:
+                    key += ("marked",)
+                variant = (projection, since)
+                cached = cache.get(key)
+                if cached is not None and cached[0] == variant:
+                    representation = cached[1]
+                    break
+                # A tab's new mark alone reuses the projected page store (uzd.9).
+                base = cache.get(("page", agent)) if view == "page" else None
+                if base is None or base[0] != projection:
+                    built = self._store_base(view, agent, meta, signature, split=attempt == 0)
+                    base = None if built is None else (projection, built)
+                    if base is not None and view == "page":
+                        cache["page", agent] = base
+                if base is not None:
+                    store, marks = base[1]
+                    if since:
+                        store = {**store, **self._since_fields(since, marks or self._store_cards(signature, store))}
+                    body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
+                    packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
+                    representation = (packed, compressed) if len(packed) < len(body) else (body, False)
+                    cache[key] = (variant, representation)
+                    break
             try:
-                draft_stamp = (self.artifact_dir / ".review-drafts").stat().st_mtime_ns
-            except FileNotFoundError:
-                draft_stamp = None
-            published = tuple(h.get("version") for h in meta.get("history") or [] if isinstance(h, dict))
-            signature = (self._store_signature(), current_version, published, draft_stamp)
-            projection = None
-            if view == "page":
-                try:  # The projected store includes question anchors from the current body.
-                    body_stamp = _version_file(self.artifact_dir, current_version).stat().st_mtime_ns
-                except (OSError, ValueError):
-                    body_stamp = None
-                projection = (body_stamp, _plan_stamps(self.artifact_dir))
-            cache = type(self)._store_responses
-            if cache.get("signature") != signature:
-                cache.clear()
-                cache["signature"] = signature
-            # Keep one marked variant per view and encoding, even when tabs sent different marks.
-            key = (view if poll else None, compressed, agent)
-            if since:
-                key += ("marked",)
-            variant = (projection, since)
-            cached = cache.get(key)
-            if cached is None or cached[0] != variant:
-                from .review_versions import visible_store
-                store = visible_store(self.artifact_dir, self._v2_load(read_only=True), meta)
-                if agent:
-                    store = store_view(store)
-                if poll:
-                    # Carry provenance remains on disk and in full comments.json;
-                    # the shell does not render it. Decision history is rendered.
-                    store = {**store, "current_version": current_version, **{area: {anchor: [{k: v for k, v in comment.items() if k != "carry_history"}
-                                                        for comment in items]
-                                               for anchor, items in store.get(area, {}).items()}
-                                         for area in ("anchors", "archived")}}
-                    if not agent and (view == "page" or since):
-                        self._mark_store(signature, store, page=view == "page", since=since)
-                    # Label migration must not look like a content change to the shell.
-                    numbers = _pin_item_numbers(store)
-                    if view == "page":
-                        review = (current_version, [v for v in published if v],
-                                  _card_anchors(lambda: _version_file(self.artifact_dir, current_version)))
-                        store = _page_store(store, numbers, {"review": review, **_plan_docs(self.artifact_dir, store)})
-                body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
-                packed = gzip.compress(body, compresslevel=6, mtime=0) if compressed else body
-                representation = (packed, compressed) if len(packed) < len(body) else (body, False)
-                cache[key] = (variant, representation)
-            else:
-                representation = cached[1]
+                self._split_store()
+            except (OSError, ValueError) as exc:  # every step left a whole store; serve it unsplit
+                print(f"  cold split failed: {exc}", flush=True)
         self._respond(200, b"", "application/json", conditional=True, representation=representation,
                       extra_headers={"Vary": "X-Annotate-Store-Mark"} if poll else None)
 
@@ -2106,7 +2388,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         latest = urllib.parse.parse_qs(parsed.query).get("latest") == ["1"]
 
         def disk_signature():
-            paths = [self._store_path(), self._meta_path(), self.artifact_dir / "rounds.ndjson",
+            from .cold import stamp
+            paths =[self._store_path(), self._meta_path(), self.artifact_dir / "rounds.ndjson",
                      *history_buses(bus, BUS_ARCHIVE_ROOT)]
             if not latest:
                 paths.extend(self.artifact_dir / kind for kind in ("versions", "content"))
@@ -2119,7 +2402,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 except FileNotFoundError:
                     signature.append((str(path),))
             # SQLite indexes the bus. The read transaction can update its WAL even when History inputs are unchanged.
-            return (backend(self.artifact_dir) if bus is not None else None, signature)
+            return (backend(self.artifact_dir) if bus is not None else None, signature, stamp(self.artifact_dir))
 
         responses = type(self)._history_responses
         cache = responses.get(latest, {})
@@ -2164,7 +2447,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         flt_version = (params.get("version") or [None])[0]
         with _locked_store(self.artifact_dir, write=False):
             from .review_versions import visible_store
-            store = visible_store(self.artifact_dir, self._v2_load(read_only=True), self._read_meta())
+            store = visible_store(self.artifact_dir, self._v2_load(read_only=True, merged=True), self._read_meta())
             if self._agent_reader():
                 store = store_view(store)
         out = []
@@ -2419,7 +2702,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if plan_id is None and not self._moved():
             from .approval_catalog import seal_review
             with _locked_store(self.artifact_dir, write=False):
-                html, evidence_tokens = seal_review(self.artifact_dir, html, v, self._v2_load(read_only=True), base)
+                html, evidence_tokens = seal_review(self.artifact_dir, html, v, self._v2_load(read_only=True, merged=True), base)
         if plan_id is not None:
             # A plan version has the same page-local asset root as Review.
             html = re.sub(r"<base\b[^>]*>", "", html, flags=re.IGNORECASE)
@@ -2558,7 +2841,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 self._respond(403, b'{"error":"whole-store replacement requires a local non-browser caller"}')
                 return
             try:
-                store = _validate_store(payload)
+                from .cold import attach
+                store = attach(self.artifact_dir, _validate_store(payload))  # a "cold" summary must match its file
             except ValueError as exc:
                 return self._respond(400, json.dumps({"error": str(exc)}).encode())
             with _locked_store(self.artifact_dir):
@@ -2757,6 +3041,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                             (it.get("anchor_id"), it.get("number")) for it in expected]:
                         raise DecisionRequestError("seed every staged card before publishing; regenerate the complete round")
                 store = self._v2_load()
+                from .cold import anchor_items
                 # Validate everything first so a 413 on item 3 never leaves
                 # items 1-2 half-committed.
                 built = []
@@ -2774,7 +3059,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     aid = fresh["anchor_id"]
                     existing = None
                     if idempotency == "anchor" and fresh.get("decision_request"):
-                        for c in store["anchors"].get(aid, []):
+                        for c in anchor_items(store, aid, lambda c: True):
                             shared_decision = (
                                 author.startswith("agent:") and str(c.get("author") or "").startswith("agent:")
                                 and type(fresh.get("number")) is int
@@ -2835,7 +3120,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         created_events.append(("comment_updated", existing))
                     else:
                         if idempotency == "anchor" and fresh.get("decision_request"):
-                            lineage = [c for c in store["anchors"].get(aid, [])
+                            lineage = [c for c in anchor_items(store, aid, lambda c: True)
                                        if c.get("decision_request") and (c.get("author") == author or (publication and str(c.get("author", "")).startswith("agent:")))
                                        and c.get("doc") == fresh.get("doc")
                                        and (it.get("number") is None or c.get("number") == fresh.get("number"))]
@@ -3348,6 +3633,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _v2_post_archive(self, comment_id: str, parsed):
         author = self._author(parsed)
+        try:
+            payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            return self._respond(400, b'{"error":"expected a JSON object"}')
+        # `annotate close`: archive only a card still unanswered and old enough, checked under the lock.
+        older_than = payload.get("if_unanswered_older_than")
         with _locked_store(self.artifact_dir):
             store = self._v2_load()
             archived = store.setdefault("archived", {})
@@ -3355,6 +3648,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             for anchor_id, items in list(store["anchors"].items()):
                 for c in list(items):
                     if c.get("id") == comment_id:
+                        if isinstance(older_than, (int, float)) and not isinstance(older_than, bool):
+                            from .cli import _closable
+                            if not _closable(c, older_than):
+                                self._respond(409, b'{"error":"answered, or newer than asked: left as it is"}')
+                                return
                         remember(c, author)
                         c["status"] = "archived"
                         if not human(author) and isinstance(c.get("agent_snapshot"), dict):
@@ -3867,7 +4165,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         from .approval_catalog import promote
         from .categories import comment_category, validate_send
         from .copy_state import load_copy, submit_revisions
-        from .review_history import _events
         # As on main: an empty body is an empty round request, and fields
         # this server does not know are ignored (older clients and scripts).
         payload = {}
@@ -3891,7 +4188,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             now = _now_iso()
             # A persisted round is the receipt if a process died between the
             # copy/comment writes. Clear only its exact activities on retry.
-            receipts = list(_events(self.artifact_dir / "rounds.ndjson"))
+            receipts = _receipts(self.artifact_dir / "rounds.ndjson")
             submitted_answers = {(a.get("comment_id"), a.get("by"), a.get("ts"), a.get("verdict"), a.get("decision_id")): (r.get("ts"), r.get("id"))
                                  for r in receipts for a in r.get("answers", []) if a.get("ts")}
             submitted_edits = {e.get("revision_id") for r in receipts for e in r.get("edits", [])
@@ -4253,7 +4550,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             with _locked_store(self.artifact_dir, write=False):
                 author = self._warm_author() or self._author()
                 from .review_versions import visible_store
-                raw = self._v2_load(read_only=True)
+                raw = self._v2_load(read_only=True, merged=True)
                 # uzd: ~60 plan metas and their topics took ~110 ms on FLD; they change only with these files.
                 topics_stamp = _metadata_stamp(safe_path(self.artifact_dir, "plan-topics.json"))
                 plans_key = (self._store_signature(), self._agent_reader(), _plan_stamps(self.artifact_dir), topics_stamp)
@@ -4781,6 +5078,8 @@ def make_handler(
     # Cache the current revision per view, encoding and reader, with a separate marked variant.
     BoundHandler._store_responses = {}
     BoundHandler._store_snapshot = None
+    BoundHandler._store_merged = None
+    BoundHandler._cold_declined = {}
     BoundHandler._store_revision = None
     BoundHandler._page_marks = {}
     BoundHandler._count_rows = (None, None, {})

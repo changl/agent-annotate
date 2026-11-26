@@ -123,7 +123,11 @@ def _hashes(page_dir: Path) -> dict:
 def _read_json(path: Path, default):
     if not path.exists():
         return default
-    return json.loads(path.read_text(encoding="utf-8"))
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if path.name == "comments.json":
+        from .cold import merged
+        value = merged(path.parent, value)  # the whole store, cold items too
+    return value
 
 
 def _title(page_dir: Path, meta: dict, fallback: str) -> str:

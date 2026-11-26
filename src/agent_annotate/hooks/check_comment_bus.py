@@ -257,9 +257,13 @@ def _load_cards(slug_dir: str) -> dict:
     if not slug_dir:
         return cards
     path = os.path.join(slug_dir, "comments.json")
+    from agent_annotate.cold import Unreadable, merged
     try:
         with open(path, "r", encoding="utf-8") as fh:
             store = json.load(fh)
+        store = merged(slug_dir, store)
+    except Unreadable:
+        raise  # the caller says so: not a page without cards
     except (OSError, ValueError):
         return cards
     from agent_annotate.submitted import store_view
@@ -473,7 +477,12 @@ def _scan(session_id: str) -> list:
                     announced_ids.add(ev["comment_id"])
 
             if events:
-                cards = _load_cards(record.get("slug_dir") or "")
+                from agent_annotate.cold import Unreadable
+                try:
+                    cards = _load_cards(record.get("slug_dir") or "")
+                except Unreadable as exc:
+                    cards = {}
+                    lines.append(f"[annotate] {page_name(record)}: {exc}")
                 lines.append(_slug_line(project, slug, len(events), events,
                                         cards, round_submitted, page_name(record)))
                 _bus_append(bus_path, slug, {

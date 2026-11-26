@@ -396,8 +396,9 @@ def test_encoded_store_cache_retains_only_current_representations(server):
             for encoding in ("identity", "gzip"):
                 assert request(httpd, route, headers={"Accept-Encoding": encoding})[0] == 200
         cache = httpd.RequestHandlerClass._store_responses
-        assert set(cache) == {"signature"} | {(view, zipped, False) for view in (None, "poll", "page")
-                                              for zipped in (False, True)}
+        # ("page", False): the projected page store, reused when a tab sends a new mark.
+        assert set(cache) == {"signature", ("page", False)} | {(view, zipped, False) for view in (None, "poll", "page")
+                                                               for zipped in (False, True)}
         assert httpd.RequestHandlerClass._store_snapshot[0] == cache["signature"][0]
 
 

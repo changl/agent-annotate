@@ -20,6 +20,8 @@ from __future__ import annotations
 import argparse
 import collections
 import datetime
+import fcntl
+import functools
 import hashlib
 import json
 import os
@@ -148,6 +150,76 @@ def restart(project, slug, **options):
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
+COLD_STORE = (2, 34, 0)  # the first release that reads split pages (cold.py); older ones see only comments.json
+SPLITS = (2, 35, 0)  # the first release that splits them
+FLOOR = HOME / "floor.json"
+CONTROLLER = HOME / "rollout.py"  # what another Mac runs; placed by bootstrap, replaced only by update_controller
+CONTROLLER_RECORD = HOME / "controller.json"  # the release CONTROLLER came from, written last; without it, none is placed
+
+
+def dotted(version):
+    return ".".join(map(str, version))
+
+
+def controller_version():
+    """The release CONTROLLER came from, or None when no floor-keeping one is placed: controller.json missing,
+    unreadable or incomplete (a crash while it was written), or no CONTROLLER beside it."""
+    try:
+        return vtuple(json.loads(CONTROLLER_RECORD.read_text())["version"]) if CONTROLLER.is_file() else None
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, SystemExit):
+        return None
+
+
+def floor():
+    """The oldest release this Mac may run: 2.34.0 once a splitting release went on. Never lowered."""
+    try:
+        return vtuple(json.loads(FLOOR.read_text())["version"])
+    except FileNotFoundError:
+        return (0, 0, 0)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, SystemExit) as exc:
+        raise Failed("floor", f"{FLOOR} is unreadable ({exc}); fix it before installing anything") from None
+
+
+def raise_floor(version):
+    if vtuple(version) <= floor():
+        return
+    write_atomic(FLOOR, (json.dumps({"version": version}) + "\n").encode())
+
+
+def refuse_below_floor(version):
+    lowest = floor()
+    if vtuple(version) < lowest:
+        raise Failed("floor", f"{version} cannot read pages that {dotted(SPLITS)} or later split on this Mac; "
+                     f"roll back to {dotted(lowest)} or later")
+
+
+def prerequisite(target, installed):
+    """Why `target` cannot go over `installed`, or None: a failed apply must roll back to a reader."""
+    if vtuple(target) >= SPLITS and vtuple(installed) < COLD_STORE:
+        return f"{target} splits pages and {installed} cannot read them; apply {dotted(COLD_STORE)} first"
+    return None
+
+
+def listed_digest(sums, name):
+    return next((line.split()[0] for line in sums.splitlines() if line.split()[1:] in ([name], ["*" + name])), None)
+
+
+def write_atomic(path, data):
+    """`path` holds `data` whole, durably (file, then its directory after the rename)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}-{os.getpid()}")
+    with temporary.open("wb") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
 def disable_databases(pages):
     for project, slug, _port, _base in pages:
         run([PYTHON, "-I", "-m", "agent_annotate.cli", "db", "off", f"{project}/{slug}"],
@@ -176,9 +248,14 @@ def plan(mac, target):
     reasons = collections.Counter(REASONS.get(p["action"], p["action"]) for p in skips)
     why = ", ".join(r if len(reasons) == 1 else f"{n} {r}" for r, n in reasons.items())
     problem = None
-    if vtuple(target) < vtuple(info["version"]):
+    try:
+        refuse_below_floor(target)
+    except Failed as exc:
+        problem = exc.detail
+    problem = problem or prerequisite(target, info["version"])
+    if problem is None and vtuple(target) < vtuple(info["version"]):
         problem = f"{target} is older than installed {info['version']}; use rollback"
-    else:
+    elif problem is None:
         try:
             sums = fetch(asset_url(target, "SHA256SUMS")).decode()
             if wheel_name(target) not in sums:
@@ -193,8 +270,7 @@ def plan(mac, target):
 
 def preflight(target):
     sums = fetch(asset_url(target, "SHA256SUMS")).decode()
-    digest = next((line.split()[0] for line in sums.splitlines()
-                   if line.split()[1:] in ([wheel_name(target)], ["*" + wheel_name(target)])), None)
+    digest = listed_digest(sums, wheel_name(target))
     if not digest:
         raise Failed("preflight", f"SHA256SUMS lists no {wheel_name(target)}")
     if hashlib.sha256(fetch(asset_url(target, wheel_name(target)))).hexdigest() != digest:
@@ -257,6 +333,7 @@ def log(entry):
 
 def restore(folder, record, pages):
     """Old wheel, skills tarball, restart `pages`, check. Returns 'doctor ok' or raises Failed."""
+    refuse_below_floor(record["version"])  # before anything changes
     if record.get("page_db"):
         disable_databases(pages)  # Release N exports current JSON before the old runtime is installed.
     install(record["wheel_url"])
@@ -267,6 +344,22 @@ def restore(folder, record, pages):
     return "doctor ok"
 
 
+def exclusive(func):
+    """One apply or rollback per Mac at a time, from inspection to the last restart or recovery:
+    otherwise a rollback that passed its floor check installs an old reader after another run split pages."""
+    @functools.wraps(func)
+    def run_alone(mac, *args, **kwargs):
+        HOME.mkdir(parents=True, exist_ok=True)
+        with open(HOME / "rollout.lock", "a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)  # released when the file closes, or the process dies
+            except BlockingIOError:
+                return 2, f"{mac} refused: another apply or rollback is running on this Mac; try again when it ends"
+            return func(mac, *args, **kwargs)
+    return run_alone
+
+
+@exclusive
 def apply(mac, target, approval, hold_json=(), move_page=None):
     info = plan(mac, target)
     migrate = vtuple(target) >= (2, 30, 0)
@@ -289,15 +382,20 @@ def apply(mac, target, approval, hold_json=(), move_page=None):
         if any(held in (page["slug"], f"{page['project']}/{page['slug']}") for held in hold_json):
             return 2, f"{mac} refused: cannot hold and move {move_page}"
     info["page_db"] = migrate
+    old = info["version"]
+    if prerequisite(target, old):
+        return 2, f"{mac} refused: {prerequisite(target, old)}"
     if info["problem"]:
         return 1, f"{mac} FAILED at preflight ({info['problem']}) · nothing changed"
-    old = info["version"]
     action = "move" if move_page and old == target else "apply"
     try:
         preflight(target)
+        refuse_below_floor(target)
+        if vtuple(target) >= SPLITS:
+            raise_floor(dotted(COLD_STORE))  # before the install: durable even if it stops halfway
     except (Failed, OSError) as exc:
-        detail = exc.detail if isinstance(exc, Failed) else str(exc)
-        return 1, f"{mac} FAILED at preflight ({detail}) · nothing changed"
+        step, detail = (exc.step, exc.detail) if isinstance(exc, Failed) else ("preflight", str(exc))
+        return 1, f"{mac} FAILED at {step} ({detail}) · nothing changed"
     folder, record = backup(info)
     touched = []
     json_pages = []
@@ -342,6 +440,7 @@ def entries():
         return []
 
 
+@exclusive
 def rollback(mac, approval):
     last = next((e for e in reversed(entries()) if e.get("mac") == mac and e.get("action") == "apply"
                  and e.get("result") == "ok" and e.get("backup")), None)
@@ -350,6 +449,10 @@ def rollback(mac, approval):
     folder = Path(last["backup"])
     record = json.loads((folder / "backup.json").read_text())
     try:
+        refuse_below_floor(record["version"])  # before inspecting anything
+        if vtuple(record["version"]) < COLD_STORE:  # a splitting release put on outside rollout raises the floor too
+            if vtuple(inspect()["version"]) >= SPLITS:
+                raise_floor(dotted(COLD_STORE))
         state = restore(folder, record, record["pages"])
     except Failed as exc:
         line = f"{mac} FAILED at rollback {exc.step} ({exc.detail})"
@@ -360,6 +463,44 @@ def rollback(mac, approval):
     log({"mac": mac, "action": "rollback", "from": last.get("to"), "to": record["version"],
          "approval": approval, "result": "ok", "line": line})
     return 0, line
+
+
+@exclusive
+def update_controller(mac, version):
+    """Replace CONTROLLER with release `version`'s rollout.py only when that release is newer than both
+    the floor and the release CONTROLLER came from. Under the rollout lock, so no apply raises the floor
+    between this check and the replacement. An older release stays data for plan and apply: the updater
+    here is never one that ignores the floor. Returns (0, "kept" or "replaced")."""
+    current = controller_version() or COLD_STORE  # bootstrap places a first controller only from 2.34.0 or later
+    if vtuple(version) <= max(current, floor()):
+        return 0, "kept"
+    digest = listed_digest(fetch(asset_url(version, "SHA256SUMS")).decode(), "rollout.py")
+    body = fetch(asset_url(version, "rollout.py"))
+    if not digest or hashlib.sha256(body).hexdigest() != digest:
+        raise Failed("controller", f"v{version} rollout.py does not match its SHA256SUMS")
+    write_atomic(CONTROLLER, body)
+    write_atomic(CONTROLLER_RECORD, (json.dumps({"version": version}) + "\n").encode())
+    return 0, "replaced"
+
+
+@exclusive
+def bootstrap(mac, version, staged):
+    """Place `staged` (release `version`'s rollout.py, downloaded beside its SHA256SUMS into a folder of its
+    own) as CONTROLLER where none is placed. Under the rollout lock and after a recheck, so two first runs
+    cannot both publish; controller.json goes last, so a crash leaves none and the next run places it again.
+    Returns (0, "") when a controller is placed, so the request goes on to it."""
+    try:
+        if controller_version() is None:
+            body = staged.read_bytes()
+            digest = listed_digest(staged.with_name("SHA256SUMS").read_text(), "rollout.py")
+            if not digest or hashlib.sha256(body).hexdigest() != digest:
+                raise Failed("bootstrap", f"downloaded v{version} rollout.py does not match its SHA256SUMS")
+            write_atomic(CONTROLLER, body)
+            write_atomic(CONTROLLER_RECORD, (json.dumps({"version": version}) + "\n").encode())
+    except (Failed, OSError) as exc:
+        step, detail = (exc.step, exc.detail) if isinstance(exc, Failed) else ("bootstrap", str(exc))
+        return 1, f"{mac} FAILED at {step} ({detail}) · no controller placed"
+    return 0, ""
 
 
 # --- status and other Macs --------------------------------------------------------------------
@@ -411,13 +552,22 @@ def remote(mac, command, version, approval, worktree, hold_json=(), move_page=No
         script += " --hold-json " + shlex.quote(slug)
     if move_page:
         script += " --move-page " + shlex.quote(move_page)
-    fetch_step = ""
-    if version:
-        fetch_step = (f"mkdir -p {folder}/v{version} && cd {folder}/v{version} && "
-                      f"curl -fsSLO {RELEASES}/v{version}/rollout.py && curl -fsSLO {RELEASES}/v{version}/SHA256SUMS && "
-                      f"grep -F '  rollout.py' SHA256SUMS | shasum -a 256 -c - && cp rollout.py ../rollout.py && ")
+    # The controller there (controller.json names its release) takes the version as data; it replaces
+    # itself, under the rollout lock, only with a newer release (update_controller). A release that keeps
+    # the floor is downloaded into a folder of this request's own, checked, and placed by bootstrap where
+    # none is placed. Anything else runs only on a placed controller, which refuses when it has no record.
+    if version and vtuple(version) >= COLD_STORE:
+        stage = f"{folder}/stage-{marker[12:]}"
+        first = (f"mkdir -p {stage} && cd {stage} && "
+                 f"curl -fsSLO {RELEASES}/v{version}/rollout.py && curl -fsSLO {RELEASES}/v{version}/SHA256SUMS && "
+                 f"grep -F '  rollout.py' SHA256SUMS | shasum -a 256 -c - && cd {folder} && "
+                 f"python3 -I {stage}/rollout.py bootstrap {version} --mac {mac} --local")
+    else:
+        refused = shlex.quote(f"{mac} refused: no floor-keeping rollout.py there yet; apply")
+        first = (f"if test -f {folder}/controller.json; then true; else echo {refused} "
+                 f"{dotted(COLD_STORE)} or later first; false; fi")
     # The marker is split in the typed text, so only the echo's output matches it exactly.
-    text = (f"{fetch_step}{script} --mac {mac} --local --approval {shlex.quote(approval)}; "
+    text = (f"{first} && {script} --mac {mac} --local --approval {shlex.quote(approval)}; "
             f"echo {marker[:7]}\"\"{marker[7:]}")
     assert "$" not in text and "\n" not in text  # nothing may expand on this side or break the line
     orca = ["orca", "--environment", ENVIRONMENTS[mac], "terminal"]
@@ -440,7 +590,8 @@ def remote(mac, command, version, approval, worktree, hold_json=(), move_page=No
     before = [line.strip() for line in tail[:[line.strip() for line in tail].index(marker)]]
     line = next((x for x in reversed(before) if x.startswith((f"{mac} ", "refused"))),
                 f"{mac} FAILED at remote (no result line; terminal {handle})")
-    code = 0 if line.startswith(f"{mac} ") and " FAILED " not in line and "not ready" not in line else 1
+    code = 0 if line.startswith(f"{mac} ") and not any(
+        word in line for word in (" FAILED ", "not ready", " refused:")) else 1
     version_now = (version if command == "apply" and code == 0 else
                    line.split()[3] if command == "rollback" and code == 0 else None)
     log({"mac": mac, "action": command, "remote": True, "approval": approval, "terminal": handle,
@@ -464,9 +615,32 @@ def _find(data, key):
     return None
 
 
+def controller_step(args, argv):
+    """Running as another Mac's controller: first bring it up to `version`, if that is newer (update_controller),
+    and run the request on the new one. None to go on here, or the (code, line) that ends the request."""
+    if not (args.local and Path(__file__).resolve() == CONTROLLER.resolve()):
+        return None
+    if controller_version() is None:  # a copy left by an older rollout.py, or a bootstrap that never finished
+        return 2, (f"{args.mac} refused: no floor-keeping rollout.py there yet; apply {dotted(COLD_STORE)} "
+                   "or later first")
+    if args.command not in ("plan", "apply"):
+        return None
+    try:
+        code, state = update_controller(args.mac, args.version)
+    except OSError:
+        return None  # no such release, or offline: plan and apply report it
+    except Failed as exc:
+        return 1, f"{args.mac} FAILED at {exc.step} ({exc.detail}) · nothing changed"
+    if code:
+        return code, state
+    if state == "replaced":
+        os.execv(sys.executable, [sys.executable, "-I", str(CONTROLLER), *argv])
+    return None
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("command", choices=("plan", "apply", "rollback", "status"))
+    parser.add_argument("command", choices=("plan", "apply", "rollback", "status", "bootstrap"))
     parser.add_argument("version", nargs="?")
     parser.add_argument("--mac", choices=sorted(ENVIRONMENTS))
     parser.add_argument("--approval", default="", help="Chang's yes, e.g. \"card #212\"; required for another Mac")
@@ -486,6 +660,8 @@ def main(argv=None):
         return code
     if not args.mac or (args.command != "rollback") != bool(args.version):
         parser.error("plan and apply take VERSION and --mac; rollback takes --mac")
+    if args.command == "bootstrap" and not args.local:
+        parser.error("bootstrap runs only on the Mac it places a controller on (--local)")
     if args.version:
         vtuple(args.version)
     here = this_mac()
@@ -497,6 +673,15 @@ def main(argv=None):
                             args.hold_json, args.move_page)
     elif os.environ.get("UV_TOOL_DIR") and not os.environ.get("UV_TOOL_BIN_DIR"):
         code, line = 2, "refused: UV_TOOL_DIR without UV_TOOL_BIN_DIR would replace the live annotate launcher"
+    elif args.command == "bootstrap":
+        staged = Path(__file__).resolve()
+        code, line = bootstrap(args.mac, args.version, staged)
+        if staged.parent.name.startswith("stage-") and staged.parent.parent == HOME.resolve():
+            shutil.rmtree(staged.parent, ignore_errors=True)  # this request's own download
+        if not line:
+            return code  # silent, so the request's own line is the result remote() reads
+    elif (stop := controller_step(args, sys.argv[1:] if argv is None else argv)) is not None:
+        code, line = stop
     elif args.command == "plan":
         try:
             info = plan(args.mac, args.version)

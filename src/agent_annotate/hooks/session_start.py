@@ -46,7 +46,8 @@ def waiting_count(directory: Path) -> int:
     from agent_annotate.categories import comment_category, comment_needs_reviewer
     from agent_annotate.copy_state import load_copy
     try:
-        store = json.loads((directory / "comments.json").read_text(encoding="utf-8"))
+        from agent_annotate.cold import merged
+        store = merged(directory, json.loads((directory / "comments.json").read_text(encoding="utf-8")))
     except (OSError, ValueError):
         store = {}
     from agent_annotate.submitted import copy_view, store_view

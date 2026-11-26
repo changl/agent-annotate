@@ -31,7 +31,26 @@ def _events(path):
                 yield event
 
 
-def _available(directory, version):
+def _plain_files(directory) -> set[str]:
+    """Names of the regular files (no symlinks) in directory/content and /versions, whose
+    _available check needs no path resolution (FLD: 1,134 versions took ~0.5 s to resolve)."""
+    import os
+    names = set()
+    for kind in ("content", "versions"):
+        path = directory / kind
+        if path.is_symlink():
+            continue
+        try:
+            with os.scandir(path) as entries:
+                names |= {entry.name for entry in entries if entry.is_file(follow_symlinks=False)}
+        except OSError:
+            continue
+    return names
+
+
+def _available(directory, version, plain=()):
+    if version + ".html" in plain:
+        return True
     for kind in ("content", "versions"):
         path = directory / kind / (version + ".html")
         try:
@@ -89,12 +108,13 @@ def _bus_rounds(path, cache):
 def _versions(directory, meta_bytes, *, check_availability):
     meta = json.loads(meta_bytes if meta_bytes is not None else (directory / "current.meta.json").read_bytes())
     versions = []
+    plain = _plain_files(directory) if check_availability else ()
     for item in meta.get("history", []):
         version = item.get("version", "")
         if not isinstance(version, str) or not re.fullmatch(r"v[0-9]{1,10}", version):
             continue
         if check_availability:
-            item = {**item, "current": version == meta.get("current"), "available": _available(directory, version)}
+            item = {**item, "current": version == meta.get("current"), "available": _available(directory, version, plain)}
         versions.append(item)
     versions.sort(key=lambda item: _time(item.get("ts")), reverse=True)
     return versions
@@ -103,6 +123,9 @@ def _versions(directory, meta_bytes, *, check_availability):
 def _records(directory, store_bytes):
     store = json.loads(store_bytes) if store_bytes is not None else (
         json.loads((directory / "comments.json").read_bytes()) if (directory / "comments.json").exists() else {})
+    if isinstance(store, dict):
+        from .cold import merged
+        store = merged(directory, store)
     records = {}
     for bucket in ("anchors", "archived"):
         groups = store.get(bucket) or {}
