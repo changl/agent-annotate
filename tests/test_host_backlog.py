@@ -71,7 +71,8 @@ def test_reading_keeps_the_measured_figures_and_the_failure_kind():
     assert hb.reading(sample("M1Max", 20.4)) == {"kind": "measured", "idle": 20.4, "memory": 60.0, "hot": False,
                                                  "at": NOW.isoformat()}
     assert hb.reading(sample("M1Max", 50, cores=6))["hot"] is True
-    for slow in ("ssh_host_or_probe_timeout:M1Max16", "host_probe_failed:M1Max16"):
+    for slow in ("ssh_host_or_probe_timeout:M1Max16", "host_probe_failed:M1Max16", "host_probe_timeout:M1Max",
+                 "sample_unreadable:M1Max16"):
         assert hb.reading({"target": "M1Max16", "error": slow})["kind"] == "slow"
     assert hb.reading(sample("M5Max", float("nan")))["kind"] == "slow"
     assert hb.reading({"target": "M5Max", "error": "ssh_host_offline_or_asleep:M5Max"}) == {"kind": "asleep"}
@@ -94,14 +95,14 @@ def test_the_clock_uses_the_sample_times_and_the_measured_idle():
     # Sampled 30.5, 20.5, 10.5 and 0.5 min ago: 30 min apart by the Mac's clock, though the runs spanned 30.5.
     seen, _ = runs([[sample("M1Max16", 5, minutes_ago=m)] for m in (30.5, 20.5, 10.5, 0.5)], census=census)
     assert seen[:3] == [{}, {}, {}] and asked == ["M1Max16"]
-    assert seen[3] == {"mac:M1Max16": "The M1Max16 has been over 80% busy for 30 min (now CPU 95% busy, memory 40% "
+    assert seen[3] == {"busy:M1Max16": "The M1Max16 has been over 80% busy for 30 min (now CPU 95% busy, memory 40% "
                                       "used); using the most CPU: rustc about 3.0 cores (3 processes)"}
     seen, _ = runs([[sample("M1Max16", 5, minutes_ago=m)] for m in (29.5, 20, 10, 0.5)])
     assert seen[3] == {}  # 29 min by the sample times
     seen, _ = runs([[sample("M1Max", 20.4, minutes_ago=m)] for m in (40, 30, 20, 10, 0)])
     assert seen[-1] == {}  # 79.6% busy is under the line even though mac-admit prints it as 20% idle
     seen, _ = runs([[sample("M1Max", 60, memory=15, cores=6, minutes_ago=m)] for m in (30, 20, 10, 0)])
-    assert "memory 85% used, running hot" in seen[-1]["mac:M1Max"]
+    assert "memory 85% used, running hot" in seen[-1]["busy:M1Max"]
 
 
 def test_failed_probes_never_read_as_measured_load():
@@ -112,11 +113,24 @@ def test_failed_probes_never_read_as_measured_load():
     # A slow sample has no sample time of its own, so it counts at the run's time; spread over 30 min:
     state = {"M1Max16": {"since": ago(30), "last": ago(10), "checks": 3, "busy": 0}}
     seen, _ = runs([[slow]], state=state, census=lambda macs: asked.extend(macs) or {})
-    assert seen[0] == {"mac:M1Max16": "The M1Max16 has not answered its load check for 30 min"} and asked == []
+    assert seen[0] == {"quiet:M1Max16": "The M1Max16 has not answered its load check for 30 min"} and asked == []
     mixed = {"M1Max16": {"since": ago(30), "last": ago(10), "checks": 3, "busy": 1}}
     seen, _ = runs([[sample("M1Max16", 1)]], state=mixed)
-    assert seen[0]["mac:M1Max16"].startswith("The M1Max16 has been over 80% busy or too busy to answer for 30 min "
-                                             "(measured busy in 2 of 4 checks; now CPU 99% busy")
+    assert seen[0]["busy:M1Max16"].startswith("The M1Max16 has been over 80% busy whenever it answered for 30 min "
+                                              "(busy in 2 of 4 checks, the others did not answer; now CPU 99% busy")
+
+
+def test_a_refused_check_inside_a_busy_run_is_counted_not_hidden():
+    refused = {"target": "M1Max16", "error": "ssh_login_refused:M1Max16"}
+    seen, state = runs([[sample("M1Max16", 5, minutes_ago=30)], [sample("M1Max16", 5, minutes_ago=20)], [refused],
+                        [sample("M1Max16", 5, minutes_ago=0)]])
+    assert seen[2] == {"reach:M1Max16": "The host check cannot sample the M1Max16: its SSH login was refused"}
+    assert seen[3] == {"busy:M1Max16": "The M1Max16 has been over 80% busy whenever it answered for 30 min (busy in "
+                                       "3 of 4 checks, the others did not answer; now CPU 95% busy, memory 40% used)"}
+    # A long refusal outlasts the gap, so the next answer starts a new clock.
+    seen, _ = runs([[refused]] * 5 + [[sample("M1Max16", 5)]],
+                   state={"M1Max16": {"since": ago(60), "last": ago(50), "checks": 2, "busy": 2}})
+    assert seen[-1] == {}
 
 
 def test_asleep_restarts_the_clock_and_a_refused_login_is_reported_and_keeps_it():
@@ -124,8 +138,8 @@ def test_asleep_restarts_the_clock_and_a_refused_login_is_reported_and_keeps_it(
     got, following = hb.pressure({"M5Max": {"kind": "asleep"},
                                   "M1Max16": hb.reading({"target": "M1Max16", "error": "ssh_login_refused:M1Max16"})},
                                  state, NOW, lambda macs: {})
-    assert got == {"mac:M1Max16": "The host check cannot sample the M1Max16: its SSH login was refused"}
-    assert following == {"M1Max16": state["M1Max16"]}
+    assert got == {"reach:M1Max16": "The host check cannot sample the M1Max16: its SSH login was refused"}
+    assert following == {"M1Max16": {**state["M1Max16"], "checks": 5}}
     # A record older than two runs restarts the clock rather than alerting on one sample.
     seen, _ = runs([[sample("M5Max", 0)]], state={"M5Max": {"since": ago(300), "last": ago(200), "checks": 9, "busy": 9}})
     assert seen == [{}]
@@ -146,12 +160,41 @@ def test_a_failed_mac_check_keeps_the_queue_report_and_the_clocks(tmp_path, monk
     monkeypatch.setattr(hb, "PRESSURE", tmp_path / "pressure.json")
     hb.PRESSURE.write_text(clocks)
     monkeypatch.setattr(hb, "MAC_ADMIT", tmp_path / "missing-mac-admit")
-    monkeypatch.setattr(hb, "queues", lambda now: {"send:reviews/a": "waiting"})
+    monkeypatch.setattr(hb, "queues", lambda now, end: {"send:reviews/a": "waiting"})
     got = hb.collect(NOW)
     assert got["send:reviews/a"] == "waiting" and got["macs:unreadable"].startswith("The host check could not sample")
     assert hb.PRESSURE.read_text() == clocks
-    monkeypatch.setattr(hb, "sample_macs", lambda: [sample("M1Max", 5)])
+    monkeypatch.setattr(hb, "sample_macs", lambda: [sample("M1Max", 5), sample("M5Max", 50), sample("M1Max16", 50)])
     monkeypatch.setattr(hb, "census", lambda macs: {})
     assert hb.collect(NOW) == {"send:reviews/a": "waiting"}  # 20 min of a 30 min run so far
     assert json.loads(hb.PRESSURE.read_text())["M1Max"]["checks"] == 3
     assert [p.name for p in tmp_path.iterdir()] == ["pressure.json"]  # written whole, no partial left
+
+
+def test_a_mac_that_mac_admit_leaves_out_is_reported_and_keeps_its_clock(tmp_path, monkeypatch):
+    monkeypatch.setattr(hb, "PRESSURE", tmp_path / "pressure.json")
+    hb.PRESSURE.write_text(json.dumps({"M1Max16": {"since": ago(20), "last": ago(10), "checks": 2, "busy": 2}}))
+    monkeypatch.setattr(hb, "queues", lambda now, end: {})
+    monkeypatch.setattr(hb, "sample_macs", lambda: [sample("M1Max", 50), sample("M5Max", 50)])
+    assert hb.collect(NOW) == {"reach:M1Max16": "The host check cannot sample the M1Max16: "
+                                                "it is not in the wm-test config"}
+    assert json.loads(hb.PRESSURE.read_text())["M1Max16"]["checks"] == 3
+
+
+def test_orca_reads_stop_at_the_deadline_and_keep_what_they_read(tmp_path, monkeypatch):
+    try:
+        hb._orca(hb.time.monotonic(), "run-list")
+        raise AssertionError("read past the deadline")
+    except TimeoutError:
+        pass
+    monkeypatch.setattr(hb, "DELIVERIES", tmp_path)
+    stuck = {"dispatchId": "ctx_a", "runId": "run_x", "projection": {"attention": {"requiresAction": True}}}
+    answers = {"run-list": {"runs": [{"id": "run_x", "objective": "FLD"}]}, "worker-list": {"workers": [stuck]}}
+
+    def orca(end, command, *rest):
+        if command not in answers:
+            raise TimeoutError("out of time")
+        return answers[command]
+    monkeypatch.setattr(hb, "_orca", orca)
+    assert hb.queues(NOW, 0) == {"worker:ctx_a": 'An Orca worker in "FLD" is stuck: needs action',
+                                 "orca:unreadable": "The host check could not read Orca: TimeoutError"}
