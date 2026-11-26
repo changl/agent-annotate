@@ -4,6 +4,7 @@ import http.server
 import io
 import json
 import threading
+import time
 from contextlib import contextmanager, redirect_stdout
 from types import SimpleNamespace
 
@@ -18,6 +19,14 @@ from agent_annotate.hooks import check_comment_bus as hook
 
 playwright = pytest.importorskip("playwright.sync_api")
 pytestmark = pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
+
+
+def wait_sends(sends, count, timeout=10):
+    """The server wakes the owner after it responds, so Send's dialog can close first."""
+    deadline = time.monotonic() + timeout
+    while len(sends) < count and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert len(sends) == count
 
 
 @contextmanager
@@ -56,7 +65,7 @@ def sandbox_page(tmp_path, monkeypatch, stages, directory=None, reviewer="review
     monkeypatch.setattr(delivery, "_orca", fake_orca)
     handler = sync_server.make_handler(artifact_dir=directory, public_base_path="", slug="review", bus_dir=bus,
                                        local_author=reviewer, skill_dir=sync_server.WEB_DIR)
-    # Synchronous fake owner dispatch makes the receipt deterministic; no real terminal is touched.
+    # The fake owner dispatch runs inline, after the response as the real one does; no real terminal is touched.
     monkeypatch.setattr(handler, "_wake_feedback_owner", lambda self: delivery.dispatch_record(record, "sandbox", "review"))
     for port in range(18700, 18800):
         try:
@@ -108,7 +117,7 @@ def test_only_manual_send_and_confirmed_owner_receipt_can_say_sent(tmp_path, mon
         assert hook._scan("sandbox-owner") == []
         page.locator("#round-submit-btn").click()
         page.locator("#round-confirm-backdrop").wait_for(state="hidden")
-        assert len(sends) == 1
+        wait_sends(sends, 1)
         status = delivery.delivery_status("sandbox", "review")["latest"]
         assert status["delivered"] is received
         note = page.locator("#send-note")
