@@ -117,6 +117,7 @@ def test_hook_installer_recognises_an_existing_equivalent_entry(tmp_path, monkey
     import json
     hooks = json.loads(settings.read_text())["hooks"]["UserPromptSubmit"]
     assert hooks[0]["hooks"][0]["command"] == str(cli.HOOK_SCRIPT)
-    assert hooks[0]["hooks"][0]["timeout"] == 30
+    assert hooks[0]["hooks"][0]["timeout"] == 5  # a prompt waits for it
+    assert json.loads(settings.read_text())["hooks"]["SessionStart"][0]["hooks"][0]["timeout"] == 30
     added, _ = cli._ensure_hook_installed()
     assert not added

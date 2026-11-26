@@ -672,7 +672,9 @@ def _ensure_hook_installed(*, provider: str = "claude", create: bool = False) ->
         if any(isinstance(hook, dict) and matches(hook.get("command", ""))
                for group in groups if isinstance(group, dict) for hook in group.get("hooks", []) or []):
             continue
-        groups.append({"hooks": [{"command": command, "type": "command", "timeout": 30}]})
+        # A prompt waits for its hook: cap a stalled Mac's cost at 5 s; the inbox keeps any notice.
+        timeout = 5 if event == "UserPromptSubmit" else 30
+        groups.append({"hooks": [{"command": command, "type": "command", "timeout": timeout}]})
         added.append(event)
     if not added:
         return False, "hooks already present (no change)"
@@ -6071,6 +6073,9 @@ def _short_receipt(args, record: dict | None) -> str | None:
 
 
 def main():
+    if sys.argv[1:] == ["hook-check"]:
+        # Runs before every prompt; building the full parser costs over a second on a busy Mac.
+        sys.exit(cmd_hook_check(None))
     args = build_parser().parse_args()
     sys.exit(run_command(args))
 
