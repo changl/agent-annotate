@@ -1,6 +1,6 @@
 # agent-annotate — changelog
 
-## Unreleased
+## 2.36.0
 
 - Saves cost about half as much server CPU on page.db (agent-annotate-uzd.10). A save rewrites comments.json from each item's stored bytes and serializes only the items that changed; Send adds just its new round rows to page.db instead of re-reading rounds.ndjson; History reads rounds.ndjson once and then only its new lines; a page poll re-stamps only changed items. On a copy of FLD: save answer 57 → 31 ms CPU (2.33.0: 173), Send 235 → 172 ms (2.33.0: 648). The files written are byte-identical.
 - page.db no longer keeps a stale row for an item whose JSON changed but compares equal in Python (`true` to `1`, a key moved).
