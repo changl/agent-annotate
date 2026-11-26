@@ -119,6 +119,8 @@
 .area-running .hbv{font-variant-numeric:tabular-nums;font-weight:600}
 .area-running .lgd{display:flex;flex-wrap:wrap;gap:4px 14px;margin:0 0 6px}.area-running .lgd span{display:inline-flex;align-items:center;gap:5px}
 .area-running .lgd .key{display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--st)}
+/* a chart's threshold, keyed under it (r13 running 11): the dashed line, then its words */
+.area-running .lgd.gk{margin:2px 0 4px;color:var(--err-text);font-weight:600}.area-running .lgd .key.gl{width:18px;height:0;border-radius:0;background:none;border-top:2px dashed var(--st-failed)}
 .area-running .segbar{display:flex;gap:2px;height:28px;margin:4px 0 6px}
 .area-running .segbar i{display:flex;align-items:center;padding:0 6px;border-radius:4px;min-width:3px;color:#fff;font-style:normal;font-size:var(--fs-xs);font-weight:700;overflow:hidden;white-space:nowrap}.area-running .segbar i.dk{color:#0b0b0b}
 .area-running .segbar i:hover,.area-running .segbar i:focus{outline:2px solid var(--color-base-content);outline-offset:1px}

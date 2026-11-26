@@ -31,11 +31,11 @@
       let why = '';
       try {
         const r = await fetch(o.src, {cache: 'no-store'});
+        const body = await r.text().catch(() => '');
         if (!r.ok) {
-          const body = await r.text().catch(() => '');
           let msg = ''; try { msg = JSON.parse(body).error || ''; } catch { msg = body.slice(0, 120); }
           why = `The page server answered “${msg || r.statusText || 'error'}” (code ${r.status}).`;
-        }
+        } else secsEarly(host, body, ctx);
       } catch (e) { why = `The page server did not answer: ${e.message}.`; }
       if (why) return fail(why, retried);
       box.innerHTML = '<iframe class="hv-if" title="The version, read-only"></iframe>';
@@ -59,6 +59,13 @@
     }
     load(false);
   };
+  // "Its sections" from the version's HTML as soon as it is read, not once every picture in the frame has loaded (r13 running 17);
+  // fit() then puts the same list back with its jumps
+  function secsEarly(host, html, ctx) {
+    const secs = host.querySelector('.h-secs'); if (!secs || !/Loading/.test(secs.textContent)) return;
+    const hs = [...new DOMParser().parseFromString(html, 'text/html').querySelectorAll('h2')].map(h => h.textContent.trim()).filter(Boolean);
+    secs.innerHTML = hs.map((t, i) => `<button class="lk h-sec" data-sec="${i}">${ctx.esc(t)}</button>`).join('') || '<p class="small mut">No sections in this version.</p>';
+  }
   // "Tell the agent" about a page that could not load goes with the one Send, under Replies to the agent (r12 fix6, running 2)
   // kept in prefs as a draft, so it survives a reload with "Unsent answers and notes" on, as task drafts do (r12 fix8, running 2)
   let CX, SAVING = false;  // SAVING: the chart editor's Save note is out
@@ -477,18 +484,17 @@
     box.innerHTML = html;
     if (keep) keep();
   }
-  function li(h, ctx, ro) {
+  function li(h, ctx) {
     const {esc} = ctx;
     const tag = h.ovr ? `<span class="h-ovr" tabindex="0">⤼ overruled<span class="h-tip" role="tooltip">The agent wrote “${esc(h.ovr[0])}”: ${esc(h.ovr[1])} Your answer stays here as you sent it.</span></span> ` : '';
-    // a card answered twice: the older answer is his earlier pick; the newest, on a card still asked, offers Change (catalog 52);
-    // the read-only version reader (ro) shows the answer without Change, as the mock does (r12 audit15 running 1)
+    // a card answered twice: the older answer is his earlier pick. History is read-only, with no Change, as in the mock (#75, r13 running 15)
     const newest = h.id && D.answers.find(x => x.id === h.id), old = newest && newest !== h;
-    const ch = !ro && !old && h.ch ?` <button class="lk small" data-hchange="${esc(h.id)}" title="Pick again on its card in Questions; this answer stays here">Change</button>` : '';
-    return `<li${old ? ' class="h-old"' : ''}>${h.n ? `<span class="h-n">Question ${h.n}</span> ` : ''}${tag}${esc(h.q)} → <b>${esc(h.a)}</b>${old ? ' <span class="small mut">· your earlier pick, changed since</span>' : ''}${ch}</li>`;
+    return `<li${old ? ' class="h-old"' : ''}>${h.n ? `<span class="h-n">Question ${h.n}</span> ` : ''}${tag}${esc(h.q)} → <b>${esc(h.a)}</b>${old ? ' <span class="small mut">· your earlier pick, changed since</span>' : ''}</li>`;
   }
   // a version published since he last looked carries Reference's "changed" mark until he opens it (catalog 68)
   const hFirst = ctx => { let b = ctx.prefs.get('h-first'); if (!b) { b = new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 16); ctx.prefs.set('h-first', b); } return b; };
-  const newV = (ctx, v, at) => !!at && String(at).replace(' ', 'T') > (ctx.prefs.get('h-seen', {})[v] || hFirst(ctx));
+  // the base is the later of his first visit here and his last look on today's page (its seen record), so versions he already read carry no mark (r13 running 13)
+  const newV = (ctx, v, at) => !!at && String(at).replace(' ', 'T') > (ctx.prefs.get('h-seen', {})[v] || [hFirst(ctx), D.lastSeen || ''].sort().at(-1));
   const seeV = (ctx, v) => { const s = ctx.prefs.get('h-seen', {}); s[v] = new Date().toISOString().slice(0, 19); ctx.prefs.set('h-seen', s); };
   async function click(e, el, ctx) {
     const pt = e.target.closest('[data-cpt]');
@@ -506,7 +512,6 @@
     const b = e.target.closest('button');
     if (!b) return;
     const ds = b.dataset, cn = id => allC().find(x => x.id === id);
-    if (ds.hchange) return ctx.go('questions', 'q-' + ds.hchange);
     // the marker list and a sent note's lifecycle: the notes kit, as on every tab
     if (ds.spotx !== undefined) { S.cspot = ''; return draw(el, ctx); }
     if (ds.spotadd) { if (!keepC(ctx, ds.spotadd)) return focusC(el); S.cspot = ''; S.ce = ''; S.cn = ds.spotadd; draw(el, ctx); return focusC(el); }
@@ -550,7 +555,7 @@
       before: `${m.note ? `<p class="small"><span class="mut">Agent's note on this version:</span> ${esc(m.note)}</p>` : ''}
         ${v !== D.current ? waitingNow(v, ctx) : ''}
         <div class="h-cols"><div><h3 class="h-ph">Its sections</h3><div class="h-secs"><p class="small mut">Loading…</p></div></div>
-        <div><h3 class="h-ph">What you sent on it</h3><ul class="h-list">${hs.map(h => li(h, ctx, true)).join('') || '<li class="mut">No answers sent on this version.</li>'}</ul></div></div>`});
+        <div><h3 class="h-ph">What you sent on it</h3><ul class="h-list">${hs.map(h => li(h, ctx)).join('') || '<li class="mut">No answers sent on this version.</li>'}</ul></div></div>`});
     el.querySelector('.hv-view').addEventListener('click', e => { const b = e.target.closest('[data-wnfold], [data-qgo]'); if (!b) return;
       // Questions scrolls to the card once its data is in; read it first so a cold load lands on the card too
       if (b.dataset.qgo) return ctx.data('questions').catch(() => {}).then(() => ctx.go('questions', 'q-' + b.dataset.qgo));
@@ -568,5 +573,5 @@
         <button class="lk small" data-qgo="${esc(q.id)}">Open it in version ${esc(cur)} ›</button></li>`).join('')}</ul>` : ''}</div>`;
   }
 
-  P.tab({key: 'history', render, chip: async ctx => ({text: (await ctx.data('history')).count.toLocaleString(), title: 'answers you sent'})});
+  P.tab({key: 'history', render, chip: async ctx => { const n = (await ctx.data('history')).count; return n ? {text: n.toLocaleString(), title: 'answers you sent'} : {empty: true}; }});  // none sent yet: dimmed, "nothing yet" (#93, r13 frame 7)
 })();

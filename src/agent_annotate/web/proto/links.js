@@ -8,7 +8,7 @@
   const S = {arch: false, view: '', copied: '', kept: '', dq: '', dk: '', dsel: -1, open: new Set(), note: '', tgt: null, bad: false, rv: {}, marks: false, hl: '', scroll: false};
   let mine = [], SAVING = false;  // notes written here this visit, so Undo can take them back; SAVING: the editor's Save note out, {a, tgt, text}
   const BK = 'draft:lback';  // the notes kit's drafts kept at their own spots (P.notes.backs)
-  const DK = {md: ['file-md', 'Markdown'], pdf: ['file-pdf', 'PDF'], word: ['file-word', 'Word'], sheet: ['file-sheet', 'Sheet'], video: ['file-video', 'Video']};
+  const DK = {md: ['MD', 'Markdown'], pdf: ['PDF', 'PDF'], word: ['DOC', 'Word'], sheet: ['XLS', 'Sheet'], video: ['VID', 'Video']};
   const kb = n => n >= 1024 ? `${(n / 1024).toFixed(1)} MB` : `${n} KB`;
   const fpath = f => ['~/projects/FastLane Drive', f.g, f.sub, f.n].filter(Boolean).join('/');
   const dm = d => { const t = new Date(String(d).slice(0, 10) + 'T12:00'); return isNaN(t) ? String(d || '') : t.toLocaleDateString('en-GB', {day: 'numeric', month: 'short'}); };
@@ -240,11 +240,11 @@
     const q = S.dq.toLowerCase(), hit = f => !q || `${f.n} ${f.sub} ${groups[f.g] || ''}`.toLowerCase().includes(q);
     const sh = F.filter(f => hit(f) && (!S.dk || f.k === S.dk)), kinds = Object.keys(DK).filter(k => F.some(f => f.k === k));
     const gs = Object.keys(groups).filter(g => sh.some(f => f.g === g)).sort((a, b) => (a === '' ? -1 : b === '' ? 1 : 0) || sh.filter(f => f.g === b).length - sh.filter(f => f.g === a).length);
-    const dic = k => `<span class="l-dk k-${k}" title="${DK[k][1]}">${icon(DK[k][0])}</span>`;
+    const dic = k => `<span class="l-dk k-${k}" title="${DK[k][1]}">${DK[k][0]}</span>`;
     const row = f => `<div class="l-d9"${S.dsel === f.i ? ' aria-current="true"' : ''}>${dic(f.k)}<button class="lk l-nm" data-dopen="${f.i}" ${f.md ? `aria-expanded="${S.dsel === f.i}" title="Open it here"` : 'title="Opens in a new tab"'}>${esc(f.n)}${f.md ? '' : ' ↗'}${f.sub ? `<span class="small mut l-dsub">${esc(f.sub)}</span>` : ''}</button><span class="small mut l-sz">${kb(f.kb)}</span><span class="small mut l-dt">${esc(dm(f.d))}</span><button class="ib" data-copypath="${esc(fpath(f))}" title="Copy its path" aria-label="Copy the path of ${esc(f.n)}">${icon(S.copied === fpath(f) ? 'copied' : 'copy')}</button></div>
       ${S.dsel === f.i && f.md ? mdView(ctx, D, f, dic, groups) : ''}`;
     const list = gs.map(g => { const l = sh.filter(f => f.g === g), key = 'dg:' + g, op = !!q || S.open.has(key) || (S.dsel >= 0 && F[S.dsel] && F[S.dsel].g === g && sh.includes(F[S.dsel])), all = S.open.has('dga:' + g);
-      return `<div class="l-grp"><button class="l-fold" data-fold="${esc(key)}" aria-expanded="${op}">${icon('chev')}<b>${esc(groups[g])}</b> <span class="small mut">${pl(l.length, 'file', 'files')}</span></button>
+      return `<div class="l-grp"><button class="l-fold" data-fold="${esc(key)}" aria-expanded="${op}">${icon('chev')}<b>${esc(groups[g])}</b> <span class="small mut">${pl(l.length, 'file', 'files')}${new Set(l.map(f => f.k)).size > 1 ? ' · ' + Object.keys(DK).filter(k => l.some(f => f.k === k)).map(k => `${l.filter(f => f.k === k).length} ${DK[k][1]}`).join(', ') : ''}</span></button>
         ${op ? l.slice(0, all ? l.length : 8).map(row).join('') + (l.length > 8 ? `<button class="lk small l-more" data-fold="dga:${esc(g)}">${all ? 'Show the first 8' : `Show all ${l.length}`}</button>` : '') : ''}</div>`; }).join('') || '<p class="mut">No document matches.</p>';
     return `<section class="l-docs" id="docs"><h2 class="l-ph">${icon('doc')} Documents</h2>
       <div class="l-kept"><div class="l-kh"><b>Kept on this page</b> <span class="badge grey">${kept.length}</span></div>${keptRows || '<p class="small mut">None yet</p>'}</div>

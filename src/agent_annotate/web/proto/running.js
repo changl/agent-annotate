@@ -9,6 +9,9 @@
   const cut = (s, n) => { s = String(s || ''); return s.length <= n ? s : s.slice(0, n).replace(/\s+\S*$/, '') + '…'; };
   const ago = m => m == null ? '' : m < 1 ? 'under a minute' : m < 60 ? `${m} min` : m < 1440 ? `${Math.round(m / 60)} h` : pl(Math.round(m / 1440), 'day', 'days');
   const dm = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-GB', {day: 'numeric', month: 'short'});
+  // the ISO week of a time, as running.py writes it (2026-W48)
+  const isoWk = t => { const d = new Date(t || Date.now()); d.setUTCHours(0, 0, 0, 0); d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+    const y = d.getUTCFullYear(); return `${y}-W${String(Math.ceil(((d - Date.UTC(y, 0, 1)) / 864e5 + 1) / 7)).padStart(2, '0')}`; };
   let PROJ = 'fld', PNAME = 'FastLane Drive';
   // the page's own project (a read-only copy is Rebex's or Agent Annotate's), as running.py read it
   const own = d => { if (d && d.proj) { PROJ = d.proj; PNAME = d.pname || d.proj; } return d; };
@@ -56,9 +59,11 @@
     const wyo = S.open.has('wy'), wyl = [...b.waiting].sort((x, y) => y[2] - x[2]), merges = b.waiting.filter(x => x[2]).length;
     // an unread board has no counts here either: no "0", no "no merge waiting", as Tasks (r12 audit12 frame 3)
     const unread = d.board && d.board.error;
+    // the frame keeps the last good board when a refresh fails (board.stale, board.read): say when it was read, with Try again (r13 running board)
+    const rt = b.stale && b.read && new Date(b.read), stale = rt && !isNaN(rt) ? `<p class="small mut stale">The board as read at ${esc(rt.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}))}; it could not be read again just now. <button class="btn sm" data-reread>Try again</button></p>` : '';
     const waits = `<section class="wyband" id="waiting"><div class="wgh"><span class="wyi">${ic('hand')}</span><b>Waiting</b>${unread ? '' : `<span class="cnt">${b.waiting.length}</span>
-        <span class="small mut">${ic('merge')} ${merges ? pl(merges, 'merge', 'merges') + ' waiting' : 'no merge waiting'}</span>`}</div>
-      ${unread ? `<p class="small mut">The ${esc(PNAME)} board could not be read just now. <button class="btn sm" data-reread>Try again</button></p>`
+        <span class="small mut">${ic('merge')} ${merges ? pl(merges, 'merge', 'merges') + ' waiting; the orchestrator merges every other change itself' : 'no merge waiting; the orchestrator merges every change itself'}</span>`}</div>
+      ${stale}${unread ? `<p class="small mut">The ${esc(PNAME)} board could not be read just now. <button class="btn sm" data-reread>Try again</button></p>`
         : b.waiting.length ? wyl.slice(0, wyo ? wyl.length : 4).map(([id, need, mg]) => `<div class="line sub">${mg ? `<span class="mg" title="A merge waiting for you">${ic('merge', 'merge')}</span>` : '<span></span>'}<button class="lk tbtn" data-task="${esc(id)}">${tref(id, (B[id] || {}).t || id, (B[id] || {}).st)}</button><span class="grow small mut">${esc(need)}</span></div>`).join('')
         : `<p class="small mut">${b.none ? esc(b.none) : 'Nothing waits on you.'}</p>`}
       ${b.waiting.length > 4 ? `<button class="lk small" data-fold="wy" aria-expanded="${wyo}">${wyo ? 'Show the first 4' : `Show all ${b.waiting.length}`}</button>` : ''}</section>`;
@@ -172,22 +177,24 @@
     const line = pts.map(([, v], i) => `${X(i)},${Y(v)}`).join(' ');
     return `<svg class="ach lnc" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.t || '')}">
       ${[0, .5, 1].map(f => `<line x1="${L}" x2="${W - R}" y1="${Y(mx * f)}" y2="${Y(mx * f)}" class="${f ? 'grid' : 'axl'}"/><text x="${L - 6}" y="${Y(mx * f) + 4}" text-anchor="end" class="cax">${fmt(mx * f)}</text>`).join('')}
-      ${o.gate ? `<line x1="${L}" x2="${W - R}" y1="${Y(o.gate[0])}" y2="${Y(o.gate[0])}" class="gl"/><text x="${W - R}" y="${Y(o.gate[0]) - 4}" text-anchor="end" class="cax gt">${esc(o.gate[1])}</text>` : ''}
+      ${o.gate ? `<line x1="${L}" x2="${W - R}" y1="${Y(o.gate[0])}" y2="${Y(o.gate[0])}" class="gl"/>` : ''}
       <polygon class="ar" points="${X(0)},${B} ${line} ${X(n - 1)},${B}"/><polyline class="ln" points="${line}"/>
       ${pts.map(([d, v], i) => `<g class="xg${i === n - 1 ? ' end' : ''}" ${tip(fmt(v), d)}><rect class="hit" x="${X(i) - st / 2}" y="0" width="${st}" height="${B}"/><line class="xh" x1="${X(i)}" x2="${X(i)}" y1="10" y2="${B}"/><circle class="pt" cx="${X(i)}" cy="${Y(v)}" r="4.5"/></g>`).join('')}
       <text x="${X(n - 1)}" y="${Y(pts[n - 1][1]) - 10}" text-anchor="end" class="cax vl">${fmt(pts[n - 1][1])}</text>
-      <text x="${L}" y="${H - 10}" class="cax">${esc(pts[0][0])}</text><text x="${W - R}" y="${H - 10}" text-anchor="end" class="cax">${esc(pts[n - 1][0])}</text></svg>`;
+      <text x="${L}" y="${H - 10}" class="cax">${esc(pts[0][0])}</text><text x="${W - R}" y="${H - 10}" text-anchor="end" class="cax">${esc(pts[n - 1][0])}</text></svg>${gkey(o)}`;
   }
+  // a threshold's words sit in a key under its chart: inside it they covered the newest value and the last bar (r13 running 11)
+  const gkey = o => o.gate ? `<div class="lgd small gk"><span><i class="key gl"></i>${esc(o.gate[1])}</span></div>` : '';
   function cols(pts, o = {}) {
     if (!pts.length) return '<p class="small mut">Nothing yet.</p>';
     const fmt = o.fmt || (v => Math.round(v).toLocaleString()), n = pts.length, W = narrow() ? 380 : 640, H = 170, L = 8, B = 140, mx = Math.max(o.gate ? o.gate[0] : 0, ...pts.map(p => p[1])) || 1, bw = (W - L * 2) / n, Y = v => B - v / mx * 118;
     const im = pts.reduce((m, p, i) => p[1] > pts[m][1] ? i : m, 0);
     return `<svg class="ach" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.t || '')}">
       ${[.5, 1].map(f => `<line x1="${L}" x2="${W - L}" y1="${Y(mx * f)}" y2="${Y(mx * f)}" class="grid"/>`).join('')}<line x1="${L}" x2="${W - L}" y1="${B}" y2="${B}" class="axl"/>
-      ${o.gate ? `<line x1="${L}" x2="${W - L}" y1="${Y(o.gate[0])}" y2="${Y(o.gate[0])}" class="gl"/><text x="${W - L}" y="${Y(o.gate[0]) - 4}" text-anchor="end" class="cax gt">${esc(o.gate[1])}</text>` : ''}
+      ${o.gate ? `<line x1="${L}" x2="${W - L}" y1="${Y(o.gate[0])}" y2="${Y(o.gate[0])}" class="gl"/>` : ''}
       ${pts.map(([d, v], i) => `<g class="bar${i === o.hl ? ' hl' : ''}"><rect x="${L + i * bw + 1}" y="${Y(v)}" width="${Math.max(2, bw - 2)}" height="${Math.max(0.5, B - Y(v))}" rx="${Math.min(4, bw / 4)}"/><rect class="hit" x="${L + i * bw}" y="0" width="${bw}" height="${B}" ${tip(fmt(v), d)}/></g>`).join('')}
       ${[im, n - 1].filter((x, j, a) => a.indexOf(x) === j).map(i => `<text x="${L + i * bw + bw / 2}" y="${Y(pts[i][1]) - 5}" text-anchor="${i > n - 3 ? 'end' : 'middle'}" class="cax vl">${fmt(pts[i][1])}</text>`).join('')}
-      <text x="${L}" y="${H - 12}" class="cax">${esc(pts[0][0])}</text><text x="${W - L}" y="${H - 12}" text-anchor="end" class="cax">${esc(pts[n - 1][0])}</text></svg>`;
+      <text x="${L}" y="${H - 12}" class="cax">${esc(pts[0][0])}</text><text x="${W - L}" y="${H - 12}" text-anchor="end" class="cax">${esc(pts[n - 1][0])}</text></svg>${gkey(o)}`;
   }
   function hbars(rows, o = {}) {
     const fmt = o.fmt || (v => Math.round(v).toLocaleString()), mx = o.max || Math.max(...rows.map(r => r[1])) || 1;
@@ -238,15 +245,17 @@
           "This page's Sends: a card answered in more than one Send, and the same wording asked again on a new card.") : ''}
       </div></div>`;
     const orcRows = Object.entries(A.orca || {}).filter(([p]) => p !== 'other').sort((a, b) => b[1].workers - a[1].workers), ses = A.sessions || {};
+    // the week still running is left off the line, which read as a collapse, and named in words (r13 running 11)
+    const cw = isoWk(D.built), wks = oc ? oc.weeks.filter(w => w[0] !== cw) : [], part = oc && oc.weeks.find(w => w[0] === cw);
     const SW = `<div class="agrp cv h7" id="an-work"><h2 class="ph">Sessions and workers</h2><div class="atiles">
         ${atile((ses[PROJ] || 0).toLocaleString(), `Claude Code sessions for ${PNAME} on this Mac`)}
-        ${oc ? atile(oc.workers.toLocaleString(), `Orca workers since ${esc(A.orcaSince)}, by week`, '', oc.weeks.length > 1 ? spark(oc.weeks.map(w => w[1])) : '') : atile('0', 'Orca workers on this Mac', 'dim')}
+        ${oc ? atile(oc.workers.toLocaleString(), `Orca workers since ${esc(A.orcaSince)}, by week`, '', wks.length > 1 ? spark(wks.map(w => w[1])) : '') : atile('0', 'Orca workers on this Mac', 'dim')}
         ${oc ? atile(pct(oc.failed, oc.workers) + '%', 'of workers failed', pct(oc.failed, oc.workers) > 15 ? 'warn' : '') : ''}
         ${oc ? atile(`${oc.codex.toLocaleString()} · ${oc.claude.toLocaleString()}`, 'Codex · Claude workers') : ''}</div>
       <div class="agrid">
         ${acard('Workers by project and outcome', stacks(orcRows.map(([p, o]) => [N[p] || p, {done: o.ok, failed: Math.max(0, o.failed - o.stopped), stopped: o.stopped}, p === PROJ]), [['done', 'finished', 'done'], ['failed', 'failed', 'failed'], ['stopped', 'stopped by a coordinator', 'none']]) + tbl(['Project', 'Workers', 'Finished', 'Failed', 'Stopped'], orcRows.map(([p, o]) => [N[p] || p, o.workers, o.ok, o.failed, o.stopped])),
           `Orca's record on this Mac since ${esc(A.orcaSince)}. Work run from the M5 Max's own coordinators is in its record, not here.`)}
-        ${oc && oc.weeks.length ? acard(`Workers per week · ${PNAME}`, lchart(oc.weeks.map(([w, n]) => [w.replace(/^\d+-W/, 'week '), n]), {t: 'Workers per week'}) + tbl(['Week', 'Workers'], oc.weeks), 'Orca workers started each ISO week, this Mac.') : ''}
+        ${wks.length ? acard(`Workers per week · ${PNAME}`, lchart(wks.map(([w, n]) => [w.replace(/^\d+-W/, 'week '), n]), {t: 'Workers per week'}) + tbl(['Week', 'Workers'], oc.weeks), `Orca workers started each full ISO week, this Mac.${part ? ` This week so far: ${part[1].toLocaleString()}.` : ''}`) : ''}
         ${oc && oc.codex + oc.claude ? acard('Which agent ran the workers', donut(oc.codex, oc.claude, 'Codex', 'Claude', 'workers') + tbl(['Agent', 'Workers'], [['Codex', oc.codex], ['Claude', oc.claude]]),`Orca's record on this Mac since ${esc(A.orcaSince)}.`) : ''}
         ${acard('Claude Code sessions by project', hbars(sesRows.map(([p, n]) => [N[p] || p, n, p === PROJ])) + tbl(['Project', 'Sessions'], sesRows.map(([p, n]) => [N[p] || p, n])),
           `Session transcripts under the Claude Code folder on this Mac, by the folder each ran in; ${(ses.other || 0).toLocaleString()} sessions in other folders left out. Codex sessions are not counted yet.`)}
@@ -333,16 +342,18 @@
       if (rm) rm.hidden = !e.target.value.trim(); };
   }
   // Try again on an unread board: the server answers from memory and builds afresh behind it, so read until the board answers
+  let REREAD = false;  // one loop, however often the tab is drawn while it reads
   async function reread() {
     const bs = EL.querySelectorAll('[data-reread]');  // Waiting's and Tasks': one read for both
-    if ([...bs].some(b => b.disabled)) return;
     bs.forEach(b => { b.disabled = true; b.textContent = 'Reading the board…'; });
-    for (let i = 0; i < 30; i++) {  // up to about 90 s, then the line and Try again come back
+    if (REREAD) return;
+    REREAD = true;
+    try { for (let i = 0; i < 30; i++) {  // up to about 90 s, then the line and Try again come back
       const d = await CTX.data('running', true).catch(() => null);
       if (d) D = own(d);
-      if (d && !(d.board || {}).error) break;
+      if (d && !(d.board || {}).error && !(d.board || {}).stale) break;
       await new Promise(r => setTimeout(r, 3000));
-    }
+    } } finally { REREAD = false; }
     if (EL && EL.isConnected) draw();
     CTX.refreshTop();
   }
@@ -390,19 +401,25 @@
   }
   async function render(el, ctx, anchor, tab) {
     CTX = ctx; EL = el; tabNow = tab;
-    if (!D) el.innerHTML = `<div class="p-empty">${P.icon('reload')}<p>Reading workers, the board and Windmill…</p></div>`;
-    // with no read in yet, the tab draws from a slice whose tasks carry their list lines but not their details; it takes no input
-    // and the whole read draws over it (r13 speed). The slice is never D: Send and the task panel see the whole read or nothing
-    if (!D && tab === 'running' && !ctx.prefs.get('task', '') && ctx.first) {
-      const f = await ctx.first('running').catch(() => null);
-      if (f && f.part && !D && el.classList.contains('tab-' + tab)) { tabNow = tab; S.task = ''; D = own(f); draw(); D = null; [...el.children].forEach(x => { x.inert = true; }); }
-    }
-    D = own(await ctx.data('running'));
+    if (!D) el.innerHTML = `<div class="p-empty">${P.icon('reload')}<p>Reading workers, the board and Windmill…</p><p class="small mut" data-slow hidden>Still reading: on a busy Mac this can take up to 20 seconds, then Try again shows.</p></div>`;
+    // a slow read says it is still going, not a bare "Reading…" for 20 s (r13 running board)
+    const slow = setTimeout(() => { const s = el.querySelector('[data-slow]'); if (s) s.hidden = false; }, 5000);
+    try {
+      // with no read in yet, the tab draws from a slice whose tasks carry their list lines but not their details; it takes no input
+      // and the whole read draws over it (r13 speed). The slice is never D: Send and the task panel see the whole read or nothing
+      if (!D && tab === 'running' && !ctx.prefs.get('task', '') && ctx.first) {
+        const f = await ctx.first('running').catch(() => null);
+        if (f && f.part && !D && el.classList.contains('tab-' + tab)) { tabNow = tab; S.task = ''; D = own(f); draw(); D = null; [...el.children].forEach(x => { x.inert = true; }); }
+      }
+      D = own(await ctx.data('running'));
+    } finally { clearTimeout(slow); }
     if (!el.classList.contains('tab-' + tab)) return;  // another tab opened while this one read its data: never draw over it
     tabNow = tab;
     if (tab === 'running') S.task = ctx.prefs.get('task', '');
     bind(el, tab);
     draw();
+    // an unread board is read again by itself: Waiting and Tasks fill in once it answers, with no press (r13 running board)
+    if (tab === 'running' && D.board && (D.board.error || D.board.stale)) reread();
     if (anchor && tab === 'analytics') { const t = document.getElementById(anchor); if (t) t.scrollIntoView({block: 'start'}); }
   }
   matchMedia('(max-width: 699px)').addEventListener('change', () => { if (EL && EL.isConnected && tabNow === 'analytics') draw(); });
@@ -475,5 +492,5 @@
     ctx.prefs.set('tstsent', sent); ctx.prefs.set('tst', t); ctx.prefs.keys(/^tcm:/).forEach(k => { if (done(k)) ctx.prefs.set(k, ''); }); redraw(); }});
   P.tab({key: 'running', chip: async ctx => urgent(own(await ctx.data('running'))), render: (el, ctx, a) => render(el, ctx, a, 'running')});
   P.tab({key: 'analytics', render: (el, ctx, a) => render(el, ctx, a, 'analytics')});
-  P._running = {urgent, mine, wnm, mdl};  // for tests
+  P._running = {urgent, mine, wnm, mdl, isoWk, lchart, cols};  // for tests
 })();

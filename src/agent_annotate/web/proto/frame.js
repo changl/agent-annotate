@@ -413,7 +413,7 @@
     : `<button class="${cls}" ${tag} ${x.this ? 'data-gothis' : `data-proj="${esc(x.key)}"`}>${inner}</button>`;
   function projRows() {
     return projs().map(x => { const st = (workersOf(x.code) || []).filter(w => w.s === 'stuck').length;
-      return projOpen(x, `role="menuitem"${isCur(x) ? ' aria-current="page"' : ''}`, 'mi', `<span class="nm">${esc(x.name)}</span>${x.waiting ? `<span class="badge qw" title="${pl(x.waiting, 'question waits', 'questions wait')} for your answer">${x.waiting} waiting</span>` : ''}${st ? `<span class="badge warn" title="${pl(st, 'worker has', 'workers have')} shown no sign of life">${st} no sign of life</span>` : ''}`); }).join('');
+      return projOpen(x, `role="menuitem"${isCur(x) ? ' aria-current="page"' : ''}`, 'mi', `<span class="nm">${esc(x.name)}</span>${x.waiting ? `<span class="badge qw" title="${pl(x.waiting, 'question waits', 'questions wait')} for your answer">${pl(x.waiting, 'question waiting', 'questions waiting')}</span>` : ''}${st ? `<span class="badge warn" title="${pl(st, 'worker has', 'workers have')} shown no sign of life">${st} no sign of life</span>` : ''}`); }).join('');
   }
 
   /* ---------- workers and scheduled jobs, from Running's data (mock: workerDots, wkCard) ---------- */
@@ -576,7 +576,7 @@
     const projMenu = S.menu === 'proj' ? `<div class="menu" role="menu" aria-label="Projects"><h3>Your projects</h3>${projRows()}<div class="sep"></div><button class="mi" data-home><span class="nm">All projects (home)</span></button></div>` : '';
     const me = S.menu === 'me' ? `<div class="menu right smenu" role="menu" aria-label="Settings">${settingsBody()}</div>` : '';
     const who = `<div class="dd"><button class="btn ghost who" data-menu="me" aria-haspopup="menu" aria-expanded="${S.menu === 'me'}" title="Settings, people and sign out"><span class="av" aria-hidden="true">${esc(myName()[0])}</span><span class="hide-ph">${esc(myName())}</span> ▾</button>${me}</div>`;
-    const dd = `<div class="dd hide-ph"><button class="btn" data-menu="proj" aria-haspopup="menu" aria-expanded="${S.menu === 'proj'}"><b>${S.home ? 'All projects' : esc(curName())}</b>${!S.home && w ? `<span class="badge qw" title="${pl(w, 'question waits', 'questions wait')} for your answer on this project">${w} waiting</span>` : ''} ▾</button>${projMenu}</div>`;
+    const dd = `<div class="dd hide-ph"><button class="btn" data-menu="proj" aria-haspopup="menu" aria-expanded="${S.menu === 'proj'}"><b>${S.home ? 'All projects' : esc(curName())}</b>${!S.home && w ? `<span class="badge qw" title="${pl(w, 'question waits', 'questions wait')} for your answer on this project">${pl(w, 'question waiting', 'questions waiting')}</span>` : ''} ▾</button>${projMenu}</div>`;
     if (S.home) { top.innerHTML = `${mb}${brand}${pt}${dd}<span class="spacer"></span>${who}`; return; }
     if (S.other) { top.innerHTML = `${mb}${brand}${pt}${dd}<span class="p-bar" id="p-bar">${workerDots()}</span><span class="spacer"></span>${who}`; return; }
     const hv = S.tab === 'history' && S.meta ? decodeURIComponent(location.hash.split('/')[1] || '') : '';  // an older version open in History, as the mock's header marks it
@@ -599,7 +599,9 @@
   function drawFab() {
     const f = document.getElementById('p-fab');
     const st = sendSt(), n = sendNum();
-    f.hidden = !((n || st) && !S.home && !S.other && S.menu !== 'nav');  // Send follows the page on screen: never another project's (RR1); a copy floats its simulated Send too
+    // Send follows the page on screen: never another project's (RR1); a copy floats its simulated Send too.
+    // It floats once something is ready, never while the first read is in ("…", r13 frame 14); a failed read ("?") still floats so it can be opened
+    f.hidden = !(((n && !st) || st === '?') && !S.home && !S.other && S.menu !== 'nav');
     f.innerHTML = `${I('send')}Send ${st || n || ''}`;
     f.classList.toggle('unk', !!st);  // not purple until the count is known
     f.setAttribute('aria-label', st ? 'Send: ' + SENDTIP[st] : `Send: ${pl(n, 'thing is', 'things are')} ready`);
@@ -623,8 +625,9 @@
       S.run = r || null; S.runErr = false; S.ready = r && r.board && typeof r.board.ready === 'number' ? r.board.ready : null;
       if (r && r.board && !prefs.get('hadBoard', false)) prefs.set('hadBoard', true);
     }
-    if (started) { drawTop(); if (S.menu === 'nav') drawLayer(); }
+    if (started) { drawTop(); if (S.menu === 'nav') drawLayer(); if (S.home) drawHome(); }
   }
+  let homeRead = false;
   const readRun = () => data('running').then(() => {}, () => {});
   // Questions' three counts, read from one load and painted together: Send, the waiting badge and the Questions tab's chip.
   // A reload and a newer version show them with the version they belong to, never one before the others (r12 fix10 frame 1, running 2)
@@ -717,7 +720,7 @@
   }
   const KEYS = [['F', 'next question'], ['A', 'previous question'], ['1–9', 'pick that choice on the highlighted question'], ['C', 'write words on the highlighted question'],
     ['⌘↵', 'open the Send summary, from anywhere, even while typing an answer; in a note box it saves the note'], ['⌘↵ again', 'send, once the Send summary is open'],
-    ['Esc', 'close a menu, sheet or picture'], ['J K', 'next or previous task, while a task is open'], ['← →', 'older or newer version, while one is open in History'], ['?', 'this list']];
+    ['Esc', 'close a menu, sheet or picture'], ['J K', 'next or previous task, while a task is open'], ['?', 'this list']];
   const keysSheet = () => `<div class="sheet" data-scrim><div class="box" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts"><h2 class="ph">${I('keys')} Keyboard shortcuts</h2><ul class="keys">${KEYS.map(([k, t]) => `<li><kbd>${k}</kbd><span>${t}</span></li>`).join('')}</ul><div class="acts"><button class="btn" data-close>Close</button></div></div></div>`;
   const ROLE = {owner: 'Owner', view: 'Can view', send: 'Can answer and send'}, ROLEIC = {owner: 'key', view: 'eye', send: 'edit'};
   const ROLEHINT = {owner: 'Sees every project and is the only one who can change who has access', view: 'Reads the page, its questions, Reference and History; cannot answer, write notes or send', send: 'Also answers questions, writes notes and presses Send'};
@@ -744,8 +747,8 @@
     if (!S.home) return;  // he left Home while it read: never draw over the tab he opened (#2)
     if (!fd) { el.innerHTML = `<div class="p-empty">${I('warn')}<p>Home could not load its counts.</p></div>`; return; }
     S.fd = fd;
-    // the rows draw at once; workers and jobs ("—" until then) fill in when Running's read lands (r13 speed)
-    if (!S.run) readRun().then(() => { if (S.home && S.run) drawHome(); });
+    // a slow running read never holds Home back: it draws now and again once the read lands (putRun), failed or not (r13 running board)
+    if (!S.run && !S.runErr && !homeRead) { homeRead = true; readRun().then(() => { homeRead = false; }); }
     const days = fd.days || 14;
     const ago = h => h == null ? 'no page yet' : h < 1 ? 'under an hour ago' : h < 48 ? `${Math.round(h)} h ago` : `${Math.round(h / 24)} days ago`;
     // 'other' gathers unrelated projects, so its workers belong to no one row
@@ -763,20 +766,21 @@
     const allWs = once.flatMap(r => r.ws || []), c = countBy(allWs), failJ = once.reduce((s, r) => s + (r.jobs || []).filter(j => j.failing).length, 0);
     const spark = r => { const bw = 8, g = 2, W = days * (bw + g);
       return `<svg class="spark" viewBox="0 0 ${W} 30" preserveAspectRatio="none" width="${W}" height="30" role="img" aria-label="${pl(r.vday.reduce((s, n) => s + n, 0), 'version', 'versions')} and ${pl(r.aday.reduce((s, n) => s + n, 0), 'answer round', 'answer rounds')} in ${days} days">${r.vday.map((n, i) => `<g><title>${days - 1 - i ? `${days - 1 - i} days ago` : 'today'}: ${pl(n, 'version', 'versions')} published, ${pl(r.aday[i], 'answer round', 'answer rounds')} from you</title><rect class="sb0" x="${i * (bw + g)}" y="0" width="${bw}" height="24"/>${n ? `<rect class="sb" x="${i * (bw + g)}" y="${24 - Math.max(2, n / maxV * 24)}" width="${bw}" height="${Math.max(2, n / maxV * 24)}"/>` : ''}${r.aday[i] ? `<rect class="sa" x="${i * (bw + g)}" y="26" width="${bw}" height="4"/>` : ''}</g>`).join('')}</svg>`; };
-    const unread = what => `<span class="small mut" title="${what[0].toUpperCase() + what.slice(1)}: not read yet"><span class="ph-only">${what} </span>—</span>`;
+    const noRun = S.runErr ? 'could not be read just now <button class="lk small" data-homerun>Try again</button>' : 'reading…';
+    const unread = what => `<span class="small mut" title="${what[0].toUpperCase() + what.slice(1)}: ${S.runErr ? 'could not be read just now' : 'not read yet'}"><span class="ph-only">${what} </span>—</span>`;
     const dots = (ws, r) => !ws ? (S.run && r.code === 'other' ? `<span class="small mut" title="Workers of projects without a tag of their own are not split by project"><span class="ph-only">workers </span>—</span>` : unread('workers')) : ws.length ? ws.slice(0, 16).map(w => `<i class="dt ${esc(w.s)}" title="${esc(w.name)}: ${esc(SL[w.s] || w.s)}"></i>`).join('') + (ws.length > 16 ? `<span class="small mut">+${ws.length - 16} more</span>` : '') : '<span class="small mut">no workers</span>';
     const jobsCell = (js, r) => !js ? (S.run && r.code === 'other' ? `<span class="small mut" title="${esc(r.name)} gathers projects with no Windmill folder of their own">no scheduled jobs</span>` : unread('scheduled jobs'))
       : js.length ? js.map(j => `<i class="dq ${j.failing ? 'bad' : 'ok'}" title="${esc(j.name)}: ${j.failing ? 'failing' : 'fine'}"></i>`).join('')
       : `<span class="small mut" title="No enabled Windmill schedule on this Mac belongs to ${esc(r.name)}">no scheduled jobs</span>`;
     const row = r => `<div class="hrow" role="row"><span class="hc nm" role="cell"><i class="hd ${r.health[0]}" title="${esc(r.health[1])}" aria-label="${esc(r.health[1])}"></i>${projOpen(r, '', 'lk', esc(r.name))}<span class="small mut hpg">${pl(r.pages, 'page', 'pages')}</span></span>
-      <span class="hc wt" role="cell" title="${pl(r.waiting, 'question', 'questions')} waiting">${r.waiting ? `<span class="wbar"><i style="width:${Math.max(4, r.waiting / maxW * 100)}%"></i></span><b class="err-t">${r.waiting} waiting</b>` : '<span class="small mut">nothing waiting</span>'}</span>
+      <span class="hc wt" role="cell" title="${pl(r.waiting, 'question', 'questions')} waiting">${r.waiting ? `<span class="wbar"><i style="width:${Math.max(4, r.waiting / maxW * 100)}%"></i></span><b class="err-t">${pl(r.waiting, 'question', 'questions')}</b>` : '<span class="small mut">nothing waiting</span>'}</span>
       <span class="hc wk" role="cell">${dots(r.ws, r)}</span><span class="hc jb" role="cell">${jobsCell(r.jobs, r)}</span>
       <span class="hc ac" role="cell">${spark(r)}</span><span class="hc ls small mut" role="cell">${ago(r.lastAgoH)}</span></div>`;
     const tile = (big, sub, cls, viz) => `<div class="htile ${cls}"><b>${big}</b><span>${sub}</span>${viz || ''}</div>`;
     el.innerHTML = `<section class="home"><div class="hhead"><h2 class="ph">All projects</h2><span class="small mut">from the project pages on this Mac · ${esc(fd.asOf || '')}</span></div>
       <div class="htiles">${tile(totW.toLocaleString(), `questions waiting, in ${pl(rows.filter(r => r.waiting).length, 'project', 'projects')}`, totW ? 'bad' : '', `<span class="stack">${rows.filter(r => r.waiting).map(r => `<i style="flex:${r.waiting}" title="${esc(r.name)}: ${r.waiting} waiting"></i>`).join('')}</span>`)}
-        ${tile(allWs.length.toLocaleString(), `workers: ${['working', 'stuck', 'failed', 'done'].filter(s => c[s]).map(s => `${c[s]} ${SL[s]}`).join(', ') || 'none'}`, c.stuck || c.failed ? 'warn' : 'ok', `<span class="stack ws">${['working', 'stuck', 'failed', 'done'].filter(s => c[s]).map(s => `<i class="${s}" style="flex:${c[s]}"></i>`).join('')}</span>`)}
-        ${tile(failJ.toLocaleString(), failJ === 1 ? 'scheduled job failing' : 'scheduled jobs failing', failJ ? 'bad' : 'ok')}
+        ${!S.run ? tile('—', `workers: ${noRun}`, '') : tile(allWs.length.toLocaleString(), `workers: ${['working', 'stuck', 'failed', 'done'].filter(s => c[s]).map(s => `${c[s]} ${SL[s]}`).join(', ') || 'none'}`, c.stuck || c.failed ? 'warn' : 'ok', `<span class="stack ws">${['working', 'stuck', 'failed', 'done'].filter(s => c[s]).map(s => `<i class="${s}" style="flex:${c[s]}"></i>`).join('')}</span>`)}
+        ${!S.run ? tile('—', `scheduled jobs: ${noRun}`, '') : tile(failJ.toLocaleString(), failJ === 1 ? 'scheduled job failing' : 'scheduled jobs failing', failJ ? 'bad' : 'ok')}
         ${tile(fresh.toLocaleString(), `${fresh === 1 ? 'project' : 'projects'} updated in the last day`, '')}</div>
       <div class="htab" role="table" aria-label="Every project"><div class="hrow hh" role="row"><span class="hc nm" role="columnheader">Project</span><span class="hc wt" role="columnheader">Waiting</span><span class="hc wk" role="columnheader">Workers</span><span class="hc jb" role="columnheader">Scheduled jobs</span><span class="hc ac" role="columnheader">Last ${days} days</span><span class="hc ls" role="columnheader">Last update</span></div>${rows.map(row).join('')}</div>
       <p class="small mut hleg"><span><i class="hd ok"></i>fine</span><span><i class="hd warn"></i>questions wait, nothing new in a week</span><span><i class="hd bad"></i>a job failing or a worker with no sign of life</span><span><i class="hd idle"></i>quiet</span><span><i class="dt working"></i>working</span><span><i class="dt stuck"></i>no sign of life</span><span><svg width="8" height="10"><rect class="sb" width="8" height="10"/></svg> versions published a day</span><span><svg width="8" height="4"><rect class="sa" width="8" height="4"/></svg> a day you answered</span></p></section>`;
@@ -883,6 +887,7 @@
     }
     const d = t.dataset;
     if (d.skip) { e.preventDefault(); skipTo(d.skip); return; }
+    if (d.homerun !== undefined) { t.disabled = true; t.textContent = 'Reading…'; S.runErr = false; data('running', true).catch(() => {}); drawHome(); return; }
     if (d.signin !== undefined) { signIn(d.signin === 'back'); return; }
     if (d.denied !== undefined) { denied(false); return; }
     if (d.gateask !== undefined) { denied(true); return; }
@@ -984,18 +989,8 @@
     if (e.key === 'Enter' && e.target.dataset && e.target.dataset.fsin !== undefined) { e.target.blur(); return; }
     if (typing(e.target) || e.metaKey || e.ctrlKey || e.altKey || S.sheet || S.menu || S.gated || document.body.classList.contains('qsheet-open')) return;
     if (e.key === '?') { S.sheet = 'keys'; S.menu = ''; drawAll(); return; }
-    if (historyKey(e)) return;
+    // no ← → stepping between versions in History: the eye opens one, Close returns (#116 dropped the bar and its keys; r13 running 17)
     questionKey(e);
-  }
-  // ← → step to the older or newer version while one is open in History (#13)
-  function historyKey(e) {
-    if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || S.home || S.other || S.tab !== 'history') return false;
-    const v = decodeURIComponent(location.hash.replace(/^#/, '').split('/')[1] || ''), vs = ((S.meta && S.meta.history) || []).map(h => h.version), i = v ? vs.indexOf(v) : -1;
-    const to = i < 0 ? null : vs[i + (e.key === 'ArrowLeft' ? -1 : 1)];
-    if (!to) return false;
-    e.preventDefault();
-    ctx.go('history', to);
-    return true;
   }
 
   /* ---------- skip links (#17): tabs, questions, the review document ---------- */

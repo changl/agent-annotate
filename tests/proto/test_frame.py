@@ -170,7 +170,8 @@ def test_broken_items_keep_their_fixes():
     assert "data-proj=" in js and "`project/${d.proj}/questions`" in js and "function drawOther" in js
     # 2 a Home read that finishes after he left never draws over the tab
     home = js[js.index("async function drawHome"):js.index("function drawOther")]
-    assert home.count("if (!S.home) return;") == 1 and "if (S.home && S.run) drawHome()" in home
+    # r13 running board: Home no longer waits for the running read, so the one await left is guarded
+    assert home.count("if (!S.home) return;") == 1 and "await readRun" not in home
     # 3 the review document follows Text size
     assert ".p-main{--aa-text:var(--fs,1)}" in tokens
     # 4 unsent answers stay in memory with the switch off, and old ones are dropped
@@ -212,8 +213,8 @@ def test_second_audit_fixes_stay():
     assert "sentchip" not in css
     # 12 the overview opens on hover and focus; the phone keeps a failing job's red mark
     assert ".hov:hover>.hpop,.hov:focus-within>.hpop{display:block}" in css and ".wdots .wsep+.wd.jd{display:inline-grid}" in css
-    # 13 History's arrows are listed and work
-    assert "['← →', 'older or newer version, while one is open in History']" in js and "if (historyKey(e)) return;" in js
+    # 13, then r13 running 17: #116 dropped the Older/Newer bar and its arrow keys, so ← → neither step versions nor are listed
+    assert "['← →'" not in js and "historyKey" not in js
     # RR1 a read-only copy shows its own (simulated) Send in the header, never "Read-only copy"
     assert "const sendable = () => !!sendP;" in js and "roChip" not in js and "${beadsCtl()}${sendBtn('hide-ph')}" in js
     # fix3: the phone toast takes the screen's width (not half of it), wraps its links whole and sits above the floating Send

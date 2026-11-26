@@ -36,6 +36,8 @@ KIT = grab(Q, "  const stOf = ", "\n  };")
 STUBS = """const assert = require('assert'); const P = {}; global.document = {getElementById: () => null};
 const esc = s => String(s), ic = k => '', cut = (s, n) => s, pl = (n, a, b) => n + ' ' + (n === 1 ? a : b);
 const mk = n => `[${n}]`, ibw = (k, label, t, attrs) => `<button ${attrs}>${label}</button>`;
+// note actions are icons alone (#103): the stub names each by its icon, so the tests still read the action set
+const IBW = {edit: 'Edit', undo: 'Remove', place: 'Move', rerun: 'Re-open', archive: 'Close', copy: 'Copy', link: 'Link'}, ib = (k, t, attrs) => `<button ${attrs}>${IBW[k]}</button>`;
 const store = {}, calls = [], toasts = [];
 const c = {prefs: {get: (k, d) => k in store ? JSON.parse(JSON.stringify(store[k])) : d, set: (k, v) => { store[k] = v; }},
   toast: (m, o) => toasts.push([m, o]), go: (t, a) => calls.push(['go', t, a])};
@@ -138,10 +140,10 @@ def test_links_notes_use_the_shared_kit():
 
 
 def test_version_reader_has_no_change(tmp_path):
-    """Running 1: the read-only version reader lists the answers without Change; History's main list keeps it."""
-    li = grab(HIST, "  function li(h, ctx, ro) {", "\n  }")
+    """Running 1, r13 running 15: neither the version reader nor History's main list offers Change (#75)."""
+    li = grab(HIST, "  function li(h, ctx) {", "\n  }")
     node(tmp_path, "const assert = require('assert'); const ctx = {esc: s => String(s)};\n"
-         "const h = {id: 'c1', n: 3, q: 'Ship?', a: 'B', ch: true, v: 'v2'}, old = {...h, a: 'A'}; const D = {answers: [h, old]};\n"
-         + li + "\nassert(/data-hchange/.test(li(h, ctx)) && !/data-hchange/.test(li(h, ctx, true)));\n"
-         "assert(/your earlier pick/.test(li(old, ctx, true)));\n")
-    assert "li(h, ctx, true)" in grab(HIST, "  function openView(", "\n  }")
+         "const h = {id: 'c1', n: 3, q: 'Ship?', a: 'B', v: 'v2'}, old = {...h, a: 'A'}; const D = {answers: [h, old]};\n"
+         + li + "\nassert(!/Change/.test(li(h, ctx)));\n"
+         "assert(/your earlier pick/.test(li(old, ctx)));\n")
+    assert "li(h, ctx)" in grab(HIST, "  function openView(", "\n  }")

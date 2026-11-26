@@ -112,15 +112,34 @@ def project(page_dir: Path) -> str:
     return proj_of(meta.get("proto_copy_of") or (b.get("project") if isinstance(b, dict) else "") or meta.get("name") or "")
 
 
+BD_TRIES = (0, 2, 5)  # seconds before each try of one bd read
+
+
+def bd_json(argv, timeout=30):
+    """One bd read, tried again after a pause: on a loaded Mac one Dolt connection in many times out (mysql "i/o timeout")
+    while the next one answers, and one such miss among a board's six reads used to drop the whole board (r13 frame 11)."""
+    for i, wait in enumerate(BD_TRIES):
+        time.sleep(wait)
+        try:
+            return run_json(argv, timeout=timeout)
+        except Exception:
+            if i == len(BD_TRIES) - 1:
+                raise
+
+
+_where: dict = {}  # project tag -> the board location `bd where` last gave: it never moves while the page runs
+
+
 def board_dir(code: str) -> Path | None:
     """Where the project's own board lives, from `bd where` in its checkout; None when it has no reachable board."""
     co = CHECKOUTS.get(code)
     if not co or not Path(co).is_dir():
         return None
     try:
-        return Path(run_json(["bd", "-C", str(co), "where", "--json"], timeout=20)["path"]).parent
+        _where[code] = Path(bd_json(["bd", "-C", str(co), "where", "--json"], timeout=20)["path"]).parent
     except Exception:
-        return None
+        pass
+    return _where.get(code)
 
 
 def mins_since(s, now=None):
@@ -180,7 +199,7 @@ def group_work(out, code="fld", where=None):
     titles = {k: beads[k]["t"] for k in roots if k in beads}
     missing = sorted(roots - titles.keys())
     if missing and where:  # closed epics are not on Running's open list
-        rows = safe(lambda: run_json(["bd", "-C", str(where), "--readonly", "show", *missing, "--json"], timeout=60), [])
+        rows = safe(lambda: bd_json(["bd", "-C", str(where), "--readonly", "show", *missing, "--json"], timeout=60), [])
         titles.update({r["id"]: r.get("title") or "" for r in rows if isinstance(r, dict) and r.get("id")})
     for w in ws:
         b = w.pop("bead", None)
@@ -300,9 +319,10 @@ def waits_on_him(notes, title=""):
     m = re.search(r"BLOCKED BY:?\s*([^|]*)", notes or "")
     if not m or not re.search(r"\bchang\b", m.group(1), re.I):
         return None
-    mg = bool(re.search(r"merge", (title or "") + m.group(1), re.I))
-    why = next((t for r, t in _WHY if re.search(r, m.group(1), re.I)), "waits for your yes to merge it" if mg else "waits for your answer on its question")
-    return why, mg
+    why = next((t for r, t in _WHY if re.search(r, m.group(1), re.I)), None)
+    # a merge mark only on a row whose reason is the merge: one waiting on his phone, a sign-in or a choice is not a merge (r13 running 6)
+    mg = why is None and bool(re.search(r"merge", (title or "") + m.group(1), re.I))
+    return why or ("waits for your yes to merge it" if mg else "waits for your answer on its question"), mg
 
 
 def _cut(s, n=2500):
@@ -322,13 +342,13 @@ def board(code="fld", where=None):
         return {"tasks": [], "beads": {}, "waiting": [], "closed": None, "groups": [], "ready": 0,
                 "none": f"{NAMES.get(code, 'This project')} has no task board this page can read, so no tasks are listed."}
     bd = ["bd", "-C", str(where), "--readonly"]
-    rows = run_json([*bd, "list", "--status", "open,in_progress,blocked,deferred", "--flat", "--limit", "0", "--json"], timeout=60)
-    ready = {b["id"] for b in run_json([*bd, "ready", "--limit", "0", "--json"], timeout=60)}
-    closed = safe(lambda: run_json([*bd, "count", "--status", "closed", "--json"]).get("count"), None)
+    rows = bd_json([*bd, "list", "--status", "open,in_progress,blocked,deferred", "--flat", "--limit", "0", "--json"], timeout=60)
+    ready = {b["id"] for b in bd_json([*bd, "ready", "--limit", "0", "--json"], timeout=60)}
+    closed = safe(lambda: bd_json([*bd, "count", "--status", "closed", "--json"]).get("count"), None)
     full = {}
     ids = [b["id"] for b in rows]
     for i in range(0, len(ids), 60):  # bd show takes many ids at once; 60 a call keeps argv short
-        for b in run_json([*bd, "show", *ids[i:i + 60], "--json"], timeout=90):
+        for b in bd_json([*bd, "show", *ids[i:i + 60], "--json"], timeout=90):
             full[b["id"]] = b
     st = {b["id"]: b["status"] for b in rows}
     dl = lambda xs: [[x.get("id"), _cut(x.get("title"), 160), (x.get("status") or "").replace("_", " ")] for x in xs or []
@@ -572,6 +592,13 @@ def _refresh(page_dir: Path):
     try:
         res = _compute(page_dir)
         with _lock:
+            b, old = res.get("board") or {}, (_mem.get(key) or (0, {}))[1]
+            ob = old.get("board") or {}
+            if "error" not in b:
+                b["read"] = res["built"]
+            elif ob and "error" not in ob:
+                # a failed read keeps the last board read, marked stale: Waiting and its count stay until a read answers (r13 frame 11)
+                res["board"] = {**ob, "stale": b["error"], "read": ob.get("read") or old.get("built")}
             _mem[key] = (time.time(), res)
         tmp = page_dir / (SNAP + ".tmp")
         tmp.write_text(json.dumps(res, ensure_ascii=False))
@@ -610,8 +637,9 @@ def build(page_dir: Path) -> dict:
 
 
 def _behind(page_dir: Path, got) -> None:
-    # an unread board is read again at once, so the page's Try again gets a fresh answer (audit11 running 2)
-    if time.time() - got[0] > TTL or "error" in (got[1].get("board") or {}):
+    # an unread or stale board is read again at once, so it recovers by itself and Try again gets a fresh answer (audit11 running 2)
+    b = got[1].get("board") or {}
+    if time.time() - got[0] > TTL or "error" in b or "stale" in b:
         with _lock:
             start = str(page_dir) not in _busy
             _busy.add(str(page_dir))
