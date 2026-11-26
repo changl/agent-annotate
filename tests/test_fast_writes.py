@@ -586,3 +586,16 @@ def test_a_change_rebuilds_what_the_next_open_reads_as_a_browser_read(server, mo
     finally:
         stop.set()
         warm.join(timeout=2)
+
+
+def test_a_page_poll_restamps_only_the_items_that_changed(server, monkeypatch):
+    httpd, _, _, _ = server
+    assert request(httpd, "/api/comments", "POST", {"anchor_id": "s:test", "text": "Second"})[0] == 201
+    first = json.loads(request(httpd, "/comments.json?view=page")[2])
+    stamped, original = [], sync_server._item_stamp
+    monkeypatch.setattr(sync_server, "_item_stamp", lambda area, anchor, c: stamped.append(c["id"]) or original(area, anchor, c))
+    assert request(httpd, "/api/comments/card", "PUT", {"text": "Edited"})[0] == 200
+    after = json.loads(request(httpd, "/comments.json?view=page")[2])
+    assert stamped == ["card"] and after["store_mark"] != first["store_mark"]
+    marked = json.loads(request(httpd, "/comments.json?view=page", headers={"X-Annotate-Store-Mark": first["store_mark"]})[2])
+    assert marked["changed_after"] == ["card"]

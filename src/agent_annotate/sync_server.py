@@ -1287,6 +1287,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     _cold_declined = {}  # page dir -> (docs signature, item count) when a split found too little cold
     _store_responses = {}
     _store_revision = None
+    _item_stamps = {}  # id -> ((area, anchor, marshal bytes), _item_stamp) as of the last _store_cards
     _page_marks = {}
     _count_rows = (None, None, {})
     _plans_listed = (None, None)
@@ -2111,9 +2112,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         self._write_hot(store)
 
     def _write_hot(self, store: dict) -> None:
-        from .store import write_bytes as _atomic_bytes
-        body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
-        _atomic_bytes(self._store_path(), body, value=store)
+        from .store import write_hot_store
+        body = write_hot_store(self._store_path(), store)
         # The cache keeps the bytes, never this writer's objects: its handler reads them after the lock
         # (receipt, bus event) while the next writer would own and change them.
         type(self)._store_snapshot = (self._store_signature(), (body, getattr(store, "index", None)))
@@ -2153,6 +2153,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         """(mark, revision, {id: (stamp, revision changed)}) for this store revision.
         `cold`: the cold.Hot `store` was projected from; its live cold items count too."""
         from .cold import live
+        from .store import _mark
         cls = type(self)
         last = cls._store_revision
         if last is None or last[0] != signature:
@@ -2160,6 +2161,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             revision = last[2] + 1 if last else 0
             mark = hashlib.blake2s(repr(signature).encode(), digest_size=12).hexdigest()
             cards = {}
+            # An item whose exact content (its marshal bytes) and place are unchanged keeps its stamp.
+            stamped, cls._item_stamps = cls._item_stamps, {}
 
             def note(cid, stamp):
                 old = previous.get(cid)
@@ -2169,7 +2172,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 for anchor, items in store[area].items():
                     for c in items:
                         if "id" in c:
-                            note(c["id"], _item_stamp(area, anchor, c))
+                            key = (area, anchor, _mark(c))
+                            hit = stamped.get(c["id"])
+                            stamp = hit[1] if hit and key[2] is not None and hit[0] == key else _item_stamp(area, anchor, c)
+                            cls._item_stamps[c["id"]] = (key, stamp)
+                            note(c["id"], stamp)
             for area, anchor, i, c in live(cold) if cold is not None else ():
                 note(c["id"], cold.index.stamp(area, anchor, i))
             cls._store_revision = (signature, mark, revision, cards)
@@ -5081,6 +5088,7 @@ def make_handler(
     BoundHandler._store_merged = None
     BoundHandler._cold_declined = {}
     BoundHandler._store_revision = None
+    BoundHandler._item_stamps = {}
     BoundHandler._page_marks = {}
     BoundHandler._count_rows = (None, None, {})
     BoundHandler._plans_listed = (None, None)

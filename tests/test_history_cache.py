@@ -302,6 +302,24 @@ def test_bus_cache_checks_exact_prefix_and_retries_partial_lines(tmp_path, monke
     assert [r["id"] for r in review_history.review_history(tmp_path, bus, bus_cache=cache)["rounds"]] == ["replacement"]
 
 
+def test_saved_rounds_are_parsed_once_and_then_only_their_new_lines(tmp_path, monkeypatch):
+    saved = tmp_path / "rounds.ndjson"
+    saved.write_text("".join(json.dumps({"id": f"r{index}", "ts": "t"}) + "\n" for index in range(500)))
+    cache = {}
+    assert len(review_history._submitted_rounds(tmp_path, None, None, cache)) == 500
+    loads, original = [], json.loads
+    monkeypatch.setattr(review_history.json, "loads", lambda data, *a, **k: loads.append(1) or original(data, *a, **k))
+    with saved.open("a") as output:
+        output.write(json.dumps({"id": "new", "ts": "2026-10-01T00:00:00Z"}) + "\n")
+    found = review_history._submitted_rounds(tmp_path, None, None, cache)
+    assert len(loads) == 1 and found[0][0] == "new" and len(found) == 501
+    saved.write_text(json.dumps({"id": "only", "ts": "t"}) + "\n" + "{}\n" * 600)   # rewritten in place, longer
+    monkeypatch.undo()
+    assert review_history._submitted_rounds(tmp_path, None, None, cache) == review_history._submitted_rounds(
+        tmp_path, None, None, None)
+    assert [identifier for identifier, _ in review_history._submitted_rounds(tmp_path, None, None, cache)] == ["only"]
+
+
 def test_cli_writes_are_visible_on_the_next_conditional_get(server, monkeypatch):
     httpd, root, _, _ = server
     record = {"slug_dir": str(root), "port": httpd.server_port, "project": "project", "slug": "page",

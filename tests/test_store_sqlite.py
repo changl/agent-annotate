@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from test_store_db import _page
 
 from agent_annotate import paths, store
@@ -190,4 +191,96 @@ def test_the_row_cache_never_trusts_the_callers_dict(tmp_path):
     (page / "comments.json").write_text(json.dumps({**data, "anchors": {}}))   # a foreign write empties it
     store.write_bytes(page / "comments.json", json.dumps(data).encode(), value=data)
     assert _rows(fixture, "SELECT count(*) FROM items") == [(5,)]
+    assert _diff(fixture) == []
+
+
+@pytest.mark.parametrize("taken_in_by_235", [False, True])
+def test_a_foreign_crlf_rewrite_of_rounds_then_send_keeps_page_db(tmp_path, monkeypatch, taken_in_by_235):
+    from agent_annotate import deployment
+    fixture = _imported(tmp_path)
+    page = fixture["page"]
+    rounds = page / "rounds.ndjson"
+    rounds.write_bytes(rounds.read_bytes().replace(b"\n", b"\r\n"))   # a foreign text writer restores it
+    if taken_in_by_235:   # 2.35.0's intake stored each line with its \r and the raw fingerprint
+        with monkeypatch.context() as old:
+            old.setattr(store, "_universal_newlines", lambda text: text)
+            with store.transaction(page) as tx:
+                assert tx.conn.execute("SELECT body_json FROM rounds").fetchone()[0].endswith("\r")
+        data = store.read_comments(page)
+        store.write_bytes(page / "comments.json", json.dumps(data).encode(), value=data)   # a save
+    store.append_round(page, {"id": "r3", "ts": "w"})                  # the next Send
+    assert _rows(fixture, "SELECT round, body_json FROM rounds ORDER BY seq") == [
+        ("r1", '{"id": "r1", "ts": "t"}'), ("r2", '{"id": "r2", "ts": "u"}'), ("r3", '{"id": "r3", "ts": "w"}')]
+    assert _diff(fixture) == []
+    import shutil
+    state = Path(shutil.copytree(fixture["state"], paths.STATE_DIR / tmp_path.name))   # the rollout reads STATE_DIR
+    monkeypatch.setattr(paths, "STATE_DIR", state)
+    record = {"project": "proj", "slug_dir": str(page), "bus_file": str(fixture["bus"])}
+    assert deployment._page_storage(record, False, False) == {"diff": 0, "backend": "page.db"}
+
+
+def _compact_bytes(data):
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
+
+
+def test_a_hot_write_serializes_only_the_items_that_changed(tmp_path, monkeypatch):
+    fixture = _imported(tmp_path)
+    page = fixture["page"]
+    data = store.read_comments(page)
+    store.write_hot_store(page / "comments.json", data)
+    made, whole = [], []
+    item_row, compact = store._item_row, store._compact
+
+    def counted(value):
+        if value is data:
+            whole.append(1)
+        return compact(value)
+
+    monkeypatch.setattr(store, "_item_row", lambda comment, *rest: made.append(comment["id"]) or item_row(comment, *rest))
+    monkeypatch.setattr(store, "_compact", counted)
+    data["anchors"]["d:q1"][0]["text"] = "edited"
+    data["anchors"]["d:q2"].append(data["anchors"]["d:old"].pop())   # moved, not changed
+    body = store.write_hot_store(page / "comments.json", data)
+    assert made == ["a1"] and whole == []
+    assert body == (page / "comments.json").read_bytes() == _compact_bytes(data)
+    monkeypatch.undo()
+    assert _rows(fixture, "SELECT anchor_id FROM items WHERE id = 'c1'") == [("d:q2",)]
+    assert _diff(fixture) == []
+
+
+def test_a_hot_write_of_a_shape_it_cannot_join_writes_the_plain_dump(tmp_path):
+    fixture = _imported(tmp_path)
+    page = fixture["page"]
+    data = store.read_comments(page)
+    data["anchors"]["d:q1"].append({"text": "no id"})
+    body = store.write_hot_store(page / "comments.json", data)
+    assert body == (page / "comments.json").read_bytes() == _compact_bytes(data)
+    assert store._joined({1: []}, {}) is None and store._joined({"anchors": {"x": [{"id": "a"}]}}, {}) is None
+
+
+def test_an_item_whose_json_changes_but_compares_equal_is_rewritten(tmp_path):
+    fixture = _imported(tmp_path)
+    page = fixture["page"]
+    data = store.read_comments(page)
+    for edit in (lambda: data["anchors"]["d:q1"][0].update(pinned=True),
+                 lambda: data["anchors"]["d:q1"][0].update(pinned=1),       # True == 1 in Python, not in JSON
+                 lambda: data["anchors"]["d:q2"][0].update(text=data["anchors"]["d:q2"][0].pop("text"))):  # key order
+        edit()
+        store.write_bytes(page / "comments.json", _compact_bytes(data), value=data)
+        assert _diff(fixture) == []
+    assert _rows(fixture, "SELECT body_json FROM items WHERE id = 'b1'") == [(store._compact(data["anchors"]["d:q2"][0]),)]
+
+
+def test_append_round_adds_only_the_new_row(tmp_path, monkeypatch):
+    fixture = _imported(tmp_path)
+    page = fixture["page"]
+    synced, sync_rows = [], store._sync_rows
+    monkeypatch.setattr(store, "_sync_rows", lambda conn, table, *rest: synced.append(table) or sync_rows(conn, table, *rest))
+    store.append_round(page, {"id": "r3", "ts": "w"})
+    store.append_round(page, {"id": "r3", "ts": "w"})      # already there: nothing to add
+    assert "rounds" not in synced
+    with (page / "rounds.ndjson").open("a") as out:         # another writer appends outside the store
+        out.write('{"id": "rx", "ts": "x"}\n')
+    store.append_round(page, {"id": "r4", "ts": "y"})
+    assert _rows(fixture, "SELECT seq, round FROM rounds ORDER BY seq") == [(1, "r1"), (2, "r2"), (3, "r3"), (4, "rx"), (5, "r4")]
     assert _diff(fixture) == []

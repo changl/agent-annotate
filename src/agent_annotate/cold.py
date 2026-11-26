@@ -602,13 +602,16 @@ def settle(hot: Hot, rules, sig) -> None:
     hot.checkouts.clear()
     for (area, aid, i), obj in changed:
         _insert(hot, area, aid, i, obj)
+    found = []
     if hot[KEY].get("docs") != sig:
         # Saved without the stray check: these documents may show a cold item. Only a new split trusts it again.
         hot[KEY]["docs"] = None
     else:
-        for area, aid, i in strays(hot, rules, sig):
+        found = strays(hot, rules, sig)
+        for area, aid, i in found:
             _insert(hot, area, aid, i, copy.deepcopy(hot.index.lists[area][aid][i]))
-    normalize(hot)
+    if changed or found:  # the first normalize left nothing else to re-sync
+        normalize(hot)
 
 
 def settled(c) -> bool:
