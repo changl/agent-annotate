@@ -2,9 +2,17 @@
 
 On a long-lived page most of the store is feedback on older versions that no
 Save, Refresh or Send touches (FLD: 9,374 of 10,118 items, 16 of 20 MB).
-Those items live in comments.cold.json; comments.json keeps the rest plus a
+Those items live in a cold generation; comments.json keeps the rest plus a
 "cold" summary. Merged, the two are exactly the one store every reader saw
 before: the same items, list order and key order.
+
+Generations are immutable and content-addressed: .cold/<digest>.json, where
+the digest is blake2b of the file's bytes. The summary's `gen` is that digest,
+so comments.json names the exact cold content it was split against. Every
+uncached load checks the digest and every range against the file; a mismatch
+raises ValueError (readers fail loudly, writers cannot load a store to persist).
+A generation comments.json no longer names moves to .cold/attic/ (never deleted);
+a reader that raced the move finds it there.
 
 Summary: {"gen", "docs", "keys": {area: [anchor, ...]}, "lists": {area: {anchor: tokens}}}.
 `keys` is the merged key order. In `tokens`, [i, j] stands for cold items
@@ -13,35 +21,43 @@ fingerprint of the documents the split was made for (sync_server._docs_sig).
 
 What may go cold (split): an item the page view would leave out
 (sync_server._page_keep), with an id and a number, on a Review or plan
-document, not newer than that document's current version. While cold an item
-never changes; a write that needs it moves it back first (`_insert`).
+document, not newer than that document's current version, and settled: its
+section (categories.comment_section, what decides `waiting`) is done or none
+and it is no unanswered card. Open, pending or actionable items stay hot, so
+the inbox, unread counts, Send and hooks never need a cold item. While cold an
+item never changes; a write that needs it moves it back first (`_insert`).
 
-Crash safety: each single write leaves a complete store. A re-split only
-appends to the cold file (positions comments.json points at never change),
-then writes comments.json; a fresh cold file is written only while
-comments.json holds every item (no summary). Moving an item back is one write
-of comments.json: the item joins its list and leaves its range; the cold file
-keeps a copy nobody reads (a fresh file drops them once they outnumber the rest).
+Crash safety: each single write leaves a complete store. A new generation is
+written before comments.json names it; the old one stays readable until then.
+Moving an item back is one write of comments.json: the item joins its list and
+leaves its range; the generation keeps a copy nobody reads.
+
+Rollback: `annotate cold off` (join) writes every split page back to one
+comments.json under its store lock and stops further splits.
 """
 
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
-import secrets
+import re
 import threading
 from pathlib import Path
 
-NAME = "comments.cold.json"
 KEY = "cold"
 AREAS = ("anchors", "archived")
+DIR = ".cold"
+ATTIC = "attic"
+OFF = "cold-store-off"
 # Below this many cold items a page keeps one file.
 MIN_ITEMS = 200
+_DIGEST = re.compile(r"[0-9a-f]{32}")
 
 
 class Hot(dict):
-    """comments.json as the server holds it. `index` is its cold file (None without one);
+    """comments.json as the server holds it. `index` is its cold generation (None without one);
     `checkouts` are cold items a write handed out ({(area, anchor, i): (copy, its JSON)})."""
 
     def __init__(self, *args, index=None):
@@ -51,14 +67,17 @@ class Hot(dict):
 
 
 class Index:
-    """One parsed cold file, read-only, with what readers derive from it."""
+    """One parsed cold generation, read-only, with what readers derive from it."""
 
-    def __init__(self, data: dict):
-        self.gen = data.get("gen")
+    def __init__(self, data: dict, gen=None):
+        self.gen = gen
         self.lists = {area: data.get(area) if isinstance(data.get(area), dict) else {} for area in AREAS}
         self._ids = None
         self._stamps = None
         self._derived: dict = {}
+
+    def size(self) -> int:
+        return sum(len(items) for area in AREAS for items in self.lists[area].values())
 
     def ids(self) -> dict:
         """{id: [(area, anchor, i), ...]}: a moved-back item can sit in the file twice (see rebalance)."""
@@ -101,7 +120,7 @@ class Index:
                     if not rules.newer(c) and not (area == "anchors" and c.get("withdrawn")):
                         rest = area == "anchors" and bool(c.get("decision_request")) and c.get("status") not in ("archived", "resolved_in_version")
                         rows[key] = (rules.doc_of(c), int(rest), int(rest and not (c.get("decision") or {}).get("verdict")))
-                    if (doc := rules.card(c, aid)) is not None:
+                    if rules.card(c, aid) is not None:
                         cards.setdefault((area, aid), set()).add(i)
                     if _answered_question(c):
                         for prompt in _prompt_keys(c):
@@ -111,53 +130,151 @@ class Index:
         return value
 
 
-_FILES: dict[str, tuple] = {}
+# ── generations ──────────────────────────────────────────────────────────
+_FILES: dict[tuple, tuple] = {}  # (page dir, gen) -> (file stat, Index); the newest two per page
 _FILES_LOCK = threading.Lock()
 
 
-def _stat(path: Path):
+def _digest(body: bytes) -> str:
+    return hashlib.blake2b(body, digest_size=16).hexdigest()
+
+
+def _paths(slug_dir, gen):
+    base = Path(slug_dir) / DIR
+    return base / f"{gen}.json", base / ATTIC / f"{gen}.json"
+
+
+def _find(slug_dir, gen):
+    """(path, stat) of generation `gen`, in place or in the attic (a split may have just moved it)."""
+    if not isinstance(gen, str) or not _DIGEST.fullmatch(gen):
+        raise ValueError(f"comments.json names no valid cold generation: {gen!r}")
+    for path in _paths(slug_dir, gen):
+        try:
+            st = path.stat()
+        except FileNotFoundError:
+            continue
+        return path, (st.st_ino, st.st_size, st.st_mtime_ns)  # a move to the attic keeps all three
+    raise ValueError(f"cold generation {gen} named by comments.json is missing")
+
+
+def load_index(slug_dir, gen, *, fresh=False) -> Index:
+    """Generation `gen`, its digest checked. `fresh`: parsed anew, objects nobody else holds."""
+    path, stat = _find(slug_dir, gen)
+    key = (str(Path(slug_dir)), gen)
+    if not fresh:
+        with _FILES_LOCK:
+            hit = _FILES.get(key)
+        if hit and hit[0] == stat:
+            return hit[1]
     try:
-        st = path.stat()
+        body = path.read_bytes()
     except FileNotFoundError:
-        return None
-    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
-
-
-def signature(slug_dir):
-    return _stat(Path(slug_dir) / NAME)
-
-
-def load_index(slug_dir) -> Index | None:
-    path = Path(slug_dir) / NAME
-    stat = _stat(path)
-    if stat is None:
-        return None
-    with _FILES_LOCK:
-        hit = _FILES.get(str(path))
-    if hit and hit[0] == stat:
-        return hit[1]
-    data = json.loads(path.read_text(encoding="utf-8"))
-    index = Index(data if isinstance(data, dict) else {})
-    with _FILES_LOCK:
-        _FILES[str(path)] = (stat, index)
+        body = _paths(slug_dir, gen)[1].read_bytes()
+    if _digest(body) != gen:
+        raise ValueError(f"cold generation {gen} does not match its content")
+    data = json.loads(body)
+    index = Index(data if isinstance(data, dict) else {}, gen)
+    if not fresh:
+        with _FILES_LOCK:
+            for old in [k for k in _FILES if k[0] == key[0] and k != key][:-1]:
+                del _FILES[old]
+            _FILES[key] = (stat, index)
     return index
 
 
-def attach(slug_dir, raw: dict) -> Hot:
-    """comments.json's parsed content as a Hot store with its cold file."""
+def _write_generation(slug_dir, cold: dict) -> Index:
+    from .store import write_bytes
+    body = json.dumps(cold, ensure_ascii=False, separators=(",", ":")).encode()
+    gen = _digest(body)
+    main, attic = _paths(slug_dir, gen)
+    if attic.exists() and not main.exists():
+        os.replace(attic, main)  # the same content was retired once: bring it back
+    if not main.exists():
+        write_bytes(main, body)
+    return load_index(slug_dir, gen)  # parsed from the bytes: no object shared with the store split
+
+
+def retire(slug_dir, keep=()) -> list:
+    """Move every generation but `keep` to the attic (never deleted)."""
+    base = Path(slug_dir) / DIR
+    moved = []
+    for path in sorted(base.glob("*.json")) if base.is_dir() else ():
+        if path.stem not in keep:
+            (base / ATTIC).mkdir(exist_ok=True)
+            os.replace(path, base / ATTIC / path.name)
+            moved.append(path.name)
+    return moved
+
+
+def exists(slug_dir) -> bool:
+    base = Path(slug_dir) / DIR
+    return base.is_dir() and any(base.glob("*.json"))
+
+
+def enabled() -> bool:
+    """Splitting is on unless `annotate cold off` set the switch."""
+    from . import paths
+    return not (paths.STATE_DIR / OFF).exists()
+
+
+def set_enabled(on: bool) -> None:
+    from . import paths
+    flag = paths.STATE_DIR / OFF
+    if on:
+        flag.unlink(missing_ok=True)
+    else:
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.write_text("cold store off: pages stay one comments.json (annotate cold on)\n")
+
+
+def join(slug_dir) -> int:
+    """Under the page's store lock, write the whole store back to one comments.json and retire
+    its generations. Returns the items brought back (0 when the page was not split)."""
+    from .store import read_comments, read_json, transaction, write_bytes
+    slug_dir = Path(slug_dir)
+    with transaction(slug_dir):
+        raw = read_json(slug_dir / "comments.json")
+        count = 0
+        if isinstance(raw, dict) and KEY in raw:
+            whole = read_comments(slug_dir)  # fresh and verified: a bad generation refuses here
+            count = count_items(whole) - count_items(raw)
+            write_bytes(slug_dir / "comments.json",
+                        json.dumps(whole, ensure_ascii=False, separators=(",", ":")).encode(), value=whole)
+        retire(slug_dir)
+    return count
+
+
+# ── reading ──────────────────────────────────────────────────────────────
+def _check(hot: Hot) -> None:
+    """Every range the summary names must lie inside its generation's list."""
+    summary, index = hot[KEY], hot.index
+    for area in AREAS:
+        lists = (summary.get("lists") or {}).get(area)
+        if not isinstance(lists, dict):
+            raise ValueError("comments.json has a malformed cold summary")
+        for aid, tokens in lists.items():
+            size = len(index.lists[area].get(aid) or ())
+            for t in tokens:
+                if isinstance(t, list) and not (len(t) == 2 and 0 <= t[0] < t[1] <= size):
+                    raise ValueError(f"cold generation {index.gen} lacks {area}/{aid} items {t}")
+
+
+def attach(slug_dir, raw: dict, *, fresh=False) -> Hot:
+    """comments.json's parsed content as a Hot store with its verified cold generation."""
     hot = raw if isinstance(raw, Hot) else Hot(raw)
     summary = hot.get(KEY)
     if summary is not None:
-        index = load_index(slug_dir) if isinstance(summary, dict) else None
-        if index is None or index.gen != summary.get("gen"):
-            raise ValueError(f"{NAME} does not match comments.json")
-        hot.index = index
+        if not isinstance(summary, dict):
+            raise ValueError("comments.json has a malformed cold summary")
+        hot.index = load_index(slug_dir, summary.get("gen"), fresh=fresh)
+        _check(hot)
     return hot
 
 
-def merged(slug_dir, raw: dict) -> dict:
-    """The whole store, for a reader of comments.json."""
-    return merge(attach(slug_dir, raw)) if isinstance(raw, dict) and KEY in raw else raw
+def merged(slug_dir, raw: dict, *, fresh=False) -> dict:
+    """The whole store, for a reader of comments.json (shared cold items: read, never mutate;
+    `fresh` for a writer: objects nobody else holds)."""
+    return merge(attach(slug_dir, raw, fresh=fresh)) if isinstance(raw, dict) and KEY in raw else raw
 
 
 def _keys(hot, area) -> list:
@@ -172,7 +289,7 @@ def _merge_list(tokens, cold_items, hot_items, take=None) -> list:
     out, h = [], 0
     for t in tokens:
         if isinstance(t, list):
-            out.extend(cold_items[t[0]:t[1]] if take is None else (take(i) for i in range(t[0], min(t[1], len(cold_items)))))
+            out.extend(cold_items[t[0]:t[1]] if take is None else (take(i) for i in range(t[0], t[1])))
         elif h < len(hot_items):
             out.append(hot_items[h])
             h += 1
@@ -219,10 +336,11 @@ def live(hot: Hot):
             items = cold.get(aid) or []
             for t in tokens:
                 if isinstance(t, list):
-                    for i in range(t[0], min(t[1], len(items))):
+                    for i in range(t[0], t[1]):
                         yield area, aid, i, items[i]
 
 
+# ── writing ──────────────────────────────────────────────────────────────
 def _normalize_list(summary, area, aid, items) -> None:
     """Re-sync one list's tokens after the writer removed or appended hot items.
 
@@ -249,7 +367,8 @@ def _normalize_list(summary, area, aid, items) -> None:
 
 
 def normalize(hot: dict) -> None:
-    """Bring the summary in line with the hot lists, before each write of comments.json."""
+    """Bring the summary in line with the hot lists, before each write of comments.json.
+    The hot maps are kept in merged key order, so a key keeps its place when its last cold item leaves."""
     summary = hot.get(KEY)
     if not isinstance(summary, dict):
         return
@@ -271,7 +390,12 @@ def normalize(hot: dict) -> None:
                 last = n
             else:
                 tail.append(k)
-        summary["keys"][area] = [k for k in order if k in lists or k in kept] + tail
+        summary["keys"][area] = order = [k for k in order if k in lists or k in kept] + tail
+        physical = [k for k in order if k in hot_area]
+        if physical != list(hot_area):
+            moved = [(k, hot_area[k]) for k in physical]
+            hot_area.clear()
+            hot_area.update(moved)
 
 
 def _insert(hot: Hot, area, aid, i, obj) -> bool:
@@ -325,7 +449,8 @@ def promote_id(hot: Hot, cid) -> bool:
 
 
 def has_id(hot, cid) -> bool:
-    return isinstance(hot, Hot) and hot.index is not None and KEY in hot and cid in hot.index.ids()
+    """Is `cid` taken by a cold item? Only live ones count: a stale copy reserves nothing."""
+    return live_id(hot, cid) is not None
 
 
 def checkout(hot: Hot, area, aid, i):
@@ -445,17 +570,24 @@ def settle(hot: Hot, rules, sig) -> None:
     normalize(hot)
 
 
-def split(store: dict, rules, keep: set, sig, gen):
-    """(hot with summary, cold file content, cold count) for a whole store."""
-    summary = {"gen": gen, "docs": sig, "keys": {}, "lists": {}}
+def settled(c) -> bool:
+    """Done with: nothing in it is open, pending or waiting on anyone (the categories that decide
+    `waiting`, needs-you and Send), and no card nobody answered (annotate close)."""
+    from .categories import comment_section, unanswered_card
+    return comment_section(c) in (None, "done") and not unanswered_card(c)
+
+
+def split(store: dict, rules, keep: set, sig):
+    """(hot with summary, cold generation content, cold count) for a whole store. `gen` is set on write."""
+    summary = {"gen": None, "docs": sig, "keys": {}, "lists": {}}
     hot = Hot({k: v for k, v in store.items() if k != KEY})
-    cold = {"gen": gen}
+    cold = {}
     count = 0
 
     def eligible(c):
         number = c.get("number")
         return (isinstance(c, dict) and id(c) not in keep and rules.doc_of(c) is not None and rules.listed(c)
-                and not rules.newer(c) and type(number) is int and number > 0)
+                and not rules.newer(c) and type(number) is int and number > 0 and settled(c))
 
     for area in AREAS:
         source = store.get(area) or {}
@@ -488,83 +620,69 @@ def split(store: dict, rules, keep: set, sig, gen):
     return hot, cold, count
 
 
-def _extend(store: Hot, hot: Hot, cold: dict, count):
-    """Re-express a new split against the current cold file, appending only newly cold items.
+def _reuse(store: Hot, whole, rules, keep, sig, hot, cold, count):
+    """The new split against the current generation, or None when a new one is due.
 
-    Returns (file content, whether anything was appended), or None when stale copies would
-    outnumber live items (then the caller writes a fresh file). Item objects still cold are
-    the file's own (merge hands them out), so identity finds their old position."""
-    old = store.index
-    where = {id(c): (area, aid, i) for area in AREAS for aid, items in old.lists[area].items()
-             for i, c in enumerate(items)}
-    files = {area: dict(old.lists[area]) for area in AREAS}
-    grown, remapped = set(), []
+    Items newly eligible stay hot until they reach max(MIN_ITEMS, a tenth) of the split, and stale
+    copies (moved back since) may not outnumber the live items: until then no cold bytes are written.
+    Item objects still cold are the generation's own (merge hands them out), so identity finds them."""
+    where = {id(c): (area, aid, i) for area, aid, i, c in live(store)}
+    new = {id(c) for area in AREAS for aid, items in cold[area].items() for c in items
+           if where.get(id(c), (None, None))[:2] != (area, aid)}
+    kept = count - len(new)
+    if kept < MIN_ITEMS or len(new) >= max(MIN_ITEMS, count // 10) or store.index.size() > 2 * kept:
+        return None
+    if new:
+        hot, cold, count = split(whole, rules, keep | new, sig)
     for area in AREAS:
         for aid, tokens in hot[KEY]["lists"][area].items():
-            items, out = cold[area][aid], []
+            out = []
             for t in tokens:
                 if not isinstance(t, list):
                     out.append(t)
                     continue
-                for c in items[t[0]:t[1]]:
-                    pos = where.get(id(c))
-                    if pos is None or pos[:2] != (area, aid):
-                        if (area, aid) not in grown:
-                            grown.add((area, aid))
-                            files[area][aid] = list(files[area].get(aid) or [])
-                        files[area][aid].append(c)
-                        p = len(files[area][aid]) - 1
-                    else:
-                        p = pos[2]
+                for c in cold[area][aid][t[0]:t[1]]:
+                    p = where[id(c)][2]
                     if out and isinstance(out[-1], list) and out[-1][1] == p:
                         out[-1][1] += 1
                     else:
                         out.append([p, p + 1])
-            remapped.append((tokens, out))
-    if sum(len(items) for area in AREAS for items in files[area].values()) > 2 * count:
-        return None
-    for tokens, out in remapped:
-        tokens[:] = out
-    hot[KEY]["gen"] = old.gen
-    return {"gen": old.gen, **files}, bool(grown)
+            tokens[:] = out
+    return hot
+
+
+def _own(hot: dict, index) -> Hot:
+    """A copy of the hot part sharing no objects with any generation or snapshot (writers mutate it)."""
+    return Hot(json.loads(json.dumps(hot, ensure_ascii=False)), index=index)
 
 
 def rebalance(slug_dir, store: Hot, rules, keep_of, sig, write_hot) -> Hot:
     """Split the whole store again for these documents; returns what comments.json now holds.
 
-    The cold file only grows in place, or is replaced while comments.json holds every item."""
-    from .store import write_bytes
+    A new generation is written before comments.json names it; unnamed ones then go to the attic."""
     whole = merge(store) if KEY in store else {k: v for k, v in store.items() if k != KEY}
-    hot, cold, count = split(whole, rules, keep_of(whole), sig, secrets.token_hex(8))
+    keep = keep_of(whole)
+    hot, cold, count = split(whole, rules, keep, sig)
     if count < MIN_ITEMS:
         if KEY not in store:
             return store
-        whole = Hot(whole)
-        write_hot(whole)
-        return whole
-    path = Path(slug_dir) / NAME
-    kept = _extend(store, hot, cold, count) if KEY in store and store.index is not None else None
-    if kept is not None:
-        # Old positions stay valid, so comments.json may point at either file version: no whole-store write.
-        cold, appended = kept
-        if not appended:
-            hot.index = store.index
-            write_hot(hot)
-            return hot
-    elif KEY in store:
-        write_hot(Hot(whole))
-    write_bytes(path, json.dumps(cold, ensure_ascii=False, separators=(",", ":")).encode())
-    index = Index(cold)
-    with _FILES_LOCK:
-        _FILES[str(path)] = (_stat(path), index)
-    hot.index = index
+        joined = _own(whole, None)
+        write_hot(joined)
+        retire(slug_dir)
+        return joined
+    reused = _reuse(store, whole, rules, keep, sig, hot, cold, count) if KEY in store else None
+    if reused is not None:
+        reused[KEY]["gen"] = store.index.gen
+        hot = _own(reused, store.index)
+    else:
+        index = _write_generation(slug_dir, cold)
+        hot[KEY]["gen"] = index.gen
+        hot = _own(hot, index)
+        _check(hot)
     write_hot(hot)
+    retire(slug_dir, keep={hot.index.gen})
     return hot
 
 
 def count_items(store) -> int:
     return sum(len(items) for area in AREAS for items in (store.get(area) or {}).values() if isinstance(items, list))
-
-
-def exists(slug_dir) -> bool:
-    return os.path.exists(Path(slug_dir) / NAME)

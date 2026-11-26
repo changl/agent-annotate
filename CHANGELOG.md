@@ -1,5 +1,10 @@
 # agent-annotate — changelog
 
+## Unreleased (2.34.0)
+
+- Settled feedback from older versions leaves comments.json (agent-annotate-uzd.9). Only settled items move out: done, answered, and not waiting on anyone. They go to `.cold/<content hash>.json`, and comments.json names that hash. Every read checks the hash, and a mismatch stops reads and writes with an error. Replaced generations move to `.cold/attic/` and are never deleted. Pages under 200 items stay one file.
+- Rollback: `annotate cold off` joins every split page back into one comments.json under its lock and stops further splits; `annotate cold on` re-enables them. `scripts/rollout.py` runs `cold off` before it installs any version older than 2.34.0, because older releases cannot read a split page.
+
 ## 2.33.0
 
 - Pages open 2–5x faster (agent-annotate-uzd). The first reads leave from the HTML head, a server thread rebuilds the page's answers after each change, the categories answer is reused until its inputs change, and stamped assets are gzipped once. On sandbox copies under load 17–50, an FLD cold open went from 2.7 s to 1.0 s, and a warm open from 2.3 s to 0.65 s.

@@ -148,6 +148,17 @@ def restart(project, slug, **options):
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
+COLD_STORE = (2, 34, 0)  # the first release that splits pages (cold.py); older readers see only comments.json
+
+
+def join_cold():
+    """`annotate cold off` on the installed runtime: splitting stops and every split page is
+    one comments.json again, each under its store lock. A runtime without the command split nothing."""
+    if run([PYTHON, "-I", "-m", "agent_annotate.cli", "cold", "--help"], timeout=120).returncode:
+        return
+    run([PYTHON, "-I", "-m", "agent_annotate.cli", "cold", "off"], timeout=1800, step="cold off")
+
+
 def disable_databases(pages):
     for project, slug, _port, _base in pages:
         run([PYTHON, "-I", "-m", "agent_annotate.cli", "db", "off", f"{project}/{slug}"],
@@ -257,6 +268,8 @@ def log(entry):
 
 def restore(folder, record, pages):
     """Old wheel, skills tarball, restart `pages`, check. Returns 'doctor ok' or raises Failed."""
+    if vtuple(record["version"]) < COLD_STORE:
+        join_cold()  # before db off, so page.db exports the joined store too
     if record.get("page_db"):
         disable_databases(pages)  # Release N exports current JSON before the old runtime is installed.
     install(record["wheel_url"])

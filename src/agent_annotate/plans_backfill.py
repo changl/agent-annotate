@@ -22,6 +22,43 @@ def _hash(body):
     return hashlib.sha256(body).hexdigest()
 
 
+def _logical(store) -> str:
+    """comments.json's digest as readers see it: the whole merged, validated store, however it is filed (cold.py)."""
+    from .sync_server import _validate_store
+    store = _validate_store(json.loads(json.dumps(store)))
+    return _hash(json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode())
+
+
+def _whole(store) -> bytes:
+    """A self-contained comments.json: every item in one file, readable by any release."""
+    return (json.dumps(store, ensure_ascii=False, indent=2) + "\n").encode()
+
+
+def _preimage(raw: bytes, store) -> bytes:
+    """What restore writes back: the file itself when it holds every item, else the merged store."""
+    from .cold import KEY
+    return _whole(store) if KEY in json.loads(raw) else raw
+
+
+def _saved_digest(saved: bytes, logical) -> str | None:
+    if not logical:
+        return _hash(saved)
+    try:
+        return _logical(json.loads(saved))
+    except ValueError:
+        return None
+
+
+def _now_digest(directory, name, logical) -> str | None:
+    path = safe_path(directory, name)
+    if not path.exists():
+        return None
+    if logical:
+        from .store import read_comments
+        return _logical(read_comments(directory))  # checked: a bad cold generation refuses here
+    return _hash(path.read_bytes())
+
+
 def _candidate(decision):
     return {k: decision.get(k) for k in ("verdict", "by", "ts", "text")} | {
         "version": (decision.get("evidence") or {}).get("version")}
@@ -308,7 +345,12 @@ def backfill_page(directory, *, apply=False, bus=None, archive=None):
         for name in touched:
             original = safe_path(directory, name)
             saved = backup / name
-            if original.exists():
+            if name == "comments.json":
+                # A self-contained preimage, checked by content: restore never depends on a cold generation.
+                _atomic_bytes(saved, _preimage(before, store))
+                shutil.copystat(original, saved)
+                manifest["files"][name] = {"before": _logical(store), "logical": True}
+            elif original.exists():
                 saved.parent.mkdir(parents=True, exist_ok=True)
                 _atomic_bytes(saved, original.read_bytes())
                 shutil.copystat(original, saved)
@@ -325,8 +367,8 @@ def backfill_page(directory, *, apply=False, bus=None, archive=None):
             promote(directory, updated, frozen)
             if frozen.get("decision", {}).get("catalog_conflict") or not frozen.get("catalog_plan"):
                 raise ValueError("catalog changed during preparation; restore backup before retry")
-        after = (json.dumps(updated, ensure_ascii=False, indent=2) + "\n").encode()
-        manifest["files"]["comments.json"]["after"] = _hash(after)
+        after = _whole(updated)
+        manifest["files"]["comments.json"]["after"] = _logical(updated)
         _atomic_bytes(backup / "manifest.json", json.dumps(manifest, indent=2).encode())
         _atomic_bytes(path, after)
         report["backup"] = str(backup)
@@ -346,8 +388,9 @@ def section_page(directory, section, ids, *, decisions=False, apply=False):
         raise ValueError("apply requires the page server's existing .comments.json.lock")
     with _locked_store(directory, write=False):
         refuse_if_moved(directory)
+        from .cold import merged
         path = safe_path(directory, "comments.json")
-        store = json.loads(path.read_bytes())
+        store = merged(directory, json.loads(path.read_bytes()))  # the whole store, cold items too
         filed = store.get("approved_plans", {})
         plans = {plan["id"]: plan for plan in list_plans(directory, store=store)}
         missing = [i for i in ids if i not in plans]
@@ -368,7 +411,7 @@ def section_page(directory, section, ids, *, decisions=False, apply=False):
                 meta = json.loads(safe_path(directory, name).read_bytes())
                 writes[name] = (json.dumps({**meta, "section": section}, ensure_ascii=False, indent=2) + "\n").encode()
         if updated != store:
-            writes["comments.json"] = (json.dumps(updated, ensure_ascii=False, indent=2) + "\n").encode()
+            writes["comments.json"] = _whole(updated)
         backup = safe_path(directory, ".plans-backfill-backups/" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ-") + uuid.uuid4().hex[:8])
         backup.mkdir(parents=True, mode=0o700)
         manifest = {"page": str(directory), "files": {}}
@@ -376,6 +419,10 @@ def section_page(directory, section, ids, *, decisions=False, apply=False):
             original = safe_path(directory, name)
             saved = backup / name
             saved.parent.mkdir(parents=True, exist_ok=True)
+            if name == "comments.json":  # a self-contained preimage (see backfill_page)
+                _atomic_bytes(saved, _preimage(original.read_bytes(), store))
+                manifest["files"][name] = {"before": _logical(store), "after": _logical(updated), "logical": True}
+                continue
             _atomic_bytes(saved, original.read_bytes())
             manifest["files"][name] = {"before": _hash(original.read_bytes()), "after": _hash(body)}
         # The restore manifest is complete before the first page write.
@@ -396,11 +443,10 @@ def restore_page(directory, backup):
     with _locked_store(directory, write=False):
         refuse_if_moved(directory)
         for name, info in manifest["files"].items():
-            path = safe_path(directory, name)
-            digest = _hash(path.read_bytes()) if path.exists() else None
-            if digest not in {info["before"], info.get("after")}:
+            logical = bool(info.get("logical"))
+            if _now_digest(directory, name, logical) not in {info["before"], info.get("after")}:
                 raise ValueError("file changed since backfill; refusing restore: " + name)
-            if info["before"] is not None and _hash(safe_path(backup, name).read_bytes()) != info["before"]:
+            if info["before"] is not None and _saved_digest(safe_path(backup, name).read_bytes(), logical) != info["before"]:
                 raise ValueError("backup changed: " + name)
         for name, info in manifest["files"].items():
             path = safe_path(directory, name)

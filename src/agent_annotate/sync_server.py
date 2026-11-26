@@ -334,9 +334,12 @@ _RECEIPTS: dict = {}
 
 def _receipts(path) -> list:
     """rounds.ndjson parsed, reused while the file is unchanged (read-only: callers must not mutate)."""
-    from .cold import _stat
     from .review_history import _events
-    stat = _stat(path)
+    try:
+        st = Path(path).stat()
+        stat = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+    except FileNotFoundError:
+        stat = None
     hit = _RECEIPTS.get(str(path))
     if stat is None or not hit or hit[0] != stat:
         hit = _RECEIPTS[str(path)] = (stat, list(_events(path)))
@@ -721,14 +724,45 @@ def _plan_docs(artifact_dir: Path, store: dict) -> dict:
     for doc in docs:
         try:
             plan = validate_plan_id(doc[5:])
-            meta = _json(safe_path(artifact_dir, f"plans/{plan}/meta.json"), {})
+            meta_path = safe_path(artifact_dir, f"plans/{plan}/meta.json")
         except (OSError, ValueError):
             continue
-        history = [h.get("version") for h in meta.get("history") or [] if isinstance(h, dict) and h.get("version")]
-        current = meta.get("current")
-        if current in history:
-            out[doc] = (current, history, _card_anchors(functools.partial(safe_path, artifact_dir, f"plans/{plan}/versions/{current}.html")))
+        # Reused while the plan's meta.json and current body are unchanged: a save reads neither (stat only).
+        key = (str(artifact_dir), doc)
+        hit = _PLAN_DOCS.get(key)
+        stamp = (_file_stat(meta_path), hit and hit[2] and _file_stat(hit[2]))
+        if hit and hit[0] == stamp:
+            value = hit[1]
+        else:
+            try:
+                meta = _json(meta_path, {})
+            except (OSError, ValueError):
+                continue
+            history = [h.get("version") for h in meta.get("history") or [] if isinstance(h, dict) and h.get("version")]
+            current = meta.get("current")
+            value, body, body_stat = None, None, None
+            if current in history:
+                try:
+                    body = safe_path(artifact_dir, f"plans/{plan}/versions/{current}.html")
+                except ValueError:
+                    pass
+                body_stat = body and _file_stat(body)  # before the read: a later edit misses the cache
+                value = (current, history, _card_anchors(functools.partial(safe_path, artifact_dir, f"plans/{plan}/versions/{current}.html")))
+            _PLAN_DOCS[key] = ((stamp[0], body_stat), value, body)
+        if value is not None:
+            out[doc] = value
     return out
+
+
+_PLAN_DOCS: dict = {}  # (page dir, "plan:<id>") -> ((meta.json stat, body stat), document, body path)
+
+
+def _file_stat(path):
+    try:
+        st = os.stat(path)
+    except (OSError, ValueError):
+        return None
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
 def _item_stamp(area: str, anchor: str, comment: dict) -> bytes:
@@ -814,6 +848,17 @@ def _page_keep(store: dict, docs: dict, rules=None) -> set:
             if id(c) not in keep and _answered_question(c) and _prompt_keys(c) & asked:
                 keep.add(id(c))
     return keep
+
+
+_RULES: list = [None]  # (documents, their _page_rules, their _docs_sig), the last ones asked for
+
+
+def _rules_for(docs: dict) -> tuple:
+    """(_page_rules, _docs_sig) of these documents, reused while they are unchanged."""
+    hit = _RULES[0]
+    if hit is None or hit[0] != docs:
+        hit = _RULES[0] = (docs, _page_rules(docs), _docs_sig(docs))
+    return hit[1], hit[2]
 
 
 def _docs_sig(docs: dict) -> str:
@@ -1383,7 +1428,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 and self._is_identity_probe()):
             return True  # Process health must not depend on page-store I/O.
         try:
-            for name in ("comments.json", "comments.cold.json", "current.meta.json", "project.json", "copy.json", "rounds.ndjson", "seen.json", "read-state.json"):
+            for name in ("comments.json", ".cold", "current.meta.json", "project.json", "copy.json", "rounds.ndjson", "seen.json", "read-state.json"):
                 _contained_path(self.artifact_dir, name)
         except PermissionError:
             self._respond(403, b'{"error":"runtime path leaves artifact directory"}')
@@ -1651,6 +1696,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     # ── GET ──────────────────────────────────────────────────────────
     def do_GET(self):
+        self._promote_ids = ()  # a kept-alive connection's last write must not reach this request
         if self._signin_route() or not self._allow_request():
             return
         parsed = urllib.parse.urlparse(self.path)
@@ -1760,7 +1806,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         route_path = self._strip_base(parsed.path)
         if self._refuse_moved_write(route_path):
             return
-        self._promote_route(route_path)
+        self._promote_ids = self._route_ids(route_path)
 
         if route_path == "/api/reviewer/session":
             return self._reviewer_session()
@@ -1819,7 +1865,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         route_path = self._strip_base(parsed.path)
         if self._refuse_moved_write(route_path):
             return
-        self._promote_route(route_path)
+        self._promote_ids = self._route_ids(route_path)
         if route_path.startswith("/api/comments/") and "/replies/" in route_path:
             return self._v2_reply_note(route_path, "PUT")
         if route_path.startswith("/api/comments/"):
@@ -1834,7 +1880,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         route_path = self._strip_base(parsed.path)
         if self._refuse_moved_write(route_path):
             return
-        self._promote_route(route_path)
+        self._promote_ids = self._route_ids(route_path)
         if route_path.startswith("/api/comments/") and "/replies/" in route_path:
             return self._v2_reply_note(route_path, "DELETE")
         if route_path.startswith("/api/comments/"):
@@ -1987,18 +2033,30 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         return self.artifact_dir / "current.meta.json"
 
     def _store_signature(self):
-        from .cold import signature as cold_signature
+        # comments.json names its immutable cold generation (cold.py): its stat covers both.
         try:
             stat = self._store_path().stat()
-            hot = (str(self._store_path()), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+            return (str(self._store_path()), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
         except FileNotFoundError:
-            hot = (str(self._store_path()),)
-        return (*hot, cold_signature(self.artifact_dir))
+            return (str(self._store_path()),)
+
+    _promote_ids = ()  # this request's target ids (see _route_ids)
+
+    @staticmethod
+    def _route_ids(route_path: str) -> tuple:
+        """The item a write route targets, raw and unquoted (handlers use either)."""
+        if not route_path.startswith("/api/comments/"):
+            return ()
+        cid = route_path[len("/api/comments/"):].split("/", 1)[0]
+        return () if cid in ("", "batch") else tuple({cid, urllib.parse.unquote(cid)})
 
     def _v2_load(self, *, read_only=False, merged=False) -> dict:
         """comments.json as a cold.Hot: what writes and the page view use. `merged`: the whole
-        store (cold items too, cold.merge), read-only, for readers that show or count everything."""
-        from .cold import attach, merge
+        store (cold items too, cold.merge), read-only, for readers that show or count everything.
+
+        A writer's load (not read_only) owns the snapshot; the item its route targets, if cold,
+        is moved back here, so promotion persists only with that transaction's save."""
+        from .cold import attach, merge, promote_id
         cls = type(self)
         with _locked_store(self.artifact_dir, write=False):
             signature = self._store_signature()
@@ -2016,6 +2074,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 # write leaves no mutated cache: the next reader reloads disk.
                 # A durable save returns the same snapshot to the cache.
                 cls._store_snapshot = None
+                # Read caches over this snapshot share its objects: none outlives a writer's edits.
+                cls._store_merged = None
+                cls._store_responses.clear()
+                for cid in self._promote_ids:
+                    promote_id(snapshot[1], cid)
             return snapshot[1]
 
     def _cold_docs(self, store, meta=None) -> dict:
@@ -2027,8 +2090,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         from .cold import KEY, attach, settle
         store = attach(self.artifact_dir, store)
         if KEY in store:
-            docs = self._cold_docs(store)
-            settle(store, _page_rules(docs), _docs_sig(docs))
+            settle(store, *_rules_for(self._cold_docs(store)))
         self._write_hot(store)
 
     def _write_hot(self, store: dict) -> None:
@@ -2039,7 +2101,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _split_due(self, store, sig) -> bool:
         """Does comments.json need a new split for the page view's documents (`sig`)?"""
-        from .cold import KEY, MIN_ITEMS, count_items
+        from .cold import KEY, MIN_ITEMS, count_items, enabled
+        if not enabled():
+            return False  # `annotate cold off`: a joined page stays one file
         if KEY in store:
             return store[KEY].get("docs") != sig
         count = count_items(store)
@@ -2048,38 +2112,21 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         return count >= MIN_ITEMS and not (declined and declined[0] == sig and count < declined[1] + MIN_ITEMS)
 
     def _split_store(self) -> None:
-        """Split settled feedback from older versions off into comments.cold.json (cold.py)."""
+        """Split settled feedback from older versions off into a cold generation (cold.py)."""
         from .cold import KEY, count_items, rebalance
         from .review_versions import visible_store
         with _locked_store(self.artifact_dir):
             meta = self._read_meta()
             store = self._v2_load(read_only=True)
             docs = self._cold_docs(store, meta)
-            sig = _docs_sig(docs)
+            rules, sig = _rules_for(docs)
             if not self._split_due(store, sig):
                 return
-            rules = _page_rules(docs)
             hot = rebalance(self.artifact_dir, store, rules,
                             lambda whole: _page_keep(visible_store(self.artifact_dir, whole, meta), docs, rules),
                             sig, self._write_hot)
             if KEY not in hot:
                 type(self)._cold_declined[str(self.artifact_dir)] = (sig, count_items(hot))
-
-    def _promote_route(self, route_path: str) -> None:
-        """A write aimed at one cold item moves it back first; the handler then finds it as before."""
-        from .cold import live_id, promote_id
-        if not route_path.startswith("/api/comments/"):
-            return
-        cid = route_path[len("/api/comments/"):].split("/", 1)[0]
-        if cid == "batch":
-            return
-        cids = {cid, urllib.parse.unquote(cid)}
-        if not any(live_id(self._v2_load(read_only=True), c) for c in cids):
-            return
-        with _locked_store(self.artifact_dir):
-            store = self._v2_load()
-            if any([promote_id(store, c) for c in cids]):
-                self._v2_save(store)
 
     def _store_cards(self, signature, store: dict, cold=None) -> tuple:
         """(mark, revision, {id: (stamp, revision changed)}) for this store revision.
@@ -2311,7 +2358,6 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         return self._respond(200, b"", "application/json", representation=representation)
 
     def _v2_history_representation(self, parsed):
-        from . import cold
         from .paths import BUS_ARCHIVE_ROOT
         from .review_history import history_buses, review_history
         from .store import backend
@@ -2321,7 +2367,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         latest = urllib.parse.parse_qs(parsed.query).get("latest") == ["1"]
 
         def disk_signature():
-            paths = [self._store_path(), self.artifact_dir / cold.NAME, self._meta_path(), self.artifact_dir / "rounds.ndjson",
+            # comments.json names its immutable cold generation: its stat covers both.
+            paths = [self._store_path(), self._meta_path(), self.artifact_dir / "rounds.ndjson",
                      *history_buses(bus, BUS_ARCHIVE_ROOT)]
             if not latest:
                 paths.extend(self.artifact_dir / kind for kind in ("versions", "content"))
@@ -4809,7 +4856,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if any(not part or part in (".", "..") or part.startswith(".") for part in parts):
             return False
         name = parts[-1].lower()
-        if (name in {"comments.json", "comments.cold.json", "current.meta.json", "project.json", "cards.json", "metrics.json",
+        if (name in {"comments.json", "current.meta.json", "project.json", "cards.json", "metrics.json",
                      "seen.json", "read-state.json", "weekly-source.md"}
                 or name.endswith((".comments.json", ".tmp", ".bak", ".backup", ".lock", ".log", ".ndjson", ".sqlite", ".db", "~"))):
             return False

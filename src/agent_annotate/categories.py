@@ -448,6 +448,13 @@ def comment_section(comment: dict) -> str | None:
     return "done" if status != "open" else "waiting"
 
 
+def unanswered_card(comment) -> bool:
+    """A live card nobody has decided (what `annotate close` retires)."""
+    return (isinstance(comment, dict) and isinstance(comment.get("decision_request"), dict)
+            and comment.get("status") not in ("archived", "resolved_in_version")
+            and not isinstance(comment.get("decision"), dict))
+
+
 def comment_sig(comment: dict) -> str:
     """Mirror shell.js's unsigned djb2 hash over JavaScript UTF-16 code units."""
     replies = comment.get("replies")

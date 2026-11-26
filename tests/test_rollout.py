@@ -43,7 +43,8 @@ class FakeMac:
             self.assets[f"v{version}/agent_annotate-{version}-py3-none-any.whl"] = wheel
             self.assets[f"v{version}/SHA256SUMS"] = (
                 f"{hashlib.sha256(wheel).hexdigest()}  agent_annotate-{version}-py3-none-any.whl\n".encode())
-        for name in ("inspect", "fetch", "free_bytes", "install", "sync_skills", "restart", "doctor", "capabilities", "disable_databases"):
+        for name in ("inspect", "fetch", "free_bytes", "install", "sync_skills", "restart", "doctor", "capabilities", "disable_databases",
+                     "join_cold"):
             setattr(rollout, name, getattr(self, name))
 
     def _maybe_fail(self, step):
@@ -93,6 +94,9 @@ class FakeMac:
             self.backends[slug] = "json" if reason else "page.db"
             return {"storage": {"backend": self.backends[slug], "reason": reason}}
 
+    def join_cold(self):
+        self.calls.append("cold off")
+
     def disable_databases(self, pages):
         self.calls.append("db off")
         for _project, slug, _port, _base in pages:
@@ -139,7 +143,8 @@ def test_page_db_rollback_disables_before_install(rollout, tmp_path):
     assert rollout.apply("M1", "2.30.0", "")[0] == 0
     mac.calls.clear()
     assert rollout.rollback("M1", "")[0] == 0
-    assert mac.calls[:2] == ["db off", "install"]
+    # uzd.9: the old release reads only comments.json: join every split page first.
+    assert mac.calls[:3] == ["cold off", "db off", "install"]
     assert set(mac.backends.values()) == {"json"}
     mac.assert_old()
 

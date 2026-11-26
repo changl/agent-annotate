@@ -5,8 +5,8 @@ Record files of a page directory: comments.json, current.meta.json,
 categories.json, plan-topics.json, cards.json and rounds.ndjson. Outside it:
 the page's bus <bus root>/<project>/<slug>.ndjson and its delivery journal
 <state>/deliveries/<project>/<slug>.json. Settled feedback from older versions
-lives in comments.cold.json (cold.py): written only by the page server, never
-mirrored into page.db, and merged back in by read_comments.
+lives in immutable generations under .cold/ (cold.py): written only by the page
+server, never mirrored into page.db, and merged back in by read_comments.
 
 Every writer goes through this module, so the storage behind a page can
 change in one place. This is the JSON backend: each function does exactly
@@ -50,19 +50,14 @@ def read_json(path, default=None):
 
 
 def read_comments(slug_dir) -> dict:
-    """The whole store: comments.json and, merged in, its cold file (cold.py)."""
+    """The whole store: comments.json and, merged in, its cold generation (cold.py), checked.
+    Every object is parsed anew: a writer (Tx) may mutate what this returns."""
     from .cold import merged
     from .sync_server import _validate_store
-    for attempt in range(3):
-        data = read_json(Path(slug_dir) / "comments.json")
-        if data is None:
-            return json.loads(json.dumps(_EMPTY_STORE))
-        try:
-            return merged(slug_dir, _validate_store(data))
-        except ValueError:
-            if attempt == 2:  # a split replaced the cold file between the two reads; read both again
-                raise
-    raise AssertionError("unreachable")
+    data = read_json(Path(slug_dir) / "comments.json")
+    if data is None:
+        return json.loads(json.dumps(_EMPTY_STORE))
+    return merged(slug_dir, _validate_store(data), fresh=True)
 
 
 def read_meta(slug_dir) -> dict:
@@ -112,16 +107,12 @@ class DbSnapshot(Snapshot):
     @property
     def comments(self) -> dict:
         if "comments" not in self._parsed:
-            from .sync_server import _validate_store
             from .cold import merged
+            from .sync_server import _validate_store
             value = self._value("comments.json", None)
-            try:
-                self._parsed["comments"] = (merged(self.dir, _validate_store(value)) if isinstance(value, dict)
-                                            else json.loads(json.dumps(_EMPTY_STORE)))
-            except ValueError:
-                if not (isinstance(value, dict) and "cold" in value):
-                    raise
-                self._parsed["comments"] = read_comments(self.dir)  # the cold file moved on since this commit
+            # The generation this commit names stays readable (in place or in the attic).
+            self._parsed["comments"] = (merged(self.dir, _validate_store(value)) if isinstance(value, dict)
+                                        else json.loads(json.dumps(_EMPTY_STORE)))
         return self._parsed["comments"]
 
     @property
@@ -454,8 +445,10 @@ def write_json(path, data) -> None:
     """Pretty JSON, atomically, keeping the file's mode (0600 when new)."""
     path = Path(path)
     if path.name == "comments.json" and isinstance(data, dict):
-        from .cold import normalize
+        from .cold import KEY, normalize
         normalize(data)  # a writer that added or removed items under a cold summary
+        if isinstance(data.get(KEY), dict):
+            data[KEY]["docs"] = None  # written without the server's stray check: the next page view re-splits
 
     def write():
         _refuse_if_moved(path.parent)

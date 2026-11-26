@@ -3263,20 +3263,9 @@ def _unanswered_cards(store: dict) -> list[tuple[str, dict]]:
     A plain reviewer comment has no `decision_request` and is never in scope:
     `close` retires questions the agent asked, not things the reviewer said.
     """
-    out = []
-    for anchor_id, items in (store.get("anchors") or {}).items():
-        if not isinstance(items, list):
-            continue
-        for c in items:
-            if not isinstance(c, dict):
-                continue
-            if not isinstance(c.get("decision_request"), dict):
-                continue
-            if c.get("status") in ("archived", "resolved_in_version") \
-                    or isinstance(c.get("decision"), dict):
-                continue
-            out.append((c.get("anchor_id") or anchor_id, c))
-    return out
+    from .categories import unanswered_card
+    return [(c.get("anchor_id") or anchor_id, c) for anchor_id, items in (store.get("anchors") or {}).items()
+            if isinstance(items, list) for c in items if unanswered_card(c)]
 
 
 def _archive_comment_in_store(store: dict, comment_id: str, author: str, now: str) -> bool:
@@ -3355,8 +3344,9 @@ def cmd_close(args) -> int:
         print(f"ERROR: {project}/{slug} has no comment store at {store_path}", file=sys.stderr)
         return 2
 
+    from .cold import merged
     now = datetime.now(UTC)
-    store = _read_store_file(store_path)
+    store = merged(store_path.parent, _read_store_file(store_path))  # cold items too
     stale, young = [], 0
     for anchor_id, c in _unanswered_cards(store):
         age = _age_seconds(c.get("created_at"), now)
@@ -3409,11 +3399,13 @@ def cmd_close(args) -> int:
     else:
         stamp = _now_iso()
         try:
+            from .cold import attach, promote_id
             from .store import transaction as _locked_store
             from .store import write_json as _atomic_write_json
             with _locked_store(store_path.parent):
-                store = _read_store_file(store_path)
+                store = attach(store_path.parent, _read_store_file(store_path))
                 for cid in ids:
+                    promote_id(store, cid)  # a cold card comes back hot first, in this transaction
                     if _archive_comment_in_store(store, cid, author, stamp):
                         archived_ids.append(cid)
                     else:
@@ -3423,7 +3415,7 @@ def cmd_close(args) -> int:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 4
 
-    remaining = len(_unanswered_cards(_read_store_file(store_path)))
+    remaining = len(_unanswered_cards(merged(store_path.parent, _read_store_file(store_path))))
     _bus_emit(record.get("bus_file"), {
         "event": "page_closed",
         "slug": slug,
