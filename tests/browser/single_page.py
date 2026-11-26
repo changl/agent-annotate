@@ -1,6 +1,7 @@
 """Navigation helpers for the accepted shell; no product behavior is stubbed."""
 
 import json
+import os
 from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -9,7 +10,28 @@ import pytest
 
 playwright = pytest.importorskip("playwright.sync_api")
 
-CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+SYSTEM_CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+
+
+def _browser():
+    """The test browser: ANNOTATE_TEST_BROWSER, else Playwright's headless shell for this Playwright, else Chrome.
+
+    Each Google Chrome launch on macOS makes secd scan every key Chrome ever left in the keychain
+    (10,499 on the M1) and CoreSpotlight index the throwaway profile; the shell does neither and starts ~7x faster.
+    """
+    if os.environ.get("ANNOTATE_TEST_BROWSER"):
+        return Path(os.environ["ANNOTATE_TEST_BROWSER"])
+    try:
+        listing = json.loads((Path(playwright.__file__).parents[1] / "driver/package/browsers.json").read_text())
+        revision = next(b["revision"] for b in listing["browsers"] if b["name"] == "chromium-headless-shell")
+    except (OSError, ValueError, KeyError, StopIteration):
+        return SYSTEM_CHROME
+    root = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or Path.home() / "Library/Caches/ms-playwright")
+    shells = sorted(root.glob(f"chromium_headless_shell-{revision}/chrome-headless-shell-*/chrome-headless-shell"))
+    return shells[0] if shells else SYSTEM_CHROME
+
+
+CHROME = _browser()
 
 
 def ready(page):

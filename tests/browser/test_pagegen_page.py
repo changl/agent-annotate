@@ -14,9 +14,9 @@ import pytest
 
 playwright = pytest.importorskip("playwright.sync_api")
 
-from agent_annotate.pagegen import generate  # noqa: E402
+from single_page import CHROME  # noqa: E402
 
-CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+from agent_annotate.pagegen import generate  # noqa: E402
 
 
 def _free_port():

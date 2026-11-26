@@ -1,13 +1,12 @@
 """A real image page reuses immutable assets and only revalidates mutable files."""
 
 import json
-import os
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 import pytest
 from review_fixtures import authoring, complete
+from single_page import CHROME
 from test_card_layout import _serve
 
 from agent_annotate.pagegen import generate
@@ -16,11 +15,8 @@ playwright = pytest.importorskip("playwright.sync_api")
 
 
 def test_second_page_load_reuses_assets_and_revalidates_images(tmp_path):
-    # Use the existing installed browser without changing the shared installation.
-    executable = os.environ.get("ANNOTATE_TEST_BROWSER")
-    if not executable:
-        executable = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    if not Path(executable).exists():
+    executable = str(CHROME)
+    if not CHROME.exists():
         pytest.skip("Browser executable is unavailable")
     from test_pagegen_images import png
 

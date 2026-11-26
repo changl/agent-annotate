@@ -20,9 +20,8 @@ from agent_annotate.categories import publish_plan_revision  # noqa: E402
 from agent_annotate.pagegen import generate  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
+from single_page import CHROME  # noqa: E402
 from test_pagegen_images import png, write  # noqa: E402
-
-CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
 
 def _free_port():

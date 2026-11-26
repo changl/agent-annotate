@@ -11,7 +11,8 @@ from test_pagegen_images import png
 from agent_annotate.pagegen import generate
 
 playwright = pytest.importorskip("playwright.sync_api")
-CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+from single_page import CHROME  # noqa: E402
+
 pytestmark = pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "fld-v811-card-context.md"
 

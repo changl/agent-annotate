@@ -2,7 +2,6 @@
 
 import base64
 import json
-import os
 import ssl
 import subprocess
 import threading
@@ -11,6 +10,7 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 
 import pytest
+from single_page import CHROME
 from test_pagegen_images import png
 
 from agent_annotate import cli, review_access
@@ -80,8 +80,8 @@ def _asset_server(tmp_path, directory, https):
 @pytest.mark.parametrize("suffix", [".html", ".htm"])
 @pytest.mark.parametrize("https", [False, True])
 def test_html_asset_renders_but_cannot_access_cookie_api_or_top(tmp_path, suffix, https):
-    executable = os.environ.get("ANNOTATE_TEST_BROWSER", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-    if not Path(executable).exists():
+    executable = str(CHROME)
+    if not CHROME.exists():
         pytest.skip("Browser executable is unavailable")
     directory = tmp_path / "review"
     (directory / "content").mkdir(parents=True)
