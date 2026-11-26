@@ -1,0 +1,13 @@
+Resume wake-ups: parse Codex options, see Sends still in the outbox (PR #160 third review)
+
+- Codex argv is parsed with the options `codex resume --help` lists:
+  value options consume their value (`--profile resume` is not the
+  subcommand); unknown options, -i, --last or a fork fail closed; binding
+  needs positionals `resume ID`.
+- The page server appends each automatic-delivery session_push under a new
+  per-page outbox lock (a leaf lock, never held across an Orca call, so
+  writes stay fast while dispatch is blocked). The wake-up checks the bus
+  past the journal offset for that owner's Sends and writes its reservation
+  under the same lock; a durable Send defers the re-arm.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

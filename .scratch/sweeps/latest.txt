@@ -1,0 +1,9 @@
+sweep 2026-11-24T03:12Z
+owners: 6 pages used in the last 7 days with no running owner · 0 Sends waiting
+
+page Page (FLD usage audit/page), used 2 h ago: the agent that owns it has stopped and has not come back. Resume that session or run `annotate claim page` in the agent that should own it
+page Ui revamp 2026 11 (cheerticketing/ui-revamp-2026-11), used 22 h ago: the agent that owns it has stopped and has not come back. Resume that session or run `annotate claim ui-revamp-2026-11` in the agent that should own it
+page Leadory backup and wind-down (leadory/wind-down-plan), used 22 h ago: the agent that owns it has stopped and has not come back. Resume that session or run `annotate claim wind-down-plan` in the agent that should own it
+page Disk space across the three Macs (multimac-orch/storage), used 52 h ago: the agent that owns it has stopped and has not come back. Resume that session or run `annotate claim storage` in the agent that should own it
+page Rebex action image review (rebex/rebex-image-review), used 72 h ago: the agent that owns it has stopped and has not come back. Resume that session or run `annotate claim rebex-image-review` in the agent that should own it
+page Windmill workflow plan (windmill/workflow-plan), used 99 h ago: the agent that owns it has stopped and has not come back. Resume that session or run `annotate claim workflow-plan` in the agent that should own it

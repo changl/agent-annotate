@@ -1,0 +1,29 @@
+{
+  "project": "proof",
+  "slugs": {
+    "proof-page": {
+      "slug_dir": "/Users/changlee/orca/workspaces/codex/aa-resume-dlj/.scratch/proof/sbx/pages/proof-page",
+      "bus_file": "/Users/changlee/orca/workspaces/codex/aa-resume-dlj/.scratch/proof/sbx/bus/proof/proof-page.ndjson",
+      "port": 18700,
+      "title": "Restart proof",
+      "owner_session": "b8310f03-3277-4dc7-b5c5-d7c148172174",
+      "owner_agent": "claude-code",
+      "owner_label": "Agent-annotate-M1Max > codex > aa-resume-dlj > Aa claim proof-page verbose run [term_923cb14f-60a2-4561-b09e-d26198cf9b06]",
+      "owner_claimed_at": "2026-11-24T03:18:32Z",
+      "owner_target": {
+        "session": "b8310f03-3277-4dc7-b5c5-d7c148172174",
+        "handle": "term_d5244fb4-ff53-4860-a1ea-ae4dccfd65be",
+        "incarnation": "85c2cd6a-2b56-44b0-97be-8b322e006e0b",
+        "worktree": "07771d76-bc16-4702-bec1-9d2a809f0146::/Users/changlee/orca/workspaces/codex/aa-resume-dlj",
+        "agent": "claude",
+        "pid": 2691,
+        "process_start": "Mon Nov 23 19:21:15 2026",
+        "terminal_name": "Aa claim proof-page verbose run",
+        "group": "Agent-annotate-M1Max",
+        "project": "codex",
+        "workspace": "aa-resume-dlj",
+        "label": "Agent-annotate-M1Max > codex > aa-resume-dlj > Aa claim proof-page verbose run [term_d5244fb4-ff53-4860-a1ea-ae4dccfd65be]"
+      }
+    }
+  }
+}

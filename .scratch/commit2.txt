@@ -1,0 +1,17 @@
+Resume wake-ups: no forks, no stale owners, one wake, idle only (PR #160 review)
+
+- Claude: bind only the pid whose ~/.claude/sessions/<pid>.json names the
+  owner session (procStart checked in UTC), so --fork-session copies are
+  never bound. Codex: only `codex resume ID` argv without a fork.
+- Wake-up re-checks ownership under the claim locks at send time and drops
+  pages a successor claimed (superseded when none are left).
+- SessionStart and watchdog re-binds merge pages under the marker lock; a
+  consumed marker is never reset to pending.
+- Queued or uncertain Sends defer the wake-up (5 min grace), replayed by
+  Orca request ID; a started turn or an inbox read after the re-bind
+  suppresses it. Journal rows keep their prompt for the replay.
+- Only a provider-confirmed idle owner is woken (Claude session status,
+  Orca tui-idle for Codex); a user prompt settles a pending wake-up; at
+  most 3 wake-ups per watchdog pass.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

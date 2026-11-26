@@ -1,0 +1,9 @@
+Outbox locks get their own tree (PR #160 fourth review)
+
+Outbox locks lived at deliveries/<project>/<slug>.outbox.lock, which is
+the journal lock of a page named "<slug>.outbox" (dots are valid in
+slugs). A watchdog re-binding both pages deadlocked on its own lock, and
+plain Sends to one page waited behind the other's Orca call. They now live
+at STATE_DIR/outbox-locks/<project>/<slug>.lock, which no journal reaches.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

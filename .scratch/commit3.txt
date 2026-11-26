@@ -1,0 +1,14 @@
+Resume wake-ups: exact Codex argv, canonical owners, in-lock re-checks (PR #160 re-review)
+
+- Codex: read the exact argv (KERN_PROCARGS2 / /proc) and bind only
+  `codex [options] resume ID` where ID is resume's first argument; a prompt
+  argument naming the id, a prompt before `resume`, or a fork never binds.
+- Wake-up resolves effective ownership with workspace_owner_record and
+  takes dispatch_record's locks in its order (page journals, then tab and
+  canonical claim locks); a canonical successor supersedes the tab.
+- Under those locks, right before input, re-check queued Sends (pending
+  rows now defer too) and provider idle.
+- Prompt hook reads markers unlocked, locks only its own session's pending
+  marker, and with LOCK_NB.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

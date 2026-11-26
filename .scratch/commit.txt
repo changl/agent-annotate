@@ -1,0 +1,17 @@
+Resumed owners re-bind and get a turn after a restart (agent-annotate-dlj)
+
+The 2.28.3 re-bind (eii) required the resumed session to be in the same
+Orca terminal. Orca relaunches every resumed pane under a new handle, so
+after the 2026-11-23 reboot no page re-bound and Sends queued until a
+person typed into the terminal.
+
+- Re-bind on same session + same Orca worktree once the old process is
+  provably gone; the handle may change.
+- The revive watchdog (60 s, at login) re-binds from outside: the one live
+  claude/codex process resumed with the session id, its Orca terminal.
+  Queued Sends then deliver and start a turn; an owner re-bound with
+  nothing queued gets one wake-up to re-arm its wait loop (at most once).
+- SessionStart waits up to 1 s for its payload instead of 10 ms.
+- sweep.py owners: recently used pages whose owner is not running.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

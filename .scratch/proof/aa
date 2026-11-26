@@ -1,0 +1,24 @@
+#!/bin/bash
+# Sandbox annotate: worktree code, every path under .scratch/proof/sbx, ports 18700+.
+SBX=/Users/changlee/orca/workspaces/codex/aa-resume-dlj/.scratch/proof/sbx
+export PYTHONPATH=/Users/changlee/orca/workspaces/codex/aa-resume-dlj/src
+export ANNOTATE_STATE_DIR=$SBX/state
+export ANNOTATE_SWEEP_DIR=$SBX/sweeps
+export ANNOTATE_BUS_ROOT=$SBX/bus
+export ANNOTATE_CONFIG_DIR=$SBX/config
+export ANNOTATE_DATA_DIR=$SBX/data
+export ANNOTATE_CLAUDE_SETTINGS=$SBX/claude/settings.json
+export ANNOTATE_CODEX_HOOKS=$SBX/codex/hooks.json
+export ANNOTATE_SHIM_PATH=$SBX/bin/annotate
+export ANNOTATE_BUS_ARCHIVE_ROOT=$SBX/bus-archive
+export ANNOTATE_TRANSCRIPT_GLOB="$SBX/no-transcripts/*.jsonl"
+export ANNOTATE_SKILL_DIRS=$SBX/skills/annotate
+export ANNOTATE_VERSION_GUARD=0
+export ANNOTATE_BOARD_API=http://127.0.0.1:9
+export ANNOTATE_BOARD_DRY_RUN=1
+PY=/Users/changlee/.local/share/uv/tools/agent-annotate/bin/python
+if [ "${1-}" = "py" ]; then
+    shift
+    exec "$PY" "$@"
+fi
+exec "$PY" -c 'import sys; from agent_annotate.cli import main; sys.exit(main())' "$@"
