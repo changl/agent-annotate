@@ -151,7 +151,8 @@ def _claude_session(pid: int) -> dict | None:
     return data if isinstance(data, dict) and start and data.get("procStart") == start else None
 
 
-def _resumed_pids(session: str, expected: str) -> list[int]:
+def _resumed_pids(session: str, expected: str, processes=None) -> list[int]:
+    """`processes`: an optional callable giving pid -> exact argv of every process, shared by one watchdog run."""
     if expected == "claude":
         # `claude --resume ID --fork-session` carries ID in argv but runs another session.
         root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "sessions"
@@ -163,15 +164,18 @@ def _resumed_pids(session: str, expected: str) -> list[int]:
             except (OSError, ValueError, AttributeError):
                 continue
         return [pid for pid in found if (_claude_session(pid) or {}).get("sessionId") == session]
+    table = processes() if processes else None
+    if table is not None and not any(session in arg for argv in table.values() for arg in argv):
+        return []  # the shared pass only rules a session out: argv can change by exec after it
     # A full `ps` listing took over 10 s on the busy M1Max; pgrep returns only candidates.
-    found = subprocess.run(["pgrep", "-f", session], capture_output=True, text=True,
-                           timeout=10, cwd=Path.home()).stdout.split()
+    found = {int(pid): _argv(int(pid)) for pid in subprocess.run(
+        ["pgrep", "-f", session], capture_output=True, text=True, timeout=10, cwd=Path.home()).stdout.split()}
     pids = []
-    for pid in found:
+    for pid, argv in found.items():
         # Exact argv, not `ps` text: a prompt argument can mention the id or the word resume.
-        argv = _argv(int(pid)) or []
+        argv = argv or []
         if argv and re.search(r"(?:^|/)codex(?:$|[.-])", argv[0]) and _codex_resumes(argv[1:], session):
-            pids.append(int(pid))
+            pids.append(pid)
     return pids
 
 
@@ -233,13 +237,13 @@ def _argv(pid: int) -> list[str] | None:
         return None
 
 
-def resumed_target(session: str, agent: str) -> dict | None:
+def resumed_target(session: str, agent: str, processes=None) -> dict | None:
     """From outside: the one live provider process running this session id, in its Orca terminal."""
     if not re.fullmatch(r"[A-Za-z0-9-]{8,}", session or ""):
         return None
     expected = "codex" if agent == "codex" else "claude"
     try:
-        pids = _resumed_pids(session, expected)
+        pids = _resumed_pids(session, expected, processes)
         if len(pids) != 1:  # none, or two copies of one session: nothing provable
             return None
         proc = _process(pids[0])
@@ -273,12 +277,13 @@ def _target_exited(target: dict | None) -> bool:
         return False
 
 
-def refresh_session_owners(session: str, records: dict, *, via: str = "prompt") -> bool:
+def refresh_session_owners(session: str, records: dict, *, via: str = "prompt", processes=None) -> bool:
     """Rebind a resumed session only after its recorded process provably ended.
 
     Return whether a matching live target was found, even if another writer won
     the rebind. The watchdog and publish look up the target from outside the
-    session. Rebinds outside a prompt are eligible for one watchdog wake-up.
+    session, in `processes` when given (see _resumed_pids). Rebinds outside a
+    prompt are eligible for one watchdog wake-up.
     """
     if not session or session == "unknown":
         return False
@@ -294,7 +299,10 @@ def refresh_session_owners(session: str, records: dict, *, via: str = "prompt") 
             except (OSError, ValueError, TypeError, KeyError, AttributeError):
                 continue
     exited, targets, refreshed = {}, {}, []
-    find_target = resumed_target if via in ("watchdog", "publish") else capture_target
+    def find_target(session, agent):
+        if via in ("watchdog", "publish"):
+            return resumed_target(session, agent, processes)
+        return capture_target(session, agent)
     resumed = False
     for (project, slug), record in records.items():
         old = record.get("owner_target")

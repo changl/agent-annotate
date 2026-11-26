@@ -312,11 +312,24 @@ def test_watchdog_never_binds_a_fork_of_the_owner_session(estate, monkeypatch, f
     ["/Users/x/codex", "--profile", "resume", "resume", _OWNER],
     ["/Users/x/codex", "--profile=work", "--dangerously-bypass-approvals-and-sandbox", "resume", _OWNER, "go on"],
 ])
-def test_watchdog_binds_codex_resume_by_its_session_argument(estate, monkeypatch, argv):
+@pytest.mark.parametrize("shared", [False, True])
+def test_watchdog_binds_codex_resume_by_its_session_argument(estate, monkeypatch, argv, shared):
     _old, record = _resumed_elsewhere(estate, monkeypatch, agent="codex", argv=argv)
-    delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record}, via="watchdog")
+    # A shared pass that names the session still binds from a fresh read: argv can change by exec.
+    stale = {4343: ["/Users/x/codex", "resume", "another-session"], 5555: ["/Users/x/codex", "resume", _OWNER]}
+    processes = (lambda: stale) if shared else None
+    delivery.refresh_session_owners(_OWNER, {(_PROJECT, _SLUG): record}, via="watchdog", processes=processes)
     assert cli._load_state_for_project(_PROJECT)["slugs"][_SLUG]["owner_target"]["pid"] == 4343
     assert delivery.wake_resumed()[0]["state"] == "sent"  # Orca reported the pane idle
+
+
+def test_watchdog_skips_pgrep_when_the_shared_pass_has_no_such_session(estate, monkeypatch):
+    _old, record = _resumed_elsewhere(estate, monkeypatch, agent="codex")
+    run = delivery.subprocess.run
+    monkeypatch.setattr(delivery.subprocess, "run", lambda args, **kw: pytest.fail("pgrep")
+                        if args[0] == "pgrep" else run(args, **kw))
+    table = {7: ["/sbin/launchd"], 8: ["/Users/x/codex", "resume", "another-session"]}
+    assert delivery.resumed_target(_OWNER, "codex", lambda: table) is None
 
 
 def test_wake_up_drops_pages_a_successor_claimed(estate, monkeypatch):

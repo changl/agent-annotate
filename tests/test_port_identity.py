@@ -127,6 +127,8 @@ def test_process_argv_is_exact_where_ps_text_is_lossy(tmp_path):
         assert child.stdout.readline() == "ready\n"
         exact = sys.platform == "darwin" or sys.platform.startswith("linux")
         assert cli._process_argv(child.pid) == (argv if exact else None)
+        if sys.platform == "darwin":  # the one-pass table reads the same exact argv
+            assert cli._process_table()[child.pid] == argv
     finally:
         child.kill()
         child.wait()
@@ -143,27 +145,63 @@ def test_process_argv_never_reads_the_environment_as_an_argument():
     try:
         time.sleep(0.2)  # Popen returns at exec; the new image places its argv just after
         argv = cli._process_argv(child.pid)
+        table = cli._process_table() or {}
         assert child.poll() is None
     finally:
         child.kill()
         child.wait()
     assert argv == (["", "3"] if sys.platform.startswith("linux") else None)
     assert not any("WM_ARGV_SENTINEL" in arg for arg in argv or [])
+    assert child.pid not in table
 
 
-def test_running_servers_never_map_a_spaced_directory_to_its_prefix(tmp_path, monkeypatch):
+@pytest.mark.parametrize("source", ["ps", "process table"])
+def test_running_servers_never_map_a_spaced_directory_to_its_prefix(tmp_path, monkeypatch, source):
     prefix, spaced = tmp_path / "legacy", tmp_path / "legacy page"
     prefix.mkdir()
     spaced.mkdir()
     exact = {41: [sys.executable, "-I", "-m", "agent_annotate.sync_server", "--slug-dir", str(spaced),
-                  "--slug", spaced.name, "--port", "8802"]}
-    # `ps` joins argv with spaces and quotes nothing; 42's argv cannot be read (exited, or another user's).
-    table = (f"   41 {' '.join(exact[41])}\n"
-             f"   42 {sys.executable} -m agent_annotate.sync_server --slug-dir {prefix} --port 8803\n")
-    monkeypatch.setattr(subprocess, "run", lambda command, *args, **kwargs: SimpleNamespace(stdout=table))
-    monkeypatch.setattr(cli, "_process_argv", exact.get)
+                  "--slug", spaced.name, "--port", "8802"],
+             43: ["/bin/zsh", "-c", "tail --slug-dir x sync_server.log"]}  # mentions both, serves nothing
+    if source == "ps":
+        # `ps` joins argv with spaces and quotes nothing; 42's argv cannot be read (exited, or another user's).
+        table = (f"   41 {' '.join(exact[41])}\n"
+                 f"   42 {sys.executable} -m agent_annotate.sync_server --slug-dir {prefix} --port 8803\n")
+        monkeypatch.setattr(cli, "_process_table", lambda: None)
+        monkeypatch.setattr(subprocess, "run", lambda command, *args, **kwargs: SimpleNamespace(stdout=table))
+        monkeypatch.setattr(cli, "_process_argv", exact.get)
+    else:
+        monkeypatch.setattr(cli, "_process_table", lambda: dict(exact))
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("no `ps` listing on macOS"))
     assert cli._running_servers(strict=True) == {
         str(spaced.resolve()): [{"pid": 41, "port": 8802, "public_base_path": None}]}
+
+
+def test_of_duplicate_servers_close_picks_the_one_the_record_names(tmp_path, monkeypatch):
+    # Listing order is no identity: `ps` sorts by terminal first, the process table by pid.
+    servers = [{"pid": 41, "port": 18760}, {"pid": 42, "port": 18761}]
+    monkeypatch.setattr(cli, "_running_servers", lambda: {str(tmp_path.resolve()): list(servers)})
+    assert cli._live_server_for({"slug_dir": str(tmp_path), "pid": 42, "port": 18761})["pid"] == 42
+    assert cli._live_server_for({"slug_dir": str(tmp_path), "pid": 9, "port": 18761})["pid"] == 42
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="libproc")
+def test_process_table_grows_a_full_pid_buffer_instead_of_dropping_pids(monkeypatch):
+    import ctypes
+    sizes = []
+
+    class Libproc:  # 300 processes now, more than the first count (3) plus its cushion
+        def proc_listallpids(self, pids, size):
+            if pids is None:
+                return 3
+            sizes.append(len(pids))
+            for i in range(min(len(pids), 300)):
+                pids[i] = i + 1
+            return min(len(pids), 300)
+    monkeypatch.setattr(ctypes, "CDLL", lambda path, **kwargs: Libproc())
+    monkeypatch.setattr(cli, "_procargs_reader", lambda: lambda pid: [str(pid)])
+    monkeypatch.setattr(cli, "_procargs_argv", lambda raw: raw)
+    assert len(cli._process_table()) == 300 and sizes == [259, 518]
 
 
 @pytest.fixture
