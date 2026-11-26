@@ -1,5 +1,12 @@
 # agent-annotate — changelog
 
+## 2.33.0
+
+- Pages open 2–5x faster (agent-annotate-uzd). The first reads leave from the HTML head, a server thread rebuilds the page's answers after each change, the categories answer is reused until its inputs change, and stamped assets are gzipped once. On sandbox copies under load 17–50, an FLD cold open went from 2.7 s to 1.0 s, and a warm open from 2.3 s to 0.65 s.
+- The page watchdog costs half as much (agent-annotate-v02). It ran every minute at 1.33 s CPU and 15 child processes on the busy M1 Max. On macOS it now reads every process's exact argv in one in-process pass instead of `ps` and `pgrep`, and skips pages with no document before listing anything. One real pass now takes 0.62 s CPU and 10 children.
+- The prompt hook no longer imports the full CLI or the update checker: 172 → 113 ms median per prompt on the M1 Max. It needs the reinstall that comes with this release (new entry point).
+- Backlog watch: Chang gets mail when Windmill work, page Sends or Orca mail wait too long.
+
 ## 2.32.16
 
 - A stalled Mac no longer holds every prompt for 30 s (agent-annotate-lku). Each prompt waits for the annotate prompt hook. `annotate hook-check` now skips building the full command parser, and the version notice scans the pages once per session instead of on every prompt. A new install gives the prompt hook a 5 s timeout; other hooks keep 30 s. Existing timeouts are not rewritten. On 2026-11-24, while a system process kept the M1 Max at load 280–565, every prompt timed out on this hook.
