@@ -1,6 +1,7 @@
 """Fix-UI S1: Send reports the truth, sends what it lists, and answers keep their comments."""
 
 import json
+import time
 
 import pytest
 from single_page import browser_page, feedback, go, section
@@ -27,6 +28,14 @@ def _comment(directory, cid):
             if c["id"] == cid:
                 return c
     raise AssertionError(f"{cid} not in the store")
+
+
+def _saved_decision(directory, cid, expected, timeout=10.0):
+    # The card redraws before its save reaches disk; under a full suite's load the write lands later.
+    deadline = time.monotonic() + timeout
+    while (text := (_comment(directory, cid).get("decision") or {}).get("text")) != expected and time.monotonic() < deadline:
+        time.sleep(0.1)
+    return text
 
 
 def _add(directory, *items):
@@ -238,13 +247,13 @@ def test_ui15_changing_the_option_keeps_the_earlier_comment(tmp_path):
         card.locator(".decision-say-ta").fill("Both builds passed.")
         card.locator(".decision-btn").first.click()
         section(page, "ready")
-        assert _comment(directory, "question-11")["decision"]["text"] == "Ship now\n\nBoth builds passed."
+        assert _saved_decision(directory, "question-11", "Ship now\n\nBoth builds passed.") == "Ship now\n\nBoth builds passed."
         card.locator('[data-action="open-card"]').click()
         card.locator('[data-decision-action="change"]').click()
         card.locator(".decision-btn").nth(1).click()
         section(page, "ready")
         playwright.expect(card.locator(".ans")).to_contain_text("Ship later")
-        assert _comment(directory, "question-11")["decision"]["text"] == "Ship later\n\nBoth builds passed."
+        assert _saved_decision(directory, "question-11", "Ship later\n\nBoth builds passed.") == "Ship later\n\nBoth builds passed."
         # A new note adds on; it never replaces the earlier one (2026-10-30).
         card.locator('[data-action="open-card"]').click()
         card.locator(".decision-say-ta").fill("Wait for the copy review.")
