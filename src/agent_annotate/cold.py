@@ -571,10 +571,11 @@ def settle(hot: Hot, rules, sig) -> None:
 
 
 def settled(c) -> bool:
-    """Done with: nothing in it is open, pending or waiting on anyone (the categories that decide
-    `waiting`, needs-you and Send), and no card nobody answered (annotate close)."""
-    from .categories import comment_section, unanswered_card
-    return comment_section(c) in (None, "done") and not unanswered_card(c)
+    """Done with, as the page files it: the categories that decide `waiting`, needs-you, later and Send
+    put it in no section or in done. A question the agent addressed without a decision is done here too;
+    `annotate close` reads the merged store, and a write promotes it under the lock."""
+    from .categories import comment_section
+    return comment_section(c) in (None, "done")
 
 
 def split(store: dict, rules, keep: set, sig):

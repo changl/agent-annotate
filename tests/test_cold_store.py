@@ -529,7 +529,6 @@ def test_review_6_promoting_the_last_cold_item_keeps_key_order(tmp_path, sandbox
 def test_review_7_close_finds_unanswered_cards_in_cold_storage(tmp_path, monkeypatch, capsys):
     from agent_annotate import cli
     monkeypatch.setattr(cold, "MIN_ITEMS", 5)
-    monkeypatch.setattr(cold, "settled", lambda c: True, raising=False)  # filed cold as d6640fa1 did
     data = _store()
     data["anchors"]["d:ask"] = [_q("old-ask", "d:ask", "v1", "Never answered?", 80, status="addressed_by_agent",
                                    created_at="2026-01-01T00:00:00Z")]
@@ -545,6 +544,31 @@ def test_review_7_close_finds_unanswered_cards_in_cold_storage(tmp_path, monkeyp
     assert "old-ask" in out and "archived 1 card(s); 3 unanswered card(s) remain" in out
     whole = store.read_comments(root)
     assert [c["status"] for items in whole["archived"].values() for c in items if c["id"] == "old-ask"] == ["archived"]
+
+
+def test_answering_or_noting_a_cold_undecided_question_lands(tmp_path, sandbox):
+    """An old question the agent addressed without a decision is done on the page, so it goes cold;
+    answering or noting it from the page promotes it under the lock and saves it."""
+    data = _store()
+    data["anchors"]["d:ask"] = [_q(f"old-ask-{k}", "d:ask", "v1", f"Never answered {k}?", 80 + k,
+                                   status="addressed_by_agent") for k in range(2)]
+    root_a, root_b = _page(tmp_path / "a", copy.deepcopy(data)), _page(tmp_path / "b", data)
+    (a, _), (b, _) = sandbox(root_a, "proj-a"), sandbox(root_b, "proj-b", split=False)
+    for s in (a, b):
+        assert request(s, "/comments.json?view=page")[0] == 200
+    assert {"old-ask-0", "old-ask-1"} <= _ids(_cold_data(root_a)) - _ids(_raw(root_a))
+    for s in (a, b):
+        sandbox.reset_ids()
+        status, _, body = request(s, "/api/comments/old-ask-0/decision", "POST", {"verdict": "changes", "text": "Answer now"})
+        assert status in (200, 201), body
+        status, _, body = request(s, "/api/comments/old-ask-1/reply", "POST", {"text": "A note"})
+        assert status in (200, 201), body
+    whole = store.read_comments(root_a)
+    asks = {c["id"]: c for c in whole["anchors"]["d:ask"]}
+    assert asks["old-ask-0"]["decision"]["text"] == "Answer now"
+    assert [r["text"] for r in asks["old-ask-1"]["replies"]][-1:] == ["A note"]
+    assert {"old-ask-0", "old-ask-1"} <= _ids(_raw(root_a))
+    assert json.dumps(whole) == json.dumps(store.read_comments(root_b))
 
 
 def test_review_8_open_feedback_on_old_versions_stays_hot(tmp_path, monkeypatch):
