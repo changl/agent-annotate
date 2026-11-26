@@ -192,9 +192,12 @@ def test_orca_reads_stop_at_the_deadline_and_keep_what_they_read(tmp_path, monke
     answers = {"run-list": {"runs": [{"id": "run_x", "objective": "FLD"}]}, "worker-list": {"workers": [stuck]}}
 
     def orca(end, command, *rest):
-        if command not in answers:
+        if command not in answers or "--cursor" in rest:
             raise TimeoutError("out of time")
         return answers[command]
     monkeypatch.setattr(hb, "_orca", orca)
-    assert hb.queues(NOW, 0) == {"worker:ctx_a": 'An Orca worker in "FLD" is stuck: needs action',
-                                 "orca:unreadable": "The host check could not read Orca: TimeoutError"}
+    expected = {"worker:ctx_a": 'An Orca worker in "FLD" is stuck: needs action',
+                "orca:unreadable": "The host check could not read Orca: TimeoutError"}
+    assert hb.queues(NOW, 0) == expected  # the mail read ran out of time
+    answers["worker-list"] = {"workers": [stuck], "page": {"nextCursor": "c2"}}
+    assert hb.queues(NOW, 0) == expected  # the second page ran out of time

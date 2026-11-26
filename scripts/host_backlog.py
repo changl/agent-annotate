@@ -295,11 +295,11 @@ def queues(now, end: float) -> dict:
         for _ in range(10):  # Orca pages at 100; follow nextCursor
             page = _orca(end, "worker-list", "--terminal-state", "active", "--limit", "100", *cursor)
             workers += page["workers"]
+            problems |= orca_workers(page["workers"], objectives)  # per page, so a later timeout keeps it
             following = (page.get("page") or {}).get("nextCursor")
             if not following:
                 break
             cursor = ["--cursor", following]
-        problems |= orca_workers(workers, objectives)  # before the mail read, so a slow inbox keeps it
         active = {w["dispatchId"]: w.get("runId") for w in workers}
         # shortcut: the newest 500 messages reach back about 39 h (2026-11-26); mail older than that is not seen.
         problems |= orca_mail(_orca(end, "inbox", "--limit", "500")["messages"], active, objectives, now)
