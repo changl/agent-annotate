@@ -249,6 +249,23 @@ def test_stamped_assets_validate_bytes_and_keep_immutable_policy_on_304(server):
         assert fake.status == 404
 
 
+def test_stamped_assets_compress_once_per_content(server, monkeypatch):
+    from agent_annotate import sync_server
+    _, _, web = server
+    sync_server._asset_gzip.cache_clear()
+    packs = []
+    original = gzip.compress
+    monkeypatch.setattr(sync_server.gzip, "compress", lambda *a, **k: packs.append(1) or original(*a, **k))
+    path = f"/review/assets/{_mtime_stamp(web / 'shell.js')}/shell.js"
+    with connection(server) as conn:
+        bodies = [request(conn, path, headers={"Accept-Encoding": "gzip"}) for _ in range(3)]
+        assert all(r.getheader("Content-Encoding") == "gzip" for r, _ in bodies) and len(packs) == 1
+        assert gzip.decompress(bodies[0][1]) == (web / "shell.js").read_bytes()
+        plain, body = request(conn, path)
+        assert plain.getheader("Content-Encoding") is None and body == (web / "shell.js").read_bytes()
+        assert plain.getheader("ETag") != bodies[0][0].getheader("ETag")
+
+
 def test_css_fonts_have_independent_validated_hashes(server):
     _, _, web = server
     css = web / "daisyui.css"

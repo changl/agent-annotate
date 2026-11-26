@@ -203,6 +203,8 @@ _WEB_ASSETS = frozenset({"shell.js", "shell.css", "content.css", "daisyui.css", 
                          "RobotoVariable.woff2", "RobotoVariable-Italic.woff2",
                          "app.js", "app.css", "library.js", "findings.js"})
 _ASSET_PATH_RE = re.compile(r"^/assets/(\d+)/(" + "|".join(re.escape(name) for name in sorted(_WEB_ASSETS)) + r")$")
+_COMPRESSIBLE = frozenset({"text/javascript", "application/javascript", "text/css", "text/html",
+                           "application/json", "image/svg+xml"})
 
 
 def _accepts_gzip(value: str) -> bool:
@@ -239,6 +241,13 @@ def _mtime_stamp(path) -> str:
 @functools.lru_cache(maxsize=32)
 def _asset_stamp(data: bytes) -> str:
     return str(int(hashlib.sha256(data).hexdigest()[:16], 16))
+
+
+@functools.lru_cache(maxsize=32)
+def _asset_gzip(data: bytes) -> tuple[bytes, bool]:
+    """uzd: an asset's served representation, compressed once per content (a cold FLD open gzipped ~240 ms of them)."""
+    packed = gzip.compress(data, compresslevel=6, mtime=0)
+    return (packed, True) if len(packed) < len(data) else (data, False)
 
 
 _FONTS = ("RobotoVariable.woff2", "RobotoVariable-Italic.woff2")
@@ -1128,6 +1137,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     _page_marks = {}
     _count_rows = (None, None, {})
     _plans_listed = (None, None)
+    _categories_answer = (None, None, None)
     _stamp_checked = {}
 
     def handle_one_request(self):
@@ -2511,7 +2521,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                     continue
                 if stamp != _asset_stamp(data):
                     return self._respond(404, b"Asset hash mismatch", cache_control="no-store")
-                self._respond(200, data, _mime(target.suffix), cache_control=_IMMUTABLE)
+                packed = _asset_gzip(data) if (_mime(target.suffix).split(";", 1)[0] in _COMPRESSIBLE
+                                               and _accepts_gzip(self.headers.get("Accept-Encoding", ""))) else None
+                self._respond(200, data, _mime(target.suffix), cache_control=_IMMUTABLE, representation=packed)
                 return
         self._respond(404, b"Not found")
 
@@ -4227,43 +4239,59 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         try:
             with _locked_store(self.artifact_dir, write=False):
                 author = self._author()
-                # Read-state writes replace the file atomically and may need the store lock.
-                read = self._reviewer_state(_load_read_state(self.artifact_dir), author)
                 from .review_versions import visible_store
                 raw = self._v2_load(read_only=True)
-                store = visible_store(self.artifact_dir, raw, self._read_meta())
-                rows = None
-                if self._agent_reader():
-                    store = store_view(store)  # fresh comment objects: no memo by id
-                else:
-                    # uzd: per-comment counting work, kept while this snapshot (and so every id) is alive and unchanged.
-                    signature = self._store_signature()
-                    memo = type(self)._count_rows
-                    if memo[0] != signature or memo[1] is not raw:
-                        memo = type(self)._count_rows = (signature, raw, {})
-                    rows = memo[2]
                 # uzd: ~60 plan metas and their topics took ~110 ms on FLD; they change only with these files.
                 topics_stamp = _metadata_stamp(safe_path(self.artifact_dir, "plan-topics.json"))
                 plans_key = (self._store_signature(), self._agent_reader(), _plan_stamps(self.artifact_dir), topics_stamp)
-                cached = type(self)._plans_listed
-                if cached[0] == plans_key:
-                    plans, topics = cached[1]  # read-only below
+                # uzd: everything but the linked pages, while this store snapshot and the files it reads are
+                # unchanged (content hashes, as for the plans: a mapped edit can keep the stat). FLD ~60 ms.
+                from .consolidate import ARCHIVE_MARKER, MARKER
+                answer_key = (plans_key, author, _metadata_stamp(PROJECTS_TOML), _file_key(self.artifact_dir / ".review-drafts"),
+                              *(_metadata_stamp(safe_path(self.artifact_dir, name)) for name in (
+                                  "current.meta.json", "read-state.json", "categories.json", "copy.json",
+                                  MARKER, ARCHIVE_MARKER)))
+                answered = type(self)._categories_answer
+                if answered[0] == answer_key and answered[1] is raw:
+                    result = dict(answered[2])
                 else:
-                    plans = list_plans(self.artifact_dir, store=store)
-                    topics = file_plans(self.artifact_dir, plans)
-                    type(self)._plans_listed = (plans_key, (plans, topics))
-                counts = category_counts(self.artifact_dir, author, read_state=read, store=store, plans=plans,
-                                         submitted_only=self._agent_reader(), rows=rows)
-                category_data = load_categories(self.artifact_dir)
-                try:
-                    library = load_copy(self.artifact_dir)
-                except ValueError as exc:
-                    # The other tabs still count; Library reports the problem.
-                    library = {"blocks": [], "error": f"copy.json is invalid ({exc})"}
-                present = {comment_category(c) for items in store["anchors"].values() for c in items}
-                available = {"review": True, "library": bool(library["blocks"]) or "library" in present,
-                             "findings": bool(category_data["findings_sets"]) or "findings" in present,
-                             "plans": any(p["section"] != "hidden" for p in plans) or "plans" in present}
+                    # Read-state writes replace the file atomically and may need the store lock.
+                    read = self._reviewer_state(_load_read_state(self.artifact_dir), author)
+                    store = visible_store(self.artifact_dir, raw, self._read_meta())
+                    rows = None
+                    if self._agent_reader():
+                        store = store_view(store)  # fresh comment objects: no memo by id
+                    else:
+                        # uzd: per-comment counting work, kept while this snapshot (and so every id) is alive and unchanged.
+                        signature = self._store_signature()
+                        memo = type(self)._count_rows
+                        if memo[0] != signature or memo[1] is not raw:
+                            memo = type(self)._count_rows = (signature, raw, {})
+                        rows = memo[2]
+                    cached = type(self)._plans_listed
+                    if cached[0] == plans_key:
+                        plans, topics = cached[1]  # read-only below
+                    else:
+                        plans = list_plans(self.artifact_dir, store=store)
+                        topics = file_plans(self.artifact_dir, plans)
+                        type(self)._plans_listed = (plans_key, (plans, topics))
+                    counts = category_counts(self.artifact_dir, author, read_state=read, store=store, plans=plans,
+                                             submitted_only=self._agent_reader(), rows=rows)
+                    category_data = load_categories(self.artifact_dir)
+                    try:
+                        library = load_copy(self.artifact_dir)
+                    except ValueError as exc:
+                        # The other tabs still count; Library reports the problem.
+                        library = {"blocks": [], "error": f"copy.json is invalid ({exc})"}
+                    present = {comment_category(c) for items in store["anchors"].values() for c in items}
+                    available = {"review": True, "library": bool(library["blocks"]) or "library" in present,
+                                 "findings": bool(category_data["findings_sets"]) or "findings" in present,
+                                 "plans": any(p["section"] != "hidden" for p in plans) or "plans" in present}
+                    result = {"categories": [{"id": c, "label": c.title(), "available": available[c], "counts": counts[c]} for c in CATEGORIES],
+                              "findings_sets": category_data["findings_sets"], "plans": plans, "plan_topics": topics,
+                              "library": {"groups": library.get("groups", []),
+                                          **({"error": library["error"]} if "error" in library else {})}}
+                    type(self)._categories_answer = (answer_key, raw, dict(result))  # read-only once stored
                 record = self._registered_record()
                 links = linked_pages(record) if record else []
             if not self._identity()["authenticated"]:
@@ -4271,11 +4299,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 from .urls import redact_review_key
                 for page in links:
                     page["url"] = redact_review_key(page["url"])
-            result = {"categories": [{"id": c, "label": c.title(), "available": available[c], "counts": counts[c]} for c in CATEGORIES],
-                      "findings_sets": category_data["findings_sets"], "plans": plans, "plan_topics": topics,
-                      "library": {"groups": library.get("groups", []),
-                                  **({"error": library["error"]} if "error" in library else {})},
-                      "linked_pages": links, "read_only": self._moved() is not None}
+            result.update(linked_pages=links, read_only=self._moved() is not None)
             body = json.dumps(result, ensure_ascii=False).encode()
         except (ValueError, OSError, LookupError, TypeError, AttributeError) as exc:
             # Unexpected page data is reported, never a dropped connection.
@@ -4665,10 +4689,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             cache_control, conditional = "private, no-cache", True
             extra_headers = {**(extra_headers or {}), "Vary": ", ".join(filter(None, [
                 (extra_headers or {}).get("Vary"), "Cookie", *self._PROXY_MARKERS, "X-Annotate-Agent"]))}
-        compressible = content_type.split(";", 1)[0] in {
-            "text/javascript", "application/javascript", "text/css", "text/html",
-            "application/json", "image/svg+xml",
-        }
+        compressible = content_type.split(";", 1)[0] in _COMPRESSIBLE
         compressed = False
         if representation is not None:
             body, compressed = representation
@@ -4749,6 +4770,7 @@ def make_handler(
     BoundHandler._page_marks = {}
     BoundHandler._count_rows = (None, None, {})
     BoundHandler._plans_listed = (None, None)
+    BoundHandler._categories_answer = (None, None, None)
     BoundHandler._stamp_checked = {}
     BoundHandler._meta_snapshot = None
     BoundHandler._meta_responses = {}
@@ -4770,7 +4792,9 @@ def _warm_after_change(port: int, base: str, watched: list[Path], interval: floa
     (FLD ~0.5 s at load 8, 2.7 s at load 25). A same-origin read is a browser
     read, so it fills the exact cache entries a reviewer's open asks for."""
     import urllib.request
-    warmed = None
+    # Not at start: a page read then would re-register the marks open tabs took before a restart,
+    # and they must expire so those tabs adopt the full store.
+    warmed = tuple(_file_key(path) for path in watched)
     while not (stop and stop.is_set()):
         stamp = tuple(_file_key(path) for path in watched)
         if stamp != warmed:
