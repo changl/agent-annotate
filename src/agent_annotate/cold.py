@@ -57,7 +57,7 @@ from .store import Unreadable as _Unreadable
 KEY = "cold"
 AREAS = ("anchors", "archived")
 DIR = ".cold"
-SPLIT = False  # 2.34.0: split pages are read and written, never made
+SPLIT = True  # 2.35.0: release only once 2.34.0 (which reads every split page) is live
 GRACE = 3600  # seconds a retired generation stays for readers that named it
 RETIRED = "retired"  # in DIR, JSON {n: when comments.json was first seen not naming it}; not *.json, no generation
 # Below this many cold items a page keeps one file.
