@@ -20,6 +20,7 @@ import urllib.parse
 from pathlib import Path
 
 _AREA = re.compile(r"/proto/data/([a-z][a-z0-9_]{0,40})\.json")
+_FIRST = re.compile(r"/proto/data/(reference|running|history|links)\.first\.json")
 _FILE = re.compile(r"/proto/([A-Za-z0-9][A-Za-z0-9_.-]{0,80})")
 _COPY_META = re.compile(r"/proto/p/([a-z0-9][a-z0-9-]{0,40})/current\.meta\.json")
 
@@ -273,13 +274,17 @@ def serve(handler, route_path: str):
         return handler._respond(200, pic.read_bytes(), sync_server._mime(pic.suffix.lower()), cache_control="private, max-age=300")
     if route_path == "/proto/data/head.json":
         return handler._respond(200, json.dumps(head(handler)).encode(), "application/json", cache_control="no-store")
-    if match := _AREA.fullmatch(route_path):
+    part = _FIRST.fullmatch(route_path)  # a heavy tab's first screen, cut from the same read (proto_data/first.py, r13 speed)
+    if match := part or _AREA.fullmatch(route_path):
         t0 = time.perf_counter()
         try:
             who = handler._identity()  # first: this read's reader (his hash), before the build decides whose release notes are his
             body = (_pooled if match[1] in POOLED else prepared)(match[1], handler.artifact_dir, getattr(handler, "proto_viewer", None))
             from .questions import own  # his own notes, for Edit and Remove (r12 audit19)
             body = own(body, handler._reviewer_authors(who["email"] or "anonymous"))
+            if part:
+                from .first import cut
+                body = cut(match[1], body)
         except Exception as exc:  # an area's bug must not take the page down
             return handler._respond(500, json.dumps({"error": f"{type(exc).__name__}: {exc}"}).encode())
         # the server's own time, so a slow reading on a busy host can be told from slow code (r12 fix12 perf)

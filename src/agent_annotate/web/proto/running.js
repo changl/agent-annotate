@@ -391,6 +391,12 @@
   async function render(el, ctx, anchor, tab) {
     CTX = ctx; EL = el; tabNow = tab;
     if (!D) el.innerHTML = `<div class="p-empty">${P.icon('reload')}<p>Reading workers, the board and Windmill…</p></div>`;
+    // with no read in yet, the tab draws from a slice whose tasks carry their list lines but not their details; it takes no input
+    // and the whole read draws over it (r13 speed). The slice is never D: Send and the task panel see the whole read or nothing
+    if (!D && tab === 'running' && !ctx.prefs.get('task', '') && ctx.first) {
+      const f = await ctx.first('running').catch(() => null);
+      if (f && f.part && !D && el.classList.contains('tab-' + tab)) { tabNow = tab; S.task = ''; D = own(f); draw(); D = null; [...el.children].forEach(x => { x.inert = true; }); }
+    }
     D = own(await ctx.data('running'));
     if (!el.classList.contains('tab-' + tab)) return;  // another tab opened while this one read its data: never draw over it
     tabNow = tab;
@@ -441,7 +447,7 @@
   const redraw = () => { if (EL && EL.isConnected && (tabNow === 'side' || EL.classList.contains('tab-' + tabNow))) draw(); };
   const items = ctx => {
       // before running.json is in, the saved status changes and comments are listed by their task's id; titles follow (r12 fix10 frame 1)
-      if (!D) ctx.data('running').then(d => { if (!D) { D = own(d); ctx.refreshTop(); } }).catch(() => {});
+      if (!D) (P.shown || Promise.resolve()).then(() => ctx.data('running')).then(d => { if (!D) { D = own(d); ctx.refreshTop(); } }).catch(() => {});
       const B = ((D || {}).board || {}).beads || {}, tst = ctx.prefs.get('tst', {}), out = [];
       // listed from what was saved, whatever the board read does: a failed read keeps the comment in Send (r12 fix11 running 2)
       const ids = ctx.prefs.keys(/^tcm:/).map(k => k.slice(4));

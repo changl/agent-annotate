@@ -371,9 +371,16 @@
   let D = null, R = null;
   async function render(el, ctx, anchor) {
     P.notes.slot(S, 'history', 'cmove');  // S.cmove is the kit's one Move; navigating here ended any earlier one (r12 audit17 reference 4, fix20)
+    // the newest versions first, from a small slice; the whole read draws over it, and nothing takes input until it is in (r13 speed)
+    const f = !anchor && !S.q && ctx.first ? await ctx.first('history').catch(() => null) : null;
+    if (f && f.part && el.classList.contains('tab-history')) { D = f;
+      el.innerHTML = `<div class="h-wrap" inert><div class="h-bar"><input type="search" id="h-q" placeholder="Find a past decision" aria-label="Find a past decision">
+        <span class="spacer"></span><span class="small mut">${pl(D.count, 'answer', 'answers')} in ${pl(D.sends, 'Send', 'Sends')} · read-only</span></div><div id="h-list"></div></div>`;
+      draw(el, ctx); }
     D = await ctx.data('history');
+    if (!el.classList.contains('tab-history')) return;  // another tab opened while the whole read came in
     // the copy's findings audits and Copy library, from Reference's own data; History never waits for it, the rows join when it arrives
-    if (!R) ctx.data('reference').then(r => { R = r; if (el.querySelector('#h-list')) draw(el, ctx); }).catch(() => {});
+    if (!R) (P.shown || Promise.resolve()).then(() => ctx.data('reference')).then(r => { R = r; if (el.querySelector('#h-list')) draw(el, ctx); }).catch(() => {});
     ctx.data('questions').then(q => { QD = q; pruneC(ctx); if (el.querySelector('#h-list') && qpv().some(([v]) => cnotes(v).length)) { draw(el, ctx); litC(el); } }).catch(() => {});
     const {esc, icon} = ctx;
     if (/^hn-/.test(anchor || '')) { S.hl = anchor.slice(3); S.hlT = ''; anchor = ''; }  // a copied note link lands on the note

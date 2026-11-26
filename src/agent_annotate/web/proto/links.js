@@ -98,13 +98,19 @@
 
   async function render(el, ctx, anchor) {
     P.notes.slot(S, 'links');  // S.move is the kit's one Move; navigating here ended any earlier one (r12 audit17 reference 4, fix20)
+    // the lists first, from a slice with no document texts or notes, which takes no input; the whole read draws over it (r13 speed).
+    // Only with nothing open: an open document, a typed note or a copied link waits for the whole read, as before
+    const was = LD, f = !was && !anchor && !S.kept && S.dsel < 0 && !typed(ctx) && ctx.first ? await ctx.first('links').catch(() => null) : null;
+    if (f && f.part && !LD && el.classList.contains('tab-links')) { el.innerHTML = '<div class="l-wrap" inert></div>'; draw(el.firstElementChild, ctx, f); }
     let D = LD = await ctx.data('links'); prune(ctx);
+    if (!el.classList.contains('tab-links')) return;  // another tab opened while the whole read came in
     el.innerHTML = '<div class="l-wrap"></div>';
     const w = el.firstElementChild;
     if (anchor === 'people') return people(w, ctx, D);
     // every return to the tab reads its list again behind what is on screen, so a link added since shows without a reload;
-    // no throttle: the server answers from its cache (audit10 running 5, audit11 running 4)
-    ctx.data('links', true).then(F => { if (!w.isConnected || JSON.stringify(F) === JSON.stringify(D)) return;
+    // no throttle: the server answers from its cache (audit10 running 5, audit11 running 4). The visit's first read was just
+    // made, so it is not made twice: Pages & links' 2.5 MB was read twice at every load (r13 speed)
+    if (was) ctx.data('links', true).then(F => { if (!w.isConnected || JSON.stringify(F) === JSON.stringify(D)) return;
       D = LD = F; if (ON && ON.w === w) ON.D = F;
       if (!w.contains(document.activeElement) || !document.activeElement.matches('input, textarea')) draw(w, ctx, D); }).catch(() => {});
     const ka = /^kept-(.+)/.exec(decodeURIComponent(anchor || ''));  // a copied kept-document link opens that document
@@ -491,7 +497,7 @@
   let KEPT = null;  // kept documents' titles, for Send before Pages & links has opened
   // unsent notes from the feed (after a reload: the server's, or a copy's simulated ones) and from this visit, once each (r12 fix8)
   const unsent = c => {
-    if (!LD) c.data('links').then(d => { if (!LD) { LD = d; prune(c); c.refreshTop(); } }).catch(() => {});
+    if (!LD) (P.shown || Promise.resolve()).then(() => c.data('links')).then(d => { if (!LD) { LD = d; prune(c); c.refreshTop(); } }).catch(() => {});
     // before links.json is in (a reload), the notes as Send last listed them, saved with the drafts (r12 fix10 frame 1, reference 2)
     const fd = LD ? LD.notes || [] : c.prefs.get('draft:lnotes', []);
     const l = [...fd, ...mine.filter(n => !fd.some(x => x.id === n.id))].map(moved).filter(n => P.notes.out(n) && !n.closed && /^doc:/.test(n.a)).map(n => Object.assign(n, {line: lineOf(n)}));
@@ -522,7 +528,7 @@
       c.prefs.set('draft:lnotes', l); redo(); };
   }
   if (P.queue) P.queue({
-    items: c => [...apprs(c).map(id => { if (!KEPT) c.data('links').then(d => { if (!KEPT) { KEPT = d.kept || []; c.refreshTop(); } }).catch(() => {});
+    items: c => [...apprs(c).map(id => { if (!KEPT) (P.shown || Promise.resolve()).then(() => c.data('links')).then(d => { if (!KEPT) { KEPT = d.kept || []; c.refreshTop(); } }).catch(() => {});
       // the feed the tab or its chip already read names it at once; never the internal id (audit7 reference 5)
       const d = (KEPT || (LD || {}).kept || (ON ? ON.D.kept : null) || []).find(x => x.id === id), tl = c.prefs.get('draft:lappr-t', {});
       if (d && tl[id] !== d.t) c.prefs.set('draft:lappr-t', {...tl, [id]: d.t});  // its title, for Send before the feed is in after a reload (r12 fix10)

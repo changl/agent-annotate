@@ -134,10 +134,20 @@
     // Beads follows every board read, Running's Try again too, in the same paint as Tasks, whatever else still loads (r12 audit14 frame 1)
     if (sendP && sendP.read) sendP.read(area, p);  // every new read, first or background, from any tab: Send's one read state (r12 audit29 running 2)
     p.then(() => refreshSend(), () => {});  // a read landing can change what Send lists or offers Remove on: an open sheet follows it (r12 audit22 reference 3)
+    p.then(() => { landed[area] = true; }, () => {});
     if (area === 'running') { const n = ++runSeq; p.then(r => n === runSeq && putRun(r), () => n === runSeq && putRun(null, true)); }
     return p;
   };
   let runSeq = 0;
+  // a heavy tab's first screen (proto_data/first.py): its whole read once that is in, else a small slice marked part, which the tab
+  // draws and then draws the whole read over; the slice is never cached or given to Send (r13 speed)
+  const landed = {}, firsts = {};
+  const first = area => {
+    if (cache[area] && landed[area]) return cache[area];  // a whole read has been in this visit: the tab waits for it, as before
+    return firsts[area] || (firsts[area] = Promise.race([api(`proto/data/${area}.first.json`), late()])
+      .then(d => COPY && !P.copyData ? scriptsIn.then(() => d) : d).then(d => unTaken(COPY && P.copyData ? P.copyData(area, d) : d))
+      .finally(() => { delete firsts[area]; }));
+  };
   // Unsent answers, notes and task changes: with "Unsent answers and notes" off they live in memory only, so a reload drops them (#80).
   const DRAFT = /^(q:drafts|q:general|q:newnote|tst|tcm:.*|draft:.*)$/;
   // Settings are his everywhere; everything else (drafts, folds, the open tab, views) belongs to one project's page
@@ -260,7 +270,7 @@
     fd: null, who: null, board: null, boardUrl: '', sendN: 0, chips: {}, people: null, sent: prefs.get('lastSend', null),
     countsIn: false, stall: new Map()};  // stall: the frame's first reads that failed, 'version' or 'counts' -> why
   const ctx = {
-    base, api, data, prefs, esc, toast, inert, remember,
+    base, api, data, first, prefs, esc, toast, inert, remember,
     icon: (n, l) => P.icon(n, l),
     go(tab, anchor) { location.hash = tab + (anchor ? '/' + encodeURIComponent(anchor) : ''); },
     goTo: id => goTarget(id, () => true),

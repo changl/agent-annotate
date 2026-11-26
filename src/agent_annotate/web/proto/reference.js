@@ -465,7 +465,7 @@
   }
 
   /* ---------- draw and events ---------- */
-  const here = () => el && el.isConnected && el.classList.contains('tab-reference');  // #p-main is shared by every tab
+  const here = () => !!D && !!el && el.isConnected && el.classList.contains('tab-reference');  // D: a first slice on screen (r13 speed) takes no input until the whole read is in  // #p-main is shared by every tab
   function draw() {
     // the picture viewer opening or closing, by any path (Full size, a size, Close, Go to it), ends a Move (r12 audit18 frame 2)
     if (!!S.full !== !!S.fWas) { S.fWas = !!S.full; NK().endMove(false); }
@@ -804,7 +804,12 @@
     chip: async c => { ctx = c; restoreDrafts(); D = await c.data('reference'); prune(); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },
     render: async (main, c, anchor) => {
       ctx = c; el = main; NK().slot(S, 'reference'); restoreDrafts();  // S.move is the kit's one Move; navigating here ended any earlier one (r12 audit17 reference 4, fix20)
-      if (!D) { main.innerHTML = '<p class="mut">Reading Reference…</p>'; D = await c.data('reference'); }
+      if (!D) { main.innerHTML = '<p class="mut">Reading Reference…</p>';
+        // the list first, from a small slice with no notes or Copy library texts; the whole read draws over it (r13 speed).
+        // D holds the slice for that one draw only: Send, drafts and every click see the whole read or nothing
+        if (!S.sel && !anchor && !S.reach && c.first) { const f = await c.first('reference').catch(() => null);
+          if (f && f.part && !D) { D = f; unsort(); draw(); D = null; [...main.children].forEach(x => { x.inert = true; }); } }
+        const d = await c.data('reference'); if (!D) D = d; }
       prune();
       unsort();
       if (S.reach) {  // Go to it pressed before the data was in (r12 fix10 reference 1); a checklist note opens its checklist
