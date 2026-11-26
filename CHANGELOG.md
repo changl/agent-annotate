@@ -1,10 +1,10 @@
 # agent-annotate — changelog
 
-## Unreleased (2.35.0)
+## 2.35.0
 
 - Splitting is on (agent-annotate-uzd.9). The first page view of a page with 200 or more items moves settled feedback from older versions into `.cold/<n>.json`; saves, refresh and Send then read and write the smaller comments.json. To roll back, install 2.34.0: it reads split pages, so no data changes. Apply 2.34.0 first: `scripts/rollout.py` refuses this release over anything older.
 
-## Unreleased (2.34.0)
+## 2.34.0
 
 - Every reader and writer handles a split page (agent-annotate-uzd.9, first of two releases). This release never splits: writers still write one comments.json. 2.35.0 turns splitting on, so rolling 2.35.0 back to this release touches no data.
 - A split page keeps settled feedback from older versions (done, answered, not waiting on anyone) in `.cold/<n>.json`. Generations are numbered, read-only (comments.json's read bits, so 0400 when it is private), written once, and never renamed or reused; comments.json names one and its digest. The digest is checked on the first read and the parse is cached by the file's stat; every cache over merged data includes that stat. A generation is removed an hour after comments.json stopped naming it; the server keeps at most two parsed generations per page.
