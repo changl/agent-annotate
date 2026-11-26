@@ -404,20 +404,23 @@
     if (!D) el.innerHTML = `<div class="p-empty">${P.icon('reload')}<p>Reading workers, the board and Windmill…</p><p class="small mut" data-slow hidden>Still reading: on a busy Mac this can take up to 20 seconds, then Try again shows.</p></div>`;
     // a slow read says it is still going, not a bare "Reading…" for 20 s (r13 running board)
     const slow = setTimeout(() => { const s = el.querySelector('[data-slow]'); if (s) s.hidden = false; }, 5000);
+    let hand = null, after = null;
     try {
-      // with no read in yet, the tab draws from a slice whose tasks carry their list lines but not their details; it takes no input
-      // and the whole read draws over it (r13 speed). The slice is never D: Send and the task panel see the whole read or nothing
+      // with no read in yet, the tab draws from a slice whose tasks carry their list lines but not their details; the whole read
+      // draws in its place (r13 speed). The slice is never D: Send and the task panel see the whole read or nothing; a click on
+      // the slice runs on the whole read's draw (ctx.early)
       if (!D && tab === 'running' && !ctx.prefs.get('task', '') && ctx.first) {
         const f = await ctx.first('running').catch(() => null);
-        if (f && f.part && !D && el.classList.contains('tab-' + tab)) { tabNow = tab; S.task = ''; D = own(f); draw(); D = null; [...el.children].forEach(x => { x.inert = true; }); }
+        if (f && f.part && !D && el.classList.contains('tab-' + tab)) { tabNow = tab; S.task = ''; D = own(f); draw(); D = null; [...el.children].forEach(x => { x.dataset.slice = ''; }); hand = ctx.early(el); }
       }
       D = own(await ctx.data('running'));
-    } finally { clearTimeout(slow); }
+    } finally { clearTimeout(slow); if (hand) after = hand(); }
     if (!el.classList.contains('tab-' + tab)) return;  // another tab opened while this one read its data: never draw over it
     tabNow = tab;
     if (tab === 'running') S.task = ctx.prefs.get('task', '');
     bind(el, tab);
     draw();
+    if (after) after(el);
     // an unread board is read again by itself: Waiting and Tasks fill in once it answers, with no press (r13 running board)
     if (tab === 'running' && D.board && (D.board.error || D.board.stale)) reread();
     if (anchor && tab === 'analytics') { const t = document.getElementById(anchor); if (t) t.scrollIntoView({block: 'start'}); }

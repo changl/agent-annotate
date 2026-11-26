@@ -71,7 +71,30 @@ def test_each_heavy_tab_draws_its_slice_then_the_whole_read():
     links = (web / "links.js").read_text()
     assert "if (was) ctx.data('links', true)" in links  # the visit's first read is not made twice
     frame = (web / "frame.js").read_text()
-    assert "api(`proto/data/${area}.first.json`)" in frame and "base, api, data, first," in frame
+    assert "api(`proto/data/${area}.first.json`)" in frame and "base, api, data, first, early," in frame
+
+
+def test_each_slice_takes_input_and_the_whole_read_keeps_it():
+    """A slice is not inert: a click on it runs on the whole read's draw, and what he typed, his focus and scroll stay."""
+    web = Path(proto_data.__file__).parents[1] / "web" / "proto"
+    for name in ("reference", "running", "history", "links"):
+        js = (web / f"{name}.js").read_text()
+        assert ".early(" in js and "after(" in js and "inert = true" not in js and 'class="h-wrap" inert' not in js, name
+    frame = (web / "frame.js").read_text()
+    early = frame[frame.index("const early = (w, now) =>"):frame.index("// Unsent answers, notes and task changes")]
+    for part in ("addEventListener('click', on, true)", "removeEventListener('click', on, true)", "!t.closest('[data-slice]')",
+                 "dispatchEvent(new Event('input'", "fe.focus(", "scrollTo(scrollX, sy)", "t.click()"):
+        assert part in early, part
+
+
+def test_card_pictures_with_a_size_load_near_the_screen_and_copy_checks_wait_for_the_first_draw():
+    web = Path(proto_data.__file__).parents[1] / "web" / "proto"
+    qs = (web / "questions.js").read_text()
+    assert "i.loading = i.getAttribute('width') && i.getAttribute('height') ? 'lazy' : 'eager'" in qs
+    frame = (web / "frame.js").read_text()
+    assert "if (COPY) firstShown.then(checkNewer)" in frame
+    top = frame[frame.index("function refreshTop()"):]
+    assert top.index("await firstShown;") < top.index("readRun(),")
 
 
 def test_frame_reads_the_whole_meta_only_after_the_first_draw():

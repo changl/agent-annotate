@@ -148,6 +148,25 @@
       .then(d => COPY && !P.copyData ? scriptsIn.then(() => d) : d).then(d => unTaken(COPY && P.copyData ? P.copyData(area, d) : d))
       .finally(() => { delete firsts[area]; }));
   };
+  // a drawn slice (its markup under [data-slice]) takes input at once: a click on it waits (the last one) and runs on the same control of the whole read's draw;
+  // `now(e)` true lets a click the slice's own data can serve run at once. hand() before that draw keeps what he typed and
+  // where his focus was, and returns the step to run after it (r13 speed: the slice is usable, the whole read lands under him)
+  const early = (w, now) => {
+    let q = '';
+    const key = t => t.id ? '#' + CSS.escape(t.id) : t.localName + [...t.attributes].filter(a => /^data-|^aria-label$/.test(a.name)).map(a => `[${a.name}="${CSS.escape(a.value)}"]`).join('');
+    const on = e => { const t = e.target.closest('button,a,summary,label,[data-line],[tabindex]');
+      if (!t || !w.contains(t) || !t.closest('[data-slice]') || (now && now(e)) || (t.matches('a[href]') && !/^#/.test(t.getAttribute('href')))) return;
+      e.preventDefault(); e.stopImmediatePropagation(); q = key(t); };
+    w.addEventListener('click', on, true);
+    return () => { w.removeEventListener('click', on, true); [w, ...w.querySelectorAll('[data-slice]')].forEach(x => x.removeAttribute('data-slice'));
+      const typed = [...w.querySelectorAll('input:not([type=checkbox]):not([type=radio]),textarea')].filter(i => i.value !== i.defaultValue).map(i => [key(i), i.value]);
+      const f = document.activeElement && w.contains(document.activeElement) && document.activeElement !== w ? key(document.activeElement) : '', sy = scrollY;
+      return root => { root = root || w;
+        for (const [k, v] of typed) { const i = root.querySelector(k); if (i && i.value !== v) { i.value = v; i.dispatchEvent(new Event('input', {bubbles: true})); } }
+        const fe = f && root.querySelector(f); if (fe && fe !== document.activeElement) fe.focus({preventScroll: true});
+        if (Math.abs(scrollY - sy) > 2) scrollTo(scrollX, sy);
+        const t = q && root.querySelector(q); q = ''; if (t) t.click(); }; };
+  };
   // Unsent answers, notes and task changes: with "Unsent answers and notes" off they live in memory only, so a reload drops them (#80).
   const DRAFT = /^(q:drafts|q:general|q:newnote|tst|tcm:.*|draft:.*)$/;
   // Settings are his everywhere; everything else (drafts, folds, the open tab, views) belongs to one project's page
@@ -270,7 +289,7 @@
     fd: null, who: null, board: null, boardUrl: '', sendN: 0, chips: {}, people: null, sent: prefs.get('lastSend', null),
     countsIn: false, stall: new Map()};  // stall: the frame's first reads that failed, 'version' or 'counts' -> why
   const ctx = {
-    base, api, data, first, prefs, esc, toast, inert, remember,
+    base, api, data, first, early, prefs, esc, toast, inert, remember,
     icon: (n, l) => P.icon(n, l),
     go(tab, anchor) { location.hash = tab + (anchor ? '/' + encodeURIComponent(anchor) : ''); },
     goTo: id => goTarget(id, () => true),
@@ -680,6 +699,7 @@
     if (started) paintSend();  // a draft added or removed on any tab: Send follows its sheet in the same paint
     clearTimeout(topTimer);
     topTimer = setTimeout(async () => {
+      await firstShown;  // its reads (the board, Send's record) never race the first screen: a tab's early draft change waited too (r13 speed)
       if (S.settling) return;  // a newer version is loading: its counts paint with it
       await Promise.all([
         readCounts().then(c => { if (S.settling) return; putCounts(c); if (c) { paintChip('questions'); drawTop(); drawFab(); } }),
@@ -1122,7 +1142,7 @@
     if (meta && !COPY) S.checked = hhmm();  // the version just read is the page's own; a copy waits for its copy status
     drawTop(); drawFab();
     firstRead();
-    if (COPY) checkNewer().then(() => drawTop());  // a copy refresh already running shows from the first paint on
+    if (COPY) firstShown.then(checkNewer).then(() => drawTop());  // a copy refresh already running shows once the first screen is drawn: its whole-metadata reads (two on Rebex) raced it (r13 speed)
     firstShown.then(() => refreshTop());  // counts, workers, the board and the last Send
     // the whole metadata (History's ← → walk its versions), for the version just shown; a newer one waits for Reload as before
     firstShown.then(() => api.meta()).then(m => { if (m && S.meta && m.current === S.meta.current) S.meta = m; }, () => {});

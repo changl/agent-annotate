@@ -805,13 +805,18 @@
     chip: async c => { ctx = c; restoreDrafts(); D = await c.data('reference'); prune(); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },
     render: async (main, c, anchor) => {
       ctx = c; el = main; NK().slot(S, 'reference'); restoreDrafts();  // S.move is the kit's one Move; navigating here ended any earlier one (r12 audit17 reference 4, fix20)
+      let after = null;
       if (!D) { main.innerHTML = '<p class="mut">Reading Reference…</p>';
-        // the list first, from a small slice with no notes or Copy library texts; the whole read draws over it (r13 speed).
-        // D holds the slice for that one draw only: Send, drafts and every click see the whole read or nothing
+        // the list first, from a small slice with no notes or Copy library texts; the whole read draws in its place (r13 speed).
+        // D holds the slice for that one draw only: Send, drafts and every click see the whole read or nothing; a click on the
+        // slice runs on the whole read's draw, and what he typed stays (ctx.early)
+        let hand = null;
         if (!S.sel && !anchor && !S.reach && c.first) { const f = await c.first('reference').catch(() => null);
-          if (f && f.part && !D) { D = f; unsort(); draw(); D = null; [...main.children].forEach(x => { x.inert = true; }); } }
+          if (f && f.part && !D) { D = f; unsort(); draw(); D = null; [...main.children].forEach(x => { x.dataset.slice = ''; }); hand = c.early(main); } }
         // a slow first read (Rebex's first build) reads again by itself, twice, before the tab offers Try again (r13 reference 19)
-        for (let n = 0; !D; n++) try { D = await c.data('reference', n > 0); if (n) c.refreshChips(); /* the tab chip read the failed one */ } catch (e) { if (n >= 2) throw e; main.innerHTML = '<p class="mut">Still reading Reference…</p>'; } }
+        try {
+        for (let n = 0; !D; n++) try { D = await c.data('reference', n > 0); if (n) c.refreshChips(); /* the tab chip read the failed one */ } catch (e) { if (n >= 2) throw e; main.innerHTML = '<p class="mut">Still reading Reference…</p>'; }
+        } finally { if (hand) after = hand(); } }
       prune();
       unsort();
       if (S.reach) {  // Go to it pressed before the data was in (r12 fix10 reference 1); a checklist note opens its checklist
@@ -829,5 +834,6 @@
         document.addEventListener('keydown', onDocKey, true);  // Esc closes the picture viewer wherever the focus is
       }
       draw();
+      if (after && main.classList.contains('tab-reference')) after(main);
     }});
 })();

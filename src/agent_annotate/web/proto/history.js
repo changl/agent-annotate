@@ -378,13 +378,16 @@
   let D = null, R = null;
   async function render(el, ctx, anchor) {
     P.notes.slot(S, 'history', 'cmove');  // S.cmove is the kit's one Move; navigating here ended any earlier one (r12 audit17 reference 4, fix20)
-    // the newest versions first, from a small slice; the whole read draws over it, and nothing takes input until it is in (r13 speed)
+    // the newest versions first, from a small slice; the whole read draws in its place. What he types in the slice's search box
+    // stays, and a click on it runs on the whole read's draw (ctx.early, r13 speed)
     const f = !anchor && !S.q && ctx.first ? await ctx.first('history').catch(() => null) : null;
+    let hand = null;
     if (f && f.part && el.classList.contains('tab-history')) { D = f;
-      el.innerHTML = `<div class="h-wrap" inert><div class="h-bar"><input type="search" id="h-q" placeholder="Find a past decision" aria-label="Find a past decision">
+      el.innerHTML = `<div class="h-wrap" data-slice><div class="h-bar"><input type="search" id="h-q" placeholder="Find a past decision" aria-label="Find a past decision">
         <span class="spacer"></span><span class="small mut">${pl(D.count, 'answer', 'answers')} in ${pl(D.sends, 'Send', 'Sends')} · read-only</span></div><div id="h-list"></div></div>`;
-      draw(el, ctx); }
-    D = await ctx.data('history');
+      draw(el, ctx); hand = ctx.early(el); }
+    try { D = await ctx.data('history'); } catch (e) { if (hand) hand(); throw e; }
+    const after = hand ? hand() : null;
     if (!el.classList.contains('tab-history')) return;  // another tab opened while the whole read came in
     // the copy's findings audits and Copy library, from Reference's own data; History never waits for it, the rows join when it arrives
     if (!R) (P.shown || Promise.resolve()).then(() => ctx.data('reference')).then(r => { R = r; if (el.querySelector('#h-list')) draw(el, ctx); }).catch(() => {});
@@ -421,6 +424,7 @@
     draw(el, ctx);
     if (S.cn && typedC(ctx)) focusC(el);
     else litC(el);  // Send's Go to it on a saved note; if Questions' feed is still on its way, once it is in
+    if (after) after(el);
   }
 
   const hay = h => (`${h.n} ${h.q} ${h.a}` + (h.ovr ? ` overruled ${h.ovr[0]} ${h.ovr[1]}` : '')).toLowerCase();

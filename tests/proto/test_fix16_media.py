@@ -27,7 +27,7 @@ DOC = """<article class="aa"><section data-anchor-id="s:a"><h2>A</h2>
 def run(tmp_path, doc=DOC, extra=""):
     if not CHROME.exists():
         pytest.skip("Chrome not installed")
-    code = grab(QS, "  function diagrams(doc) {", "    el.querySelectorAll('img').forEach(i => { i.loading = 'eager'; });\n  }\n")
+    code = grab(QS, "  function diagrams(doc) {", "    el.querySelectorAll('img').forEach(i => { i.loading = i.getAttribute('width') && i.getAttribute('height') ? 'lazy' : 'eager'; });\n  }\n")
     page = tmp_path / "t.html"
     page.write_text(f"""<!doctype html><body><template id="src">{doc}</template><div id="out"></div><script>
 const esc = s => String(s).replace(/[&<>"]/g, c => ({{'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}})[c]);

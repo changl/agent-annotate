@@ -1158,7 +1158,9 @@
       pre.classList.add('qcodehost');
       pre.insertAdjacentHTML('beforeend', M.copyBtn());
     }
-    el.querySelectorAll('img').forEach(i => { i.loading = 'eager'; });
+    // a picture with its size loads only near the screen, its space kept, so the first screen does not carry every card's
+    // pictures (4.3 MB cold, r13 speed); one with no size loads at once, so it never moves the page later
+    el.querySelectorAll('img').forEach(i => { i.loading = i.getAttribute('width') && i.getAttribute('height') ? 'lazy' : 'eager'; });
   }
   // today's diagram engine (diagram-plot.js with d3 and Observable Plot, the versions it names) draws it; its drawing is kept for the viewer
   const DGM = {}, LIBS = ['https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js', 'https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6.16/dist/plot.umd.min.js'];

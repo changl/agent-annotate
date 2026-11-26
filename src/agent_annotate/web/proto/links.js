@@ -96,16 +96,22 @@
   }
   const abs = u => new URL(u, location.href).href;
 
+  // what the first slice's own lists serve: folds, copies and going to a page (r13 speed)
+  const SLICE = '[data-copylink],[data-copypath],[data-archall],[data-arch],[data-bad],[data-people],[data-goq],[data-goref],[data-fold],[data-dk],[data-marks]';
   async function render(el, ctx, anchor) {
     P.notes.slot(S, 'links');  // S.move is the kit's one Move; navigating here ended any earlier one (r12 audit17 reference 4, fix20)
-    // the lists first, from a slice with no document texts or notes, which takes no input; the whole read draws over it (r13 speed).
+    // the lists first, from a slice with no document texts or notes; the whole read draws in the same place (r13 speed).
+    // Folds, copies and page links run on the slice; a click that needs a text or a note runs the moment the whole read draws.
     // Only with nothing open: an open document, a typed note or a copied link waits for the whole read, as before
     const was = LD, f = !was && !anchor && !S.kept && S.dsel < 0 && !typed(ctx) && ctx.first ? await ctx.first('links').catch(() => null) : null;
-    if (f && f.part && !LD && el.classList.contains('tab-links')) { el.innerHTML = '<div class="l-wrap" inert></div>'; draw(el.firstElementChild, ctx, f); }
+    let w0 = null, hand = null;
+    if (f && f.part && !LD && el.classList.contains('tab-links')) { el.innerHTML = '<div class="l-wrap" data-slice></div>'; w0 = el.firstElementChild; draw(w0, ctx, f);
+      hand = ctx.early(w0, e => !!e.target.closest(SLICE)); w0.onclick = e => click(e, w0, ctx, f); }
     let D = LD = await ctx.data('links'); prune(ctx);
     if (!el.classList.contains('tab-links')) return;  // another tab opened while the whole read came in
-    el.innerHTML = '<div class="l-wrap"></div>';
-    const w = el.firstElementChild;
+    const after = hand && w0.isConnected ? hand() : null;
+    if (!after) el.innerHTML = '<div class="l-wrap"></div>';
+    const w = after ? w0 : el.firstElementChild;
     if (anchor === 'people') return people(w, ctx, D);
     // every return to the tab reads its list again behind what is on screen, so a link added since shows without a reload;
     // no throttle: the server answers from its cache (audit10 running 5, audit11 running 4). The visit's first read was just
@@ -122,6 +128,7 @@
     if (back) { const t = w.querySelector('#l-nt'); if (t) { t.scrollIntoView({block: 'center'}); t.focus({preventScroll: true}); } }
     else if (ka) { const t = w.querySelector(`[data-kept="${CSS.escape(ka[1])}"]`); if (t) t.scrollIntoView({block: 'start'}); }
     w.onclick = e => click(e, w, ctx, D);
+    if (after) after(w);
     w.oninput = e => { if (e.target.matches('[data-nedtext]')) S.edt = e.target.value;  // an edit survives a redraw
       if (e.target.id !== 'l-nt' || !S.note) return;
       const was = typed(ctx);
