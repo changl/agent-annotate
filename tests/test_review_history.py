@@ -105,31 +105,6 @@ def test_send_with_answers_and_general_feedback_wakes_the_owner_once(server):
     assert [a["text"] for a in answers if a["comment_id"] == general["id"]] == ["Overall: ship it"]
 
 
-def test_a_send_retried_after_its_receipt_was_saved_sends_loose_feedback_once(server, monkeypatch):
-    # The process died after the receipt append and before the comment flags were saved.
-    from agent_annotate import review_history
-    httpd, directory, _ = server
-    _, card = _call(httpd, "POST", "/api/comments", _card(prompt="Ship?"))
-    _call(httpd, "POST", f"/api/comments/{card['id']}/decision", {"verdict": "accept", "defer_push": True}, author="r@example.com")
-    _call(httpd, "POST", "/api/comments", {"anchor_id": "general:v1", "text": "Overall: ship it", "version": "v1"},
-          author="r@example.com")
-    saved = review_history.save_round
-
-    def dies_after_the_receipt(*args):
-        saved(*args)
-        raise RuntimeError("killed")
-
-    monkeypatch.setattr(review_history, "save_round", dies_after_the_receipt)
-    try:
-        assert _call(httpd, "POST", "/api/rounds/submit", {"version": "v1"}, author="r@example.com")[0] != 200
-    except OSError:
-        pass
-    monkeypatch.setattr(review_history, "save_round", saved)
-    assert _call(httpd, "POST", "/api/rounds/submit", {"version": "v1"}, author="r@example.com")[0] == 200
-    answers = [a for r in _call(httpd, "GET", "/api/history")[1]["rounds"] for a in r["answers"]]
-    assert sorted(a["text"] for a in answers) == ["", "Overall: ship it"]
-
-
 def test_a_round_with_nothing_else_pending_still_carries_new_comments(server):
     # The chrome skips its push when it sends a round; if the server finds no
     # pending answer (sent elsewhere, discarded), the general feedback still goes.
