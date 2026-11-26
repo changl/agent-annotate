@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import marshal
 import os
 import tempfile
 import threading
@@ -442,9 +443,9 @@ def _target(path) -> tuple[Path, str] | None:
     return None
 
 
-def _record(path, write, text=None, value=None):
+def _record(path, write, text=None, value=None, **hints):
     """Run one file write; on a page with page.db, inside its transaction, and
-    apply the written text to the DB (changed rows only)."""
+    apply the written text (str or bytes) to the DB (changed rows only)."""
     target = _target(path)
     if target is None or backend(target[0]) != "sqlite":
         return write()
@@ -455,7 +456,7 @@ def _record(path, write, text=None, value=None):
         tx._writing()
         result = write()
         body = text() if text else None
-        _apply(tx.conn, name, body, value, slug_dir)
+        _apply(tx.conn, name, body, value, slug_dir, **hints)
         _set_fingerprint(tx.conn, slug_dir, name, body)
         tx._applied = True
         return result
@@ -485,35 +486,76 @@ def write_json(path, data) -> None:
     _record(path, write, lambda: json.dumps(data, indent=2, ensure_ascii=False), data)
 
 
+def _durable_replace(path: Path, body: bytes) -> None:
+    _refuse_if_moved(*list(path.parents)[:4])  # page/, attachments/, plans/<id>/versions/
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="." + path.name, dir=path.parent, delete=False) as out:
+            temporary = Path(out.name)
+            out.write(body)
+            os.fchmod(out.fileno(), mode)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temporary, path)
+        temporary = None
+        fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    finally:
+        if temporary:
+            temporary.unlink(missing_ok=True)
+
+
 def write_bytes(path, body: bytes, *, value=None) -> None:
     """Durable atomic replace: fsync the file and its directory. `value` is
     the parsed body when the caller has it (saves a parse on page.db)."""
     path = Path(path)
+    _record(path, lambda: _durable_replace(path, body), lambda: body, value)
 
-    def write():
-        _refuse_if_moved(*list(path.parents)[:4])  # page/, attachments/, plans/<id>/versions/
-        path.parent.mkdir(parents=True, exist_ok=True)
-        mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
-        temporary = None
-        try:
-            with tempfile.NamedTemporaryFile(prefix="." + path.name, dir=path.parent, delete=False) as out:
-                temporary = Path(out.name)
-                out.write(body)
-                os.fchmod(out.fileno(), mode)
-                out.flush()
-                os.fsync(out.fileno())
-            os.replace(temporary, path)
-            temporary = None
-            fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-        finally:
-            if temporary:
-                temporary.unlink(missing_ok=True)
 
-    _record(path, write, lambda: body.decode("utf-8"), value)
+def write_hot_store(path, store: dict) -> bytes:
+    """comments.json in the compact layout (the page server's saves), as write_bytes
+    writes json.dumps of it; returns the bytes. On page.db the file is joined from each
+    item's stored text, so only items changed since the last write are serialized."""
+    path = Path(path)
+    target = _target(path)
+    if target is not None and backend(target[0]) == "sqlite":
+        with transaction(target[0]) as tx:
+            if tx.conn is not None:
+                problems, texts = [], {}
+                rows = _store_items(tx.conn, store, problems, _item_cache_key(target[0]), texts)
+                body = None if problems else _joined(store, texts)
+                if body is not None:
+                    _record(path, lambda: _durable_replace(path, body), lambda: body, store, rows=rows)
+                    return body
+    body = _compact(store).encode()
+    write_bytes(path, body, value=store)
+    return body
+
+
+def _joined(store: dict, texts: dict) -> bytes | None:
+    """_compact(store) encoded, each item's bytes taken from `texts` by id; None for a shape it does not cover."""
+    parts = []
+    for key, value in store.items():
+        if not isinstance(key, str):
+            return None
+        if key in ("anchors", "archived") and isinstance(value, dict):
+            lists = []
+            for anchor, items in value.items():
+                if not isinstance(anchor, str) or not isinstance(items, list):
+                    return None
+                try:
+                    lists.append(_compact(anchor).encode() + b":[" + b",".join([texts[c["id"]] for c in items]) + b"]")
+                except (KeyError, TypeError):
+                    return None
+            parts.append(_compact(key).encode() + b":{" + b",".join(lists) + b"}")
+        else:
+            parts.append(_compact(key).encode() + b":" + _compact(value).encode())
+    return b"{" + b",".join(parts) + b"}"
 
 
 def write_text(path, text: str) -> None:
@@ -615,6 +657,7 @@ def append_round(directory, event: dict) -> None:
     path = directory / "rounds.ndjson"
     # A line can only hold this id if it contains its text (FLD: 2.6 MB of rounds parsed per Send).
     needle = event["id"] if isinstance(event["id"], str) and event["id"].isalnum() and event["id"].isascii() else ""
+    appended = []  # page.db adds just these rows when the file before them is the one it holds
 
     def write():
         with path.open("a+", encoding="utf-8") as source:
@@ -630,11 +673,13 @@ def append_round(directory, event: dict) -> None:
                 if isinstance(old, dict) and old.get("id") == event["id"]:
                     return
             source.seek(0, 2)
-            source.write(json.dumps(event, ensure_ascii=False) + "\n")
+            line = json.dumps(event, ensure_ascii=False) + "\n"
+            source.write(line)
             source.flush()
             os.fsync(source.fileno())
+            appended.append(line)
 
-    _record(path, write, lambda: path.read_text(encoding="utf-8"))
+    _record(path, write, path.read_bytes, appended=appended)
 
 
 def write_lines(path, rows) -> None:
@@ -727,7 +772,10 @@ def _compact(value) -> str:
 
 
 # JSON layouts the writers use; a file is exported in the layout it was read in.
-def _layout_guess(text: str) -> dict:
+def _layout_guess(text: str | bytes) -> dict:
+    if isinstance(text, bytes):  # only its head and its ends are read
+        head = text[:256].decode("utf-8", "ignore")[:64]  # 64 characters take at most 256 bytes
+        return {**_layout_guess(head), "ascii": text.isascii(), "nl": text.endswith(b"\n")}
     head = text[:64]
     if head.startswith("{\n  ") or head.startswith("[\n  "):
         layout = {"indent": 2}
@@ -1458,8 +1506,9 @@ def _set_meta(conn, key: str, value) -> None:
 
 
 # Per process: the item rows page.db holds, as of the comments.json fingerprint
-# stored with them, each with its own parsed copy (never the caller's dicts).
-# A write then serializes only the items that changed.
+# stored with them, each with the marshal bytes of the item it was made from (never
+# the caller's dicts) and, once a hot write asked, its text encoded. A write then
+# serializes only the items that changed.
 _ITEM_CACHE: dict[str, tuple[str | None, dict]] = {}
 
 
@@ -1467,41 +1516,60 @@ def _item_cache_key(slug_dir) -> str | None:
     return str(Path(slug_dir).resolve() / DB_NAME) if slug_dir is not None else None
 
 
-def _store_items(conn, store: dict, problems: list[str], key: str | None):
+def _mark(comment):
+    """Exact for the JSON an item writes: equal bytes load back to one value, with its types
+    (True is not 1), key order and float bits. Object sharing can change the bytes of an
+    unchanged item (it is then written again), never keep those of a changed one."""
+    try:
+        return marshal.dumps(comment, 4)
+    except ValueError:  # not marshallable: compared by its text instead
+        return None
+
+
+def _store_items(conn, store: dict, problems: list[str], key: str | None, texts: dict | None = None):
+    """(frame, item rows, plan rows, finish) for this store. finish() writes the changed rows:
+    call it only once the file is written. `texts` gets each item's encoded text by id."""
     cached = _ITEM_CACHE.pop(key, None) if key else None
     if cached and cached[0] == _meta_value(conn, "fp:comments.json"):
         old = cached[1]
     else:
-        old = {row[0]: (row, None) for row in conn.execute(f"SELECT {', '.join(_ITEM_COLUMNS)} FROM items")}
+        old = {row[0]: (row, None, None) for row in conn.execute(f"SELECT {', '.join(_ITEM_COLUMNS)} FROM items")}
     fresh: dict = {}
 
     def row_for(comment, area, anchor, position):
-        hit = old.get(comment["id"])
-        if hit is not None:
-            row, parsed = hit
-            if row[1] == area and row[2] == anchor and row[12] == position:
-                if parsed is None:
-                    parsed = json.loads(row[13])
-                if parsed == comment:
-                    fresh[row[0]] = (row, parsed)
-                    return row
-        row = _item_row(comment, area, anchor, position)
-        fresh[row[0]] = (row, None)
+        mark = _mark(comment)
+        row, old_mark, data = old.get(comment["id"]) or (None, None, None)
+        if row is None or not (mark == old_mark if old_mark is not None else _compact(comment) == row[13]):
+            row, data = _item_row(comment, area, anchor, position), None
+        elif (row[1], row[2], row[12]) != (area, anchor, position):
+            row = (row[0], area, anchor, *row[3:12], position, row[13])  # the other columns follow the item alone
+        if texts is not None:
+            data = texts[row[0]] = data if data is not None else row[13].encode()
+        fresh[row[0]] = (row, mark, data)
         return row
 
     frame, items, plans = _comment_rows(store, problems, row_for)
-    gone = [(item_id,) for item_id in old if item_id not in fresh]
-    changed = [row for row in items if old.get(row[0], (None,))[0] != row]
-    conn.executemany("DELETE FROM items WHERE id = ?", gone)
-    conn.executemany(f"INSERT OR REPLACE INTO items ({', '.join(_ITEM_COLUMNS)}) "
-                     f"VALUES ({', '.join('?' * len(_ITEM_COLUMNS))})", changed)
-    if key and not problems:
-        _ITEM_CACHE[key] = (None, fresh)  # _set_fingerprint dates it once the file is written
-    return frame, items, plans
+
+    def finish():
+        gone = [(item_id,) for item_id in old if item_id not in fresh]
+        changed = [row for row in items if old.get(row[0], (None,))[0] != row]
+        conn.executemany("DELETE FROM items WHERE id = ?", gone)
+        conn.executemany(f"INSERT OR REPLACE INTO items ({', '.join(_ITEM_COLUMNS)}) "
+                         f"VALUES ({', '.join('?' * len(_ITEM_COLUMNS))})", changed)
+        if key and not problems:
+            _ITEM_CACHE[key] = (None, fresh)  # _set_fingerprint dates it once the file is written
+
+    return frame, items, plans, finish
 
 
-def _apply(conn, name: str, text: str | None, value=None, slug_dir=None) -> None:
-    """Store one record file's new text (None: the file is gone), changed rows only."""
+def _apply(conn, name: str, text: str | bytes | None, value=None, slug_dir=None, rows=None, appended=None) -> None:
+    """Store one record file's new text (None: the file is gone), changed rows only.
+    `rows`: comments.json's _store_items, made before the file was written from these bytes.
+    `appended`: the lines this write appended to rounds.ndjson (append_round)."""
+    if name == "rounds.ndjson" and appended is not None and _append_rounds(conn, text, appended):
+        return
+    if isinstance(text, bytes) and rows is None:
+        text = text.decode("utf-8")
     if text is not None and name != "rounds.ndjson" and value is None:
         try:
             value = json.loads(text)
@@ -1517,8 +1585,9 @@ def _apply(conn, name: str, text: str | None, value=None, slug_dir=None) -> None
             _sync_rows(conn, "items", _ITEM_COLUMNS, 1, items)
         else:
             from .sync_server import _validate_store
-            frame, items, plans = _store_items(conn, value if isinstance(value, dict) else _validate_store(value),
-                                               problems, _item_cache_key(slug_dir))
+            frame, items, plans, finish = rows or _store_items(
+                conn, value if isinstance(value, dict) else _validate_store(value), problems, _item_cache_key(slug_dir))
+            finish()
         _set_meta(conn, "comments_frame", _compact(frame) if frame is not None else None)
         _sync_rows(conn, "approved_plans", ("id", "position", "body_json"), 1, plans)
         _sync_rows(conn, "numbers", ("number", "anchor_id", "doc", "first_item"), 2, _number_rows(items, []))
@@ -1553,9 +1622,33 @@ def _apply(conn, name: str, text: str | None, value=None, slug_dir=None) -> None
     _set_meta(conn, f"raw:{name}", text if problems else None)
 
 
-def _set_fingerprint(conn, slug_dir: Path, name: str, text: str | None) -> None:
+def _append_rounds(conn, data: bytes, appended: list[str]) -> bool:
+    """rounds.ndjson's rows when this write only appended `appended` to the file the DB holds:
+    its stored fingerprint covers the bytes before them. False: apply the whole file."""
+    import hashlib
+    old = _meta_value(conn, "fp:rounds.ndjson")
+    if not isinstance(data, bytes) or old is None or _meta_value(conn, "rounds_nl") != "1":
+        return False
+    size, _, digest = json.loads(old)
+    tail = "".join(appended).encode("utf-8")
+    if len(data) != size + len(tail) or not data.endswith(tail) or hashlib.sha256(data[:size]).hexdigest() != digest:
+        return False
+    seq = conn.execute("SELECT coalesce(max(seq), 0) FROM rounds").fetchone()[0]
+    for line in _lines("".join(appended)):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            row = None
+        row = row if isinstance(row, dict) else {}
+        seq += 1
+        conn.execute("INSERT INTO rounds (seq, round, ts, body_json) VALUES (?, ?, ?, ?)", (seq, row.get("id"), row.get("ts"), line))
+    return True
+
+
+def _set_fingerprint(conn, slug_dir: Path, name: str, text: str | bytes | None) -> None:
     path = slug_dir / name
-    value = _compact(_fingerprint(path, text.encode("utf-8") if text is not None else None)) if path.exists() else None
+    body = text.encode("utf-8") if isinstance(text, str) else text
+    value = _compact(_fingerprint(path, body)) if path.exists() else None
     _set_meta(conn, f"fp:{name}", value)
     if name == "comments.json":
         key = _item_cache_key(slug_dir)

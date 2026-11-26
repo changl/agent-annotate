@@ -381,6 +381,22 @@ def test_an_item_cold_again_is_read_from_its_new_copy(tmp_path, monkeypatch):
     assert json.dumps(store.read_comments(root)) == json.dumps(expected)
 
 
+def test_a_settle_that_moves_nothing_normalizes_once(tmp_path, monkeypatch):
+    root = _page(tmp_path / "p")
+    hot, rules, sig = _split_hot(root, _store())
+    hot["anchors"]["d:old0"].pop(0)                      # a hot edit: the first normalize re-syncs it
+    calls, normalize = [], cold.normalize
+    monkeypatch.setattr(cold, "normalize", lambda h: calls.append(1) or normalize(h))
+    cold.settle(hot, rules, sig)
+    assert len(calls) == 1
+    settled = json.dumps(hot)
+    normalize(hot)                                       # the second pass it skipped changes nothing
+    assert json.dumps(hot) == settled
+    cold.anchor_items(hot, "d:old2", lambda c: True)[1]["status"] = "open"
+    cold.settle(hot, rules, sig)                         # a checkout moved back: normalized again
+    assert len(calls) == 3
+
+
 def test_a_changed_checkout_moves_back_in_place(tmp_path):
     root = _page(tmp_path / "p")
     whole = _store()

@@ -74,7 +74,7 @@ def history_buses(bus: Path | None, archive: Path | None) -> list[Path]:
     return paths
 
 
-def _bus_rounds(path, cache):
+def _bus_rounds(path, cache, keep=lambda event: event.get("event") == "round_submitted"):
     """Reuse complete lines only after checking the exact previously read prefix.
 
     Unlike an inode/offset cursor, this also handles in-place rewrites and
@@ -93,7 +93,7 @@ def _bus_rounds(path, cache):
                 event = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(event, dict) and event.get("event") == "round_submitted":
+            if isinstance(event, dict) and keep(event):
                 yield event
 
     rounds = rounds + list(parse(tail[:boundary]))
@@ -171,12 +171,14 @@ def _add_version_answers(versions, records):
 def _submitted_rounds(directory, bus, archive, bus_cache):
     from .store import backend, events_after
 
-    rounds = {event["id"]: (event, True) for event in _events(directory / "rounds.ndjson") if event.get("id")}
+    saved = directory / "rounds.ndjson"
     buses = history_buses(bus, archive)
     if bus_cache is not None:
         for path in list(bus_cache):
-            if path not in buses:
+            if path not in buses and path != saved:
                 del bus_cache[path]
+    found = _bus_rounds(saved, bus_cache, lambda event: True) if bus_cache is not None else _events(saved)
+    rounds = {event["id"]: (event, True) for event in found if event.get("id")}
     indexed = bus is not None and backend(directory) == "sqlite"
     for path in buses:
         if indexed and path == bus:
