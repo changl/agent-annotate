@@ -98,6 +98,23 @@ def test_first_screen_reads_leave_before_the_scripts_and_only_once(tmp_path):
         assert all(gap < 0 for gap in start), start
 
 
+def test_scripts_arriving_after_the_head_reads_time_out_still_show_the_cards(tmp_path):
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (first, base, _):
+        page = first.context.new_page()
+        # The head's 10 s timeout, shortened: its four reads get 600 ms, every later read keeps its own.
+        page.add_init_script("""(() => { const timeout = AbortSignal.timeout.bind(AbortSignal); let head = 4;
+          AbortSignal.timeout = ms => timeout(head-- > 0 ? 600 : ms); })()""")
+
+        def late_script(route):
+            page.wait_for_timeout(1500)  # past the head reads' timeout
+            route.continue_()
+
+        page.route("**/shell.js", late_script)
+        page.goto(base + "#view=review")
+        page.locator("#comment-list .citem").first.wait_for(timeout=10000)
+
+
 def test_a_private_review_link_reads_after_its_session(tmp_path):
     directory = _directory(tmp_path)
     with _session(tmp_path, directory) as (first, base, _):

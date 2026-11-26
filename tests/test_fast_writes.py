@@ -208,6 +208,57 @@ def test_categories_answer_is_reused_until_an_input_changes(server, monkeypatch)
     assert after["categories"] != before["categories"]
 
 
+def test_the_warm_up_rebuilds_categories_for_each_recent_reader(server, monkeypatch):
+    httpd, root, _, _ = server
+    from agent_annotate import categories
+    readers = []
+    original_counts = categories.category_counts
+    monkeypatch.setattr(categories, "category_counts", lambda d, author, **k: readers.append(author) or original_counts(d, author, **k))
+    tailnet = {"X-Annotate-Warm": sync_server._WARM_TOKEN, "X-Annotate-Warm-Author": "chang@example.test"}
+    browser = {"Sec-Fetch-Site": "same-origin"}
+    request(httpd, "/api/categories", headers=browser)
+    request(httpd, "/api/categories", headers={**browser, **tailnet})
+    request(httpd, "/api/categories", headers={**browser, **tailnet})
+    request(httpd, "/api/categories", headers=browser)
+    assert readers == ["reviewer@example.test", "chang@example.test"]  # a slot each: neither evicts the other
+    forged = {**tailnet, "X-Annotate-Warm": "guess", "X-Annotate-Warm-Author": "someone@example.test"}
+    request(httpd, "/api/categories", headers={**browser, **forged})
+    assert "someone@example.test" not in readers and set(httpd.RequestHandlerClass._categories_answers) == {
+        "reviewer@example.test", "chang@example.test"}
+
+    stop = threading.Event()
+    reader_list = lambda: list(httpd.RequestHandlerClass._categories_answers)  # noqa: E731
+    warm = threading.Thread(target=sync_server._warm_after_change, args=(httpd.server_port, "", [root / "comments.json"], .05, stop),
+                            kwargs={"readers": reader_list}, daemon=True)
+    warm.start()
+    try:
+        readers.clear()
+        assert request(httpd, "/api/comments", "POST", {"anchor_id": "s:test", "text": "Agent card"})[0] == 201
+        deadline = time.monotonic() + 5
+        while "chang@example.test" not in readers and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert "chang@example.test" in readers  # rebuilt before the reviewer opens
+        built = len(readers)
+        request(httpd, "/api/categories", headers={**browser, **tailnet})
+        assert len(readers) == built  # the reviewer's open finds it built
+    finally:
+        stop.set()
+        warm.join(timeout=2)
+
+
+def test_a_stamp_sees_a_change_past_the_hashed_prefix(tmp_path, monkeypatch):
+    from agent_annotate import categories
+    monkeypatch.setattr(categories, "MAX_PLAN_BYTES", 16)  # read-state.json has no cap; FLD's can pass 4 MB
+    path = tmp_path / "read-state.json"
+    path.write_text('{"reviewer": {"card": "seen-1"}}')
+    before = sync_server._metadata_stamp(path)
+    path.write_text('{"reviewer": {"card": "seen-2"}}')  # same prefix, same size: only a later byte differs
+    assert sync_server._metadata_stamp(path) != before
+    small = tmp_path / "plan.json"
+    small.write_text("{}")
+    assert sync_server._metadata_stamp(small) == hashlib.sha256(b"{}").digest()  # under the cap: content only
+
+
 def test_reopening_the_same_version_appends_no_seen_event(server):
     httpd, root, _, _ = server
     for _ in range(3):

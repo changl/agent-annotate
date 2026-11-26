@@ -93,11 +93,13 @@ import faulthandler
 import functools
 import gzip
 import hashlib
+import hmac
 import http.server
 import ipaddress
 import json
 import os
 import re
+import secrets
 import signal
 import socket
 import stat
@@ -268,9 +270,13 @@ def _metadata_stamp(path: Path):
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         try:
-            if stat.S_ISREG(os.fstat(fd).st_mode):
+            info = os.fstat(fd)
+            if stat.S_ISREG(info.st_mode):
                 with os.fdopen(fd, "rb", closefd=False) as source:
-                    return hashlib.sha256(source.read(MAX_PLAN_BYTES + 1)).digest()
+                    digest = hashlib.sha256(source.read(MAX_PLAN_BYTES + 1)).digest()
+                # Past the hashed prefix (read-state.json has no cap), a save still changes the stat.
+                return digest if info.st_size <= MAX_PLAN_BYTES else (
+                    digest, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
         finally:
             os.close(fd)
     except FileNotFoundError:
@@ -1137,7 +1143,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     _page_marks = {}
     _count_rows = (None, None, {})
     _plans_listed = (None, None)
-    _categories_answer = (None, None, None)
+    _categories_answers = {}
     _stamp_checked = {}
 
     def handle_one_request(self):
@@ -1409,6 +1415,13 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _author(self, parsed=None) -> str:
         return self._identity()["email"] or "anonymous"
+
+    def _warm_author(self) -> str | None:
+        """uzd: the reader whose categories the warm-up rebuilds; its token never leaves this process."""
+        token = self.headers.get("X-Annotate-Warm") or ""
+        if self._is_direct_loopback_request() and hmac.compare_digest(token.encode(), _WARM_TOKEN.encode()):
+            return self.headers.get("X-Annotate-Warm-Author") or None
+        return None
 
     def _is_funnel_origin(self) -> bool:
         origin = self._origin("https://" + (self.headers.get("Host") or ""))
@@ -4238,7 +4251,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         from .project_state import linked_pages
         try:
             with _locked_store(self.artifact_dir, write=False):
-                author = self._author()
+                author = self._warm_author() or self._author()
                 from .review_versions import visible_store
                 raw = self._v2_load(read_only=True)
                 # uzd: ~60 plan metas and their topics took ~110 ms on FLD; they change only with these files.
@@ -4251,7 +4264,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                               *(_metadata_stamp(safe_path(self.artifact_dir, name)) for name in (
                                   "current.meta.json", "read-state.json", "categories.json", "copy.json",
                                   MARKER, ARCHIVE_MARKER)))
-                answered = type(self)._categories_answer
+                answered = type(self)._categories_answers.get(author, (None, None, None))
                 if answered[0] == answer_key and answered[1] is raw:
                     result = dict(answered[2])
                 else:
@@ -4291,7 +4304,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                               "findings_sets": category_data["findings_sets"], "plans": plans, "plan_topics": topics,
                               "library": {"groups": library.get("groups", []),
                                           **({"error": library["error"]} if "error" in library else {})}}
-                    type(self)._categories_answer = (answer_key, raw, dict(result))  # read-only once stored
+                    # One slot per reader, the last 8; replaced whole, so readers on other threads never see it change.
+                    kept = [(who, entry) for who, entry in type(self)._categories_answers.items() if who != author][-7:]
+                    type(self)._categories_answers = {**dict(kept), author: (answer_key, raw, dict(result))}  # read-only once stored
                 record = self._registered_record()
                 links = linked_pages(record) if record else []
             if not self._identity()["authenticated"]:
@@ -4770,7 +4785,7 @@ def make_handler(
     BoundHandler._page_marks = {}
     BoundHandler._count_rows = (None, None, {})
     BoundHandler._plans_listed = (None, None)
-    BoundHandler._categories_answer = (None, None, None)
+    BoundHandler._categories_answers = {}
     BoundHandler._stamp_checked = {}
     BoundHandler._meta_snapshot = None
     BoundHandler._meta_responses = {}
@@ -4782,15 +4797,19 @@ def make_handler(
 
 
 _WARM_ROUTES = ("/comments.json?view=page", "/api/categories", "/api/history?latest=1")
+_WARM_TOKEN = secrets.token_urlsafe(32)
 
 
-def _warm_after_change(port: int, base: str, watched: list[Path], interval: float = 1.0, stop=None) -> None:
+def _warm_after_change(port: int, base: str, watched: list[Path], interval: float = 1.0, stop=None,
+                       readers=lambda: ()) -> None:
     """uzd: rebuild what an open reads as soon as the page changes, so the reviewer's next open finds it built.
 
     Agents add cards every few minutes (FLD ~16 an hour), and each change made
     the next open rebuild the page store, categories and the last Send
     (FLD ~0.5 s at load 8, 2.7 s at load 25). A same-origin read is a browser
-    read, so it fills the exact cache entries a reviewer's open asks for."""
+    read, so it fills the exact cache entries a reviewer's open asks for. Categories
+    differ per reader (the reviewer reads as their tailnet or Funnel login, not as
+    this loopback read), so they are rebuilt for each recent reader too."""
     import urllib.request
     # Not at start: a page read then would re-register the marks open tabs took before a restart,
     # and they must expire so those tabs adopt the full store.
@@ -4799,9 +4818,11 @@ def _warm_after_change(port: int, base: str, watched: list[Path], interval: floa
         stamp = tuple(_file_key(path) for path in watched)
         if stamp != warmed:
             warmed = stamp
-            for route in _WARM_ROUTES:
-                request = urllib.request.Request(f"http://127.0.0.1:{port}{base}{route}",
-                                                 headers={"Accept-Encoding": "gzip", "Sec-Fetch-Site": "same-origin"})
+            reads = [(route, {}) for route in _WARM_ROUTES] + [
+                ("/api/categories", {"X-Annotate-Warm": _WARM_TOKEN, "X-Annotate-Warm-Author": who}) for who in readers()]
+            for route, extra in reads:
+                request = urllib.request.Request(f"http://127.0.0.1:{port}{base}{route}", headers={
+                    "Accept-Encoding": "gzip", "Sec-Fetch-Site": "same-origin", **extra})
                 try:
                     with urllib.request.urlopen(request, timeout=120) as response:
                         response.read()
@@ -4962,7 +4983,9 @@ def main():
                 threading.Event().wait(30)
         threading.Thread(target=delivery_loop, daemon=True).start()
         watched = [slug_dir / "comments.json", slug_dir / "current.meta.json", bus_dir / f"{slug}.ndjson"]
-        threading.Thread(target=_warm_after_change, args=(port, public_base_path, watched), daemon=True).start()
+        readers = lambda: [who for who in handler._categories_answers if not who.startswith("agent:")]  # noqa: E731
+        threading.Thread(target=_warm_after_change, args=(port, public_base_path, watched),
+                         kwargs={"readers": readers}, daemon=True).start()
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n  Server stopped.")

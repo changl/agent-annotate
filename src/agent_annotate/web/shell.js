@@ -379,7 +379,7 @@ function headRead(url) {
   const reads = window.__aaReads, p = reads && reads[url];
   if (!p) return null;
   delete reads[url];
-  return p.then(r => r.ok ? r : null, () => null);
+  return p.then(r => r?.ok ? r : null, () => null);
 }
 async function pollJson(url, quiet, headers = {}) {
   const asked = ++pollAsked;
