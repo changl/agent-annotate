@@ -120,8 +120,8 @@ def test_first_reading_paints_the_last_reading_and_starts_questions_early():
     js = (Path(frame.__file__).parents[1] / "web" / "proto" / "frame.js").read_text()
     start = js[js.index("async function start()"):]
     # Questions' read and the tab scripts start before the frame's five reads are awaited
-    assert start.index("pre.questions = api('proto/data/questions.json')") < start.index("await Promise.all([api.meta()")
-    assert start.index("const scripts = Promise.all(") < start.index("await Promise.all([api.meta()")
+    assert start.index("pre.questions = api('proto/data/questions.json')") < start.index("await Promise.all([metaP")
+    assert start.index("const scripts = Promise.all(") < start.index("await Promise.all([metaP")
     # the same version's last reading paints with its counts, only while drafts are kept
     assert "remember('drafts') && meta && prefs.get('firstPaint', null)" in start and "was.v === meta.current" in start
     assert start.index("if (S.loadedV || S.warm) { drawTop(); drawFab(); }") < start.index("putCounts(await readCounts());")

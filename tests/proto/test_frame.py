@@ -170,7 +170,7 @@ def test_broken_items_keep_their_fixes():
     assert "data-proj=" in js and "`project/${d.proj}/questions`" in js and "function drawOther" in js
     # 2 a Home read that finishes after he left never draws over the tab
     home = js[js.index("async function drawHome"):js.index("function drawOther")]
-    assert home.count("if (!S.home) return;") == 2
+    assert home.count("if (!S.home) return;") == 1 and "if (S.home && S.run) drawHome()" in home
     # 3 the review document follows Text size
     assert ".p-main{--aa-text:var(--fs,1)}" in tokens
     # 4 unsent answers stay in memory with the switch off, and old ones are dropped

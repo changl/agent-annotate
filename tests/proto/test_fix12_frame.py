@@ -13,7 +13,7 @@ def test_every_read_gives_up_at_20_seconds_but_no_write_does():
     api = FRAME[FRAME.index("async function api("):FRAME.index("const wrote =")]
     assert "return write ? go : Promise.race([go, late()]);" in api
     start = FRAME[FRAME.index("async function start()"):]
-    assert "api.meta().catch(e => { why = e.message; return null; })" in start
+    assert "metaP.catch(e => { why = e.message; return null; })" in start
     assert start.index("if (!meta) S.stall.set('version'") < start.index("route();")
 
 

@@ -23,7 +23,7 @@ def test_go_to_it_routes_other_tabs_notes_to_their_tab():
 
 def test_task_chip_falls_back_to_runnings_records():
     """Questions 1: a task the Questions board read missed takes its title and state from Running's board records."""
-    assert "ctx.data('running').then(r => { RB = ((r || {}).board || {}).beads || {}" in QS
+    assert "ctx.data('running')).then(r => { RB = ((r || {}).board || {}).beads || {}" in QS
     assert "if (!d.beads[id]) d.beads[id] = {title: b.t || '', status: b.st || '', state: RST[b.st] || 'none'}" in QS
     assert "readRun(); runBeads(d);" in QS
 
