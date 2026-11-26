@@ -57,7 +57,7 @@
     // an unread board has no counts here either: no "0", no "no merge waiting", as Tasks (r12 audit12 frame 3)
     const unread = d.board && d.board.error;
     const waits = `<section class="wyband" id="waiting"><div class="wgh"><span class="wyi">${ic('hand')}</span><b>Waiting</b>${unread ? '' : `<span class="cnt">${b.waiting.length}</span>
-        <span class="small mut">${ic('merge')} ${merges ? pl(merges, 'merge', 'merges') + ' waiting' : 'no merge waiting'}</span>`}</div>
+        <span class="small mut">${ic('merge')} ${merges ? pl(merges, 'merge', 'merges') + ' waiting' : 'no merge waiting'}; the orchestrator merges every other change itself</span>`}</div>
       ${unread ? `<p class="small mut">The ${esc(PNAME)} board could not be read just now. <button class="btn sm" data-reread>Try again</button></p>`
         : b.waiting.length ? wyl.slice(0, wyo ? wyl.length : 4).map(([id, need, mg]) => `<div class="line sub">${mg ? `<span class="mg" title="A merge waiting for you">${ic('merge', 'merge')}</span>` : '<span></span>'}<button class="lk tbtn" data-task="${esc(id)}">${tref(id, (B[id] || {}).t || id, (B[id] || {}).st)}</button><span class="grow small mut">${esc(need)}</span></div>`).join('')
         : `<p class="small mut">${b.none ? esc(b.none) : 'Nothing waits on you.'}</p>`}

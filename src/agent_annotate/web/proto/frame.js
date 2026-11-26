@@ -395,7 +395,7 @@
     : `<button class="${cls}" ${tag} ${x.this ? 'data-gothis' : `data-proj="${esc(x.key)}"`}>${inner}</button>`;
   function projRows() {
     return projs().map(x => { const st = (workersOf(x.code) || []).filter(w => w.s === 'stuck').length;
-      return projOpen(x, `role="menuitem"${isCur(x) ? ' aria-current="page"' : ''}`, 'mi', `<span class="nm">${esc(x.name)}</span>${x.waiting ? `<span class="badge qw" title="${pl(x.waiting, 'question waits', 'questions wait')} for your answer">${x.waiting} waiting</span>` : ''}${st ? `<span class="badge warn" title="${pl(st, 'worker has', 'workers have')} shown no sign of life">${st} no sign of life</span>` : ''}`); }).join('');
+      return projOpen(x, `role="menuitem"${isCur(x) ? ' aria-current="page"' : ''}`, 'mi', `<span class="nm">${esc(x.name)}</span>${x.waiting ? `<span class="badge qw" title="${pl(x.waiting, 'question waits', 'questions wait')} for your answer">${pl(x.waiting, 'question waiting', 'questions waiting')}</span>` : ''}${st ? `<span class="badge warn" title="${pl(st, 'worker has', 'workers have')} shown no sign of life">${st} no sign of life</span>` : ''}`); }).join('');
   }
 
   /* ---------- workers and scheduled jobs, from Running's data (mock: workerDots, wkCard) ---------- */
@@ -558,7 +558,7 @@
     const projMenu = S.menu === 'proj' ? `<div class="menu" role="menu" aria-label="Projects"><h3>Your projects</h3>${projRows()}<div class="sep"></div><button class="mi" data-home><span class="nm">All projects (home)</span></button></div>` : '';
     const me = S.menu === 'me' ? `<div class="menu right smenu" role="menu" aria-label="Settings">${settingsBody()}</div>` : '';
     const who = `<div class="dd"><button class="btn ghost who" data-menu="me" aria-haspopup="menu" aria-expanded="${S.menu === 'me'}" title="Settings, people and sign out"><span class="av" aria-hidden="true">${esc(myName()[0])}</span><span class="hide-ph">${esc(myName())}</span> ▾</button>${me}</div>`;
-    const dd = `<div class="dd hide-ph"><button class="btn" data-menu="proj" aria-haspopup="menu" aria-expanded="${S.menu === 'proj'}"><b>${S.home ? 'All projects' : esc(curName())}</b>${!S.home && w ? `<span class="badge qw" title="${pl(w, 'question waits', 'questions wait')} for your answer on this project">${w} waiting</span>` : ''} ▾</button>${projMenu}</div>`;
+    const dd = `<div class="dd hide-ph"><button class="btn" data-menu="proj" aria-haspopup="menu" aria-expanded="${S.menu === 'proj'}"><b>${S.home ? 'All projects' : esc(curName())}</b>${!S.home && w ? `<span class="badge qw" title="${pl(w, 'question waits', 'questions wait')} for your answer on this project">${pl(w, 'question waiting', 'questions waiting')}</span>` : ''} ▾</button>${projMenu}</div>`;
     if (S.home) { top.innerHTML = `${mb}${brand}${pt}${dd}<span class="spacer"></span>${who}`; return; }
     if (S.other) { top.innerHTML = `${mb}${brand}${pt}${dd}<span class="p-bar" id="p-bar">${workerDots()}</span><span class="spacer"></span>${who}`; return; }
     const hv = S.tab === 'history' && S.meta ? decodeURIComponent(location.hash.split('/')[1] || '') : '';  // an older version open in History, as the mock's header marks it
@@ -581,7 +581,9 @@
   function drawFab() {
     const f = document.getElementById('p-fab');
     const st = sendSt(), n = sendNum();
-    f.hidden = !((n || st) && !S.home && !S.other && S.menu !== 'nav');  // Send follows the page on screen: never another project's (RR1); a copy floats its simulated Send too
+    // Send follows the page on screen: never another project's (RR1); a copy floats its simulated Send too.
+    // It floats once something is ready, never while the first read is in ("…", r13 frame 14); a failed read ("?") still floats so it can be opened
+    f.hidden = !(((n && !st) || st === '?') && !S.home && !S.other && S.menu !== 'nav');
     f.innerHTML = `${I('send')}Send ${st || n || ''}`;
     f.classList.toggle('unk', !!st);  // not purple until the count is known
     f.setAttribute('aria-label', st ? 'Send: ' + SENDTIP[st] : `Send: ${pl(n, 'thing is', 'things are')} ready`);
@@ -751,7 +753,7 @@
       : js.length ? js.map(j => `<i class="dq ${j.failing ? 'bad' : 'ok'}" title="${esc(j.name)}: ${j.failing ? 'failing' : 'fine'}"></i>`).join('')
       : `<span class="small mut" title="No enabled Windmill schedule on this Mac belongs to ${esc(r.name)}">no scheduled jobs</span>`;
     const row = r => `<div class="hrow" role="row"><span class="hc nm" role="cell"><i class="hd ${r.health[0]}" title="${esc(r.health[1])}" aria-label="${esc(r.health[1])}"></i>${projOpen(r, '', 'lk', esc(r.name))}<span class="small mut hpg">${pl(r.pages, 'page', 'pages')}</span></span>
-      <span class="hc wt" role="cell" title="${pl(r.waiting, 'question', 'questions')} waiting">${r.waiting ? `<span class="wbar"><i style="width:${Math.max(4, r.waiting / maxW * 100)}%"></i></span><b class="err-t">${r.waiting} waiting</b>` : '<span class="small mut">nothing waiting</span>'}</span>
+      <span class="hc wt" role="cell" title="${pl(r.waiting, 'question', 'questions')} waiting">${r.waiting ? `<span class="wbar"><i style="width:${Math.max(4, r.waiting / maxW * 100)}%"></i></span><b class="err-t">${pl(r.waiting, 'question', 'questions')}</b>` : '<span class="small mut">nothing waiting</span>'}</span>
       <span class="hc wk" role="cell">${dots(r.ws, r)}</span><span class="hc jb" role="cell">${jobsCell(r.jobs, r)}</span>
       <span class="hc ac" role="cell">${spark(r)}</span><span class="hc ls small mut" role="cell">${ago(r.lastAgoH)}</span></div>`;
     const tile = (big, sub, cls, viz) => `<div class="htile ${cls}"><b>${big}</b><span>${sub}</span>${viz || ''}</div>`;

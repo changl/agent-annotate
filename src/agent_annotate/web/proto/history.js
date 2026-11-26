@@ -561,5 +561,5 @@
         <button class="lk small" data-qgo="${esc(q.id)}">Open it in version ${esc(cur)} ›</button></li>`).join('')}</ul>` : ''}</div>`;
   }
 
-  P.tab({key: 'history', render, chip: async ctx => ({text: (await ctx.data('history')).count.toLocaleString(), title: 'answers you sent'})});
+  P.tab({key: 'history', render, chip: async ctx => { const n = (await ctx.data('history')).count; return n ? {text: n.toLocaleString(), title: 'answers you sent'} : {empty: true}; }});  // none sent yet: dimmed, "nothing yet" (#93, r13 frame 7)
 })();
