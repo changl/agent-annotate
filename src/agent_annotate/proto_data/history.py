@@ -86,7 +86,7 @@ def _stamp(f: Path):
 def build(page_dir: Path) -> dict:
     """_build, read again only once one of the files it reads changes (r12 fix10 slowread)."""
     page_dir = Path(page_dir)
-    stamps = tuple(_stamp(page_dir / n) for n in ("current.meta.json", "comments.json", "rounds.ndjson")) + tuple(
+    stamps = tuple(_stamp(page_dir / n) for n in ("current.meta.json", "comments.json", "rounds.ndjson", "seen.json")) + tuple(
         _stamp(m) + (m.parent.name,) for m in sorted((page_dir / "plans").glob("*/meta.json")) if _stamp(m))
     hit = _built.get(str(page_dir))
     if hit and hit[0] == stamps:
@@ -119,10 +119,8 @@ def _build(page_dir: Path) -> dict:
                 continue
             seen.add(key)
             # "at" is the Send's own time, shown in the browser's local time as the header shows it; "dl" its delivery state (audit7 running 2)
-            # "id" its card; "ch" the card is still asked in the current version, so the newest answer offers Change (catalog 52)
-            c = by_id.get(a.get("comment_id")) or {}
-            answers.append({"id": a.get("comment_id"), "ch": bool(c.get("decision_request")) and c.get("status") != "archived"
-                            and c.get("version") == meta.get("current"),
+            # "id" its card; History is read-only, so no answer offers Change (#75, r13 running 15)
+            answers.append({"id": a.get("comment_id"),
                             "n": a.get("number") or 0, "q": q, "a": text, "v": r.get("version") or "",
                             "t": str(a.get("ts") or r.get("ts") or "")[:10], "at": str(r.get("ts") or a.get("ts") or ""),
                             "dl": str(r.get("delivery") or ""), "ovr": ovr.get(a.get("comment_id")) or ovr_q.get(q)})
@@ -161,8 +159,18 @@ def _build(page_dir: Path) -> dict:
             plans.append({"id": m.parent.name, "t": _plain(pm.get("title") or m.parent.name, 100), "revs": revs})
 
     return {"current": meta.get("current") or "", "count": count, "sends": len(rounds), "answers": answers,
-            "versions": versions, "withdrawn": withdrawn, "plans": plans,
+            "versions": versions, "withdrawn": withdrawn, "plans": plans, "lastSeen": last_seen(page_dir),
             "waiting": waiting_now(comments, by_id, meta.get("current") or "")}
+
+
+def last_seen(page_dir: Path) -> str:
+    """His latest look at any version, from the page's own seen record: only a version published after it is new to him (catalog 68, r13 running 13)."""
+    try:
+        data = json.loads((page_dir / "seen.json").read_bytes())
+    except (OSError, ValueError):
+        return ""
+    return max((str(r.get("ts") or "") for who in (data.values() if isinstance(data, dict) else []) if isinstance(who, dict)
+                for r in who.values() if isinstance(r, dict)), default="")
 
 
 def waiting_now(comments, by_id, v) -> list[dict]:

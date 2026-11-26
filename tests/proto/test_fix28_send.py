@@ -40,7 +40,7 @@ def test_receipt_counts_the_rounds_ids_on_every_row():
 
 def test_no_move_on_an_earlier_version_note(tmp_path, monkeypatch):
     q = (WEB / "questions.js").read_text()
-    assert "+ (n.old ? '' : ibw('place', moving ? 'Moving' : 'Move'," in q
+    assert "+ (n.old ? '' : ib('place', moving ?" in q
     r = (WEB.parents[1] / "proto_data/reference.py").read_text()
     assert '**({"old": True} if c.get("id") in cur and c.get("version") and c.get("version") != cur[c.get("id")] else {})' in r
     # merge carries each release note's publication's current version; split leaves it out of the prototype's store

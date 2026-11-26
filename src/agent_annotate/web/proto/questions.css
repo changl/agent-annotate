@@ -129,7 +129,6 @@ pre.qcodehost{position:relative;padding:8px 84px 8px 10px;border:1px solid var(-
 .qstate{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
 .qstate:empty{display:none}
 .saved{font-size:var(--fs-sm);color:var(--ok-text);font-weight:600;display:inline-flex;align-items:center;gap:4px}
-.qread{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-sm);font-weight:600;color:var(--st-waiting)}
 .eacts{display:flex;align-items:center;gap:2px;flex:none;margin-left:auto}
 .ib.ibw{width:auto;padding:0 8px;gap:5px;font-size:var(--fs-sm)}
 .ib.sm{width:28px;height:28px}
@@ -144,6 +143,7 @@ pre.qcodehost{position:relative;padding:8px 84px 8px 10px;border:1px solid var(-
 .blkp{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-xs);font-weight:700;color:var(--err-text);border:1px solid var(--color-error);border-radius:10px;padding:0 7px 0 5px;white-space:nowrap}
 
 .qbody{display:flex;flex-direction:column;gap:10px}
+.qlacts{display:flex;justify-content:flex-end;margin:-4px 0 -6px}  /* Cards only: the open card's actions, under its evidence */
 body.opts-first .qbody > .qan{order:-1}  /* settings: Options first puts the choices above the context */
 .qctx{margin:0 0 8px;padding:8px 12px;background:var(--excerpt-bg);border-radius:var(--radius-field);font-size:var(--text-primary);line-height:1.45}
 .qctx p{margin:0 0 6px}.qctx p:last-child{margin:0}
@@ -170,6 +170,8 @@ kbd{font:var(--fs-xs) ui-monospace,Menlo,monospace;border:1px solid var(--line);
 .qtask:hover{border-color:var(--color-primary)}
 .qtask .bid{font:600 var(--fs-xs) ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);white-space:nowrap}
 .qtask .mut{white-space:nowrap}
+.lk.bdl{font:inherit;font-weight:600;text-align:left;display:inline}
+.bdl+.bid{font:var(--fs-xs) ui-monospace,SFMono-Regular,Menlo,monospace}
 
 /* notes: on a line, words, a row, or a spot on a picture (#103: icons for their actions) */
 .qnote{border:1px solid var(--color-primary);border-radius:var(--radius-field);padding:6px 8px;margin:6px 0;background:var(--color-base-100);max-width:80ch;font-size:var(--fs-md);display:block}

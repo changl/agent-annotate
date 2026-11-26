@@ -266,7 +266,7 @@
       ${S.tmerge === t ? `<div class="pop" role="menu"><div class="small mut">Combine with… its ${pl(n, 'plan moves', 'plans move')} into</div>${others.map(x => `<button role="menuitem" data-tmergeto="${esc(x)}">${esc(x)}</button>`).join('') || '<div class="small mut">No other topic yet</div>'}</div>` : ''}</div>`;
   }
   const stPill = s => `<span class="rf-st ${s}" title="${esc(SN[s][1])}"><i></i>${SN[s][0]}</span>`;
-  const chg = '<span class="rf-new" title="Changed since you last looked">changed</span>';
+  const chg = '<span class="rf-chd" role="img" aria-label="Changed since you last looked" title="Changed since you last looked"></span>';  // the mock's small orange dot
   const row = r => r.later ? `<button class="r8row later" aria-disabled="true" title="Comes later: ${esc(r.m)}">${ico(r.kind)}<span class="t">${esc(r.t)}</span><span class="s"><span class="rf-st ref"><i></i>Later</span></span><span class="m">${esc(r.m)}</span></button>`
     : `<button class="r8row" data-ref="${esc(r.id)}" aria-pressed="${S.sel === r.id}">${ico(r.kind)}<span class="t">${esc(r.t)} ${r.ch ? chg : ''}</span><span class="s">${stPill(r.st)}</span><span class="m">${esc(r.m)}</span></button>`;
 
@@ -306,7 +306,7 @@
     const bar = `<div class="r8bar"><input type="search" id="rf-q" placeholder="Find a plan, checklist, design or workflow" aria-label="Find in Reference" value="${esc(S.q)}">
       <span class="rf-chips" role="group" aria-label="State">${['all', 'prop', 'ok', 'ref'].map(s => `<button class="chipb" data-sec="${s}" aria-pressed="${S.sec === s}" title="${s === 'all' ? 'Every item' : esc(SN[s][1])}">${s === 'all' ? 'All' : SN[s][0]} <span class="n">${stN(s)}</span></button>`).join('')}</span>
       <span class="sep" aria-hidden="true"></span><span class="rf-chips" role="group" aria-label="Kind">${kinds.map(k => `<button class="chipb" data-kind="${k}" aria-pressed="${S.kind === k}" title="Only ${KN[k].toLowerCase()}">${ico(k)}${KN[k]} <span class="n">${kN(k)}</span></button>`).join('')}</span>
-      <span class="spacer"></span><span class="small mut rf-chl">${nch ? `${chg} ${pl(nch, 'item changed', 'items changed')} since you last looked · <button class="lk small" data-allseen>Mark all as seen</button>` : 'Nothing changed since you last looked'}</span></div>`;
+      <span class="spacer"></span><span class="small mut rf-chl">${nch ? `${chg} ${pl(nch, 'item changed', 'items changed')} since you last looked` :'Nothing changed since you last looked'}</span></div>`;
     const lst = gs.length ? `<div class="r8list">${gs.map(g => { const rs = shown.filter(r => r.g === g);
       return `<div class="r8g">${g[0] === 't' ? topicHead(g.slice(2), rs.length) : `<div class="r8gh">${ico(g === 'k:decision' ? 'plan' : g.slice(2))}<span class="gt">${KG[g.slice(2)]}</span><span class="n">${rs.length}</span></div>`}${(g === 'k:decision' && !q && !S.open.has(g) ? rs.slice(0, 6) : rs).map(r => r.kind === 'flow' ? flowRow(r) : row(r)).join('')}${g === 'k:decision' && !q && rs.length > 6 ? `<button class="lk small rf-more" data-fold="${g}">${S.open.has(g) ? 'Show the first 6' : `Show all ${rs.length}`}</button>` : ''}</div>`; }).join('')}</div>` : '<p class="mut">Nothing matches.</p>';
     return bar + lst;
@@ -318,13 +318,14 @@
   /* ---------- the go-live checklist: one row per item, filter chips as on GitHub's issue list ---------- */
   const CM = {done: ['ok', 'Done', 'done'], 'in progress': ['in', 'In progress', 'progress'], 'not started': ['todo', 'Not started', 'none'], blocked: ['blocked', 'Blocked', 'blocked'],
     closed: ['ok', 'Task closed', 'done'], open: ['todo', 'Task open', 'none']};
-  const cm = (s, pre = '') => { const [c, t] = CM[s] || ['todo', s]; return `<span class="sm9 ${c}" role="img" aria-label="${esc(pre + t)}" title="${esc(pre + t)}">${c === 'ok' ? ico('tick') : ''}</span>`; };
+  // blocked carries the mock's slash, so it reads apart from an orange dot of colour alone
+  const cm = (s, pre = '') => { const [c, t] = CM[s] || ['todo', s]; return `<span class="sm9 ${c}" role="img" aria-label="${esc(pre + t)}" title="${esc(pre + t)}">${c === 'ok' ? ico('tick') : c === 'blocked' ? '<svg class="pi" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 11.5l7-7"/></svg>' : ''}</span>`; };
   function checklistHtml() {
     const cl = D.checklist, by = {};
     cl.items.forEach(r => by[r[2]] = (by[r[2]] || 0) + 1);
     const whoOf = w => /^Chang\b/.test(w) ? 'You' : /unassigned/i.test(w) ? 'No one yet' : 'An agent', pfOf = p => p === 'Shared' ? 'Both' : p, bi = b => D.beads[b];
     const val = {pf: r => pfOf(r[0]), st: r => r[2], who: r => whoOf(r[3]), bd: r => (bi(r[4]) || [])[1] || 'none'};
-    const G = [['st', 'State', ['blocked', 'in progress', 'not started', 'done']], ['pf', 'Platform', ['iOS', 'Android', 'Both']], ['who', 'Who', ['You', 'An agent', 'No one yet']], ['bd', 'Its task', ['open', 'in progress', 'blocked', 'closed']]];
+    const G = [['pf', 'Platform', ['iOS', 'Android', 'Both']], ['st', 'State', ['blocked', 'in progress', 'not started', 'done']],['who', 'Who', ['You', 'An agent', 'No one yet']], ['bd', 'Its task', ['open', 'in progress', 'blocked', 'closed']]];
     const on = g => G.find(x => x[0] === g)[2].filter(v => S.clf.has(g + '~' + v)), pass = (r, skip) => G.every(([g]) => g === skip || !on(g).length || on(g).includes(val[g](r)));
     const shown = cl.items.map((r, i) => [r, i]).filter(([r]) => pass(r)), nOf = (g, v) => cl.items.filter(r => pass(r, g) && val[g](r) === v).length;
     const lab = (g, v) => g === 'st' ? `${cm(v)}${CM[v][1]}` : g === 'bd' ? `${cm(v)}${v[0].toUpperCase() + v.slice(1)}` : esc(v);
@@ -332,7 +333,8 @@
         return `<button class="chipb" data-clf="${g}~${esc(v)}" aria-pressed="${p}"${!n && !p ? ' disabled' : ''} title="${p ? 'Stop filtering by' : 'Show only'} ${esc(gl.toLowerCase())}: ${esc(v)}">${lab(g, v)}<span class="n">${n}</span></button>`; }).join('')}</span>`).join('')}
       ${S.clf.size ? `<span class="small"><b>${pl(shown.length, 'item', 'items')} shown</b> of ${cl.items.length} · <button class="lk small" data-clf="">Clear filters</button></span>` : ''}</div>`;
     const crow = ([[pf, it, st, who, bead], i]) => { const b0 = bi(bead), t = b0 && untag(b0[0]), k = 'chk:' + i;
-      return `<div class="cl9" ${at(k, it)}>${cm(st)}<span class="tx">${pin(k)}${esc(it)}<span class="small mut rf-task">${bead ? `<button class="pl9 bid9" ${b0 ? `data-task="${esc(bead)}" title="Its task: ${esc(t)} · ${esc(b0[1])}. Opens it in Running"` : 'disabled title="Not on the board"'}>${cm(b0 ? b0[1] : 'none', 'Task ')}${esc(bead)}</button> ${esc(t ? (t.length > 70 ? t.slice(0, 68).trimEnd() + '…' : t) : 'not on the board')} · ${esc(b0 ? b0[1] : 'unknown')}` : 'no task'}</span></span>
+      // its task reads title · bead id · state, as on a plan's task lines (#46, #91)
+      return `<div class="cl9" ${at(k, it)}>${cm(st)}<span class="tx">${pin(k)}${esc(it)}<span class="small mut rf-task">${bead ? `${esc(t ? (t.length > 70 ? t.slice(0, 68).trimEnd() + '…' : t) : 'not on the board')} · <button class="pl9 bid9" ${b0 ? `data-task="${esc(bead)}" title="Its task: ${esc(t)} · ${esc(b0[1])}. Opens it in Running"` : 'disabled title="Not on the board"'}>${cm(b0 ? b0[1] : 'none', 'Task ')}${esc(bead)}</button> · ${esc(b0 ? b0[1] : 'unknown')}` : 'no task'}</span></span>
         <span class="pl"><span class="pl9 pf" title="Platform">${esc(pfOf(pf))}</span><span class="pl9 who9${whoOf(who) === 'You' ? ' you' : ''}" title="Who does it">${whoOf(who)}</span></span></div>${noteList(k)}`; };
     const COL = {done: 'var(--st-done)', 'in progress': 'var(--st-progress)', 'not started': 'var(--st-none)', blocked: 'var(--st-blocked)'};
     return `<div class="rf-chart" ${at('chk:chart', 'The checklist chart')}>${pin('chk:chart')}<b>${pl(cl.items.length, 'item', 'items')}</b><span class="prog2" role="img" aria-label="${Object.entries(by).map(([s, n]) => `${n} ${s}`).join(', ')}">${Object.entries(by).map(([s, n]) => `<i style="flex:${n};background:${COL[s]}" title="${n} ${s}"></i>`).join('')}</span>
@@ -356,7 +358,7 @@
         doc = al.map(x => x.k === 'same' ? block(B[x.b], key(x.b))
           : x.k === 'chg' ? block(B[x.b], key(x.b), ['img', 'tbl', 'pre'].includes(B[x.b][0]) ? '' : wdiff(A[x.a][1], B[x.b][1]), tag('changed'))
           : x.k === 'add' ? block(B[x.b], key(x.b), ['img', 'tbl', 'pre'].includes(B[x.b][0]) ? '' : `<ins>${esc(B[x.b][1])}</ins>`, tag('added'))
-          : `<p class="small"><del>${esc(A[x.a][0] === 'img' ? 'Picture: ' + (A[x.a][2] || '') : A[x.a][0] === 'tbl' ? 'Table: ' + A[x.a][2][0].join(' · ') : A[x.a][1])}</del>${tag('removed')}</p>`).join('');
+          : `<p><del>${esc(A[x.a][0] === 'img' ? 'Picture: ' + (A[x.a][2] || '') : A[x.a][0] === 'tbl' ? 'Table: ' + A[x.a][2][0].join(' · ') : A[x.a][1])}</del>${tag('removed')}</p>`).join('');
       } else doc = B.map((b, i) => block(b, key(i))).join('') || '<p class="mut">This revision has no text.</p>';
     }
     const vlist = n > 1 ? `<nav class="vlist" aria-label="Revisions"><h5>${pl(n, 'revision', 'revisions')}</h5>${p.revs.map((r, i) => [r, i]).reverse().map(([[v, ts, label], i]) =>
@@ -545,7 +547,6 @@
     if (d.wmopen) return ctx.toast(`Opens “${d.wmopen}” in Windmill, in a new tab`, {inert: true});
     if (d.sec) { S.sec = d.sec; return draw(); }
     if (d.kind) { S.kind = S.kind === d.kind ? '' : d.kind; return draw(); }
-    if (d.allseen !== undefined) { markSeen(rows().map(r => r.id)); return draw(); }
     if (d.fx) { S.fx.has(d.fx) ? S.fx.delete(d.fx) : S.fx.add(d.fx); return draw(); }
     if (d.rv !== undefined) { S.rv[S.sel] = +d.rv; return draw(); }
     if (d.marks !== undefined) { S.marks = !S.marks; return draw(); }
@@ -804,7 +805,9 @@
     chip: async c => { ctx = c; restoreDrafts(); D = await c.data('reference'); prune(); unsort(); const n = countChanged(); return n ? {text: `${n} changed`, tone: 'amber'} : null; },
     render: async (main, c, anchor) => {
       ctx = c; el = main; NK().slot(S, 'reference'); restoreDrafts();  // S.move is the kit's one Move; navigating here ended any earlier one (r12 audit17 reference 4, fix20)
-      if (!D) { main.innerHTML = '<p class="mut">Reading Reference…</p>'; D = await c.data('reference'); }
+      if (!D) { main.innerHTML = '<p class="mut">Reading Reference…</p>';
+        // a slow first read (Rebex's first build) reads again by itself, twice, before the tab offers Try again (r13 reference 19)
+        for (let n = 0; !D; n++) try { D = await c.data('reference', n > 0); if (n) c.refreshChips(); /* the tab chip read the failed one */ } catch (e) { if (n >= 2) throw e; main.innerHTML = '<p class="mut">Still reading Reference…</p>'; } }
       prune();
       unsort();
       if (S.reach) {  // Go to it pressed before the data was in (r12 fix10 reference 1); a checklist note opens its checklist
