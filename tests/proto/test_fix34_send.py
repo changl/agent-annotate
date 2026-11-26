@@ -150,7 +150,7 @@ const fullSig = () => ''; if (typeof D === 'object' && D && !D.questions) D.ques
 
 def test_a_failed_read_waits_for_try_again(tmp_path):
     """Questions 4: a failed read stays failed for every later ask from any tab; only Try again (reread or fresh) reads again."""
-    reads = grab(FRAME, "  const cache = {}, failed = new Set();", "  let runSeq = 0;\n")
+    reads = grab(FRAME, "  const cache = {}, failed = new Set(), landed = {};", "  let runSeq = 0;\n")
     node(tmp_path, f"""
 const assert = require('assert');
 const COPY = '', P = {{}}, unTaken = d => d, refreshSend = () => {{}}, sendP = null, putRun = () => {{}};

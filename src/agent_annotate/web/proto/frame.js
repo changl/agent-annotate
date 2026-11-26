@@ -113,7 +113,7 @@
     capabilities: () => api('api/capabilities'), delivery: () => api('api/delivery'), categories: () => api('api/categories'),
     seen: () => api('api/seen'), readState: () => api('api/read-state'), copy: () => api('api/copy'),
   });
-  const cache = {}, failed = new Set();
+  const cache = {}, failed = new Set(), landed = {};  // landed: areas a whole read has come in for this visit (first, r13 speed)
   const reread = () => { failed.forEach(a => delete cache[a]); failed.clear(); };  // Try again: the failed reads are read afresh
   // on a copy, the notes it simulated join each tab's feed (questions.js P.copyData), so a reload keeps them where they were written
   // a read with no answer in 20 s fails, so the tab offers Try again instead of reading for ever (r12 audit9 reference)
@@ -141,7 +141,7 @@
   let runSeq = 0;
   // a heavy tab's first screen (proto_data/first.py): its whole read once that is in, else a small slice marked part, which the tab
   // draws and then draws the whole read over; the slice is never cached or given to Send (r13 speed)
-  const landed = {}, firsts = {};
+  const firsts = {};
   const first = area => {
     if (cache[area] && landed[area]) return cache[area];  // a whole read has been in this visit: the tab waits for it, as before
     return firsts[area] || (firsts[area] = Promise.race([api(`proto/data/${area}.first.json`), late()])
