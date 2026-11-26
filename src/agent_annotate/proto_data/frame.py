@@ -7,6 +7,7 @@ copy_other.py as reviews/proto-<project>) stand in for their project's row, and 
 from __future__ import annotations
 
 import calendar
+import hashlib
 import json
 import os
 import re
@@ -218,6 +219,39 @@ def _projects(now: float) -> list[dict]:
 
 _busy: set = set()
 _busy_lock = threading.Lock()
+_keep: dict = {}  # projects root -> the file its last read is kept in (prime)
+
+
+def _scan(root: str) -> tuple:
+    now = time.time()
+    hit = _cache[root] = (now, _projects(now))
+    if f := _keep.get(root):
+        from . import scrub_json
+        try:  # masked, as the frame read sends it
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.with_suffix(".tmp").write_text(scrub_json(json.dumps(hit, ensure_ascii=False)), encoding="utf-8")
+            f.with_suffix(".tmp").replace(f)
+        except OSError:
+            pass
+    return hit
+
+
+def prime(page_dir: Path) -> None:
+    """At the server's start: the last read of every project's pages, kept on disk, answers the first frame read at once, and a
+    new read starts behind it. The scan of ~40 live pages took 12 s on a loaded host, and every tab's first open waited on it (r13 speed)."""
+    from .published import guard
+    root = str(_root())
+    try:
+        f = _keep[root] = guard(Path(page_dir).parent.parent / "built" / f"frame-{hashlib.blake2b(root.encode(), digest_size=5).hexdigest()}.json")
+    except PermissionError:
+        return
+    try:
+        at, rows = json.loads(f.read_text(encoding="utf-8"))
+        if isinstance(rows, list):
+            _cache.setdefault(root, (float(at), rows))
+    except (OSError, ValueError, TypeError):
+        pass
+    _behind(root)
 
 
 def _behind(root: str) -> None:
@@ -229,8 +263,7 @@ def _behind(root: str) -> None:
 
     def run():
         try:
-            now = time.time()
-            _cache[root] = (now, _projects(now))
+            _scan(root)
         finally:
             with _busy_lock:
                 _busy.discard(root)
@@ -256,7 +289,7 @@ def build(page_dir: Path) -> dict:
                 src=meta.get("proto_source"))
     hit = _cache.get(str(_root()))
     if not hit:
-        hit = _cache[str(_root())] = (now, _projects(now))
+        hit = _scan(str(_root()))
     elif now - hit[0] > TTL:  # the ~40 other pages are read again behind this answer: it took seconds on a busy host (r12 fix12 perf)
         _behind(str(_root()))
     real = [dict(p) for p in hit[1]]

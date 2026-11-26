@@ -113,6 +113,9 @@ def refresh(root: Path, key: str, name: str, src: Path) -> Path:
         _scrub(tmp, dest)
         from .reference import stage_store
         stage_store(tmp)  # Rebex's working preview store; nothing for a project without one
+        from .running import SNAP
+        if (dest / SNAP).is_file():  # Running's last result: the new copy's first open shows it while a fresh one is read (r13 speed)
+            shutil.copyfile(dest / SNAP, tmp / SNAP)
         old = trash / f"proto-{key}-{stamp}"
         if dest.exists():
             shutil.move(str(dest), str(old))
@@ -156,6 +159,9 @@ def _recopy(at: str, key: str, name: str, src: Path) -> None:
         with _bound_lock:  # the served copy's caches belong to the old folder
             for k in [k for k in _bound if k[1] == key]:
                 _bound.pop(k)
+        from . import POOLED, _pooled
+        from .prebuilt import warm
+        warm([Path(at)], POOLED, _pooled)  # the new copy's areas, built ahead; reads take the last build meanwhile (r13 speed)
     except (subprocess.SubprocessError, OSError) as exc:  # the last copy keeps serving; a half-made one is deleted
         print(f"copy of {key} not refreshed: {exc}", file=sys.stderr)
     finally:

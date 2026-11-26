@@ -204,12 +204,26 @@ def _pooled(area: str, page_dir, viewer=_KEEP) -> bytes:
                                         initializer=_orphan_guard, initargs=(os.getpid(),))
         pool = _pool
     try:
-        return pool.submit(prepared, area, str(page_dir), viewer).result(timeout=60)
+        from .prebuilt import made  # prepared, kept on disk for the next restart (r13 speed)
+        return pool.submit(made, area, str(page_dir), viewer).result(timeout=60)
     except BrokenProcessPool:  # the worker died: start another next time; this read is built here
         with _pool_lock:
             if _pool is pool:
                 _pool = None
         return prepared(area, page_dir, viewer)
+
+
+def warm(page_dir) -> None:
+    """At a prototype server's start, behind it: what a first open reads on this page and its copies, so none waits on a build
+    (r13 speed): the projects scan the frame reads, Running's first result, and the pooled areas (prebuilt)."""
+    def run():
+        from . import frame, prebuilt, running
+        pages = prebuilt.pages(page_dir)
+        frame.prime(page_dir)
+        for d in pages:
+            running.prime(d)
+        prebuilt.warm(pages, POOLED, _pooled)
+    threading.Thread(target=run, daemon=True).start()
 
 
 _heads: dict = {}  # meta path -> (its stamp, its current version)
@@ -279,7 +293,12 @@ def serve(handler, route_path: str):
         t0 = time.perf_counter()
         try:
             who = handler._identity()  # first: this read's reader (his hash), before the build decides whose release notes are his
-            body = (_pooled if match[1] in POOLED else prepared)(match[1], handler.artifact_dir, getattr(handler, "proto_viewer", None))
+            viewer = getattr(handler, "proto_viewer", None)
+            if match[1] in POOLED:  # never waits on a build when one was made before, on this server or kept from the last (prebuilt)
+                from .prebuilt import get
+                body = get(match[1], handler.artifact_dir, viewer, not part, _pooled)
+            else:
+                body = prepared(match[1], handler.artifact_dir, viewer)
             from .questions import own  # his own notes, for Edit and Remove (r12 audit19)
             body = own(body, handler._reviewer_authors(who["email"] or "anonymous"))
             if part:

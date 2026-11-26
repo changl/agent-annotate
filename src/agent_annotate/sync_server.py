@@ -4586,6 +4586,12 @@ def main():
     global VERSION_GUARD_PAGE
     VERSION_GUARD_PAGE = (_monitor_project(bus_dir), slug)
     threading.Thread(target=warn_at_start, args=VERSION_GUARD_PAGE, daemon=True).start()
+    try:  # a prototype page: what its first open reads is built behind the start, never on that request (r13 speed)
+        if json.loads((slug_dir / "current.meta.json").read_text(encoding="utf-8")).get("ui") == "proto":
+            from .proto_data import warm
+            warm(slug_dir)
+    except (OSError, ValueError, AttributeError):
+        pass
 
     try:
         def delivery_loop():

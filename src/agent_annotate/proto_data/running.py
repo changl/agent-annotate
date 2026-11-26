@@ -636,6 +636,12 @@ def build(page_dir: Path) -> dict:
     return {**got[1], "age": round(time.time() - got[0])}
 
 
+def prime(page_dir: Path) -> None:
+    """At the server's start: a page with no result kept (a new copy) is built behind it, so its first open joins that build."""
+    if not (Path(page_dir) / SNAP).exists():
+        threading.Thread(target=build, args=(Path(page_dir),), daemon=True).start()
+
+
 def _behind(page_dir: Path, got) -> None:
     # an unread or stale board is read again at once, so it recovers by itself and Try again gets a fresh answer (audit11 running 2)
     b = got[1].get("board") or {}

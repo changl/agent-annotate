@@ -99,6 +99,6 @@ def test_pooled_build_gets_the_readers_hash_and_caches_per_reader(tmp_path, monk
     assert [a[2] for a in calls] == [me, peer, None]
     # the server hands each area read this request's hash, taken before the build
     serve = (Path(P.__file__)).read_text()
-    assert 'who = handler._identity()' in serve and 'getattr(handler, "proto_viewer", None))' in serve
+    assert 'who = handler._identity()' in serve and 'viewer = getattr(handler, "proto_viewer", None)' in serve
     assert "self.proto_viewer = published.viewer(email)" in (Path(P.__file__).parents[1] / "sync_server.py").read_text()
     assert published.viewer("agent:x") is None and published.viewer("me@example.test") == me
