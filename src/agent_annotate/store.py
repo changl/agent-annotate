@@ -1640,6 +1640,9 @@ def _append_rounds(conn, data: bytes, appended: list[str]) -> bool:
     tail = "".join(appended).encode("utf-8")
     if len(data) != size + len(tail) or not data.endswith(tail) or hashlib.sha256(data[:size]).hexdigest() != digest:
         return False
+    # Rows 2.35.0 took in from a CRLF file kept their \r (JSON never holds a raw one): rebuild them normalised.
+    if conn.execute("SELECT 1 FROM rounds WHERE instr(body_json, char(13)) LIMIT 1").fetchone():
+        return False
     seq = conn.execute("SELECT coalesce(max(seq), 0) FROM rounds").fetchone()[0]
     for line in _lines("".join(appended)):
         try:

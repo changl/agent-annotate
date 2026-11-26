@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from test_store_db import _page
 
 from agent_annotate import paths, store
@@ -193,12 +194,20 @@ def test_the_row_cache_never_trusts_the_callers_dict(tmp_path):
     assert _diff(fixture) == []
 
 
-def test_a_foreign_crlf_rewrite_of_rounds_then_send_keeps_page_db(tmp_path, monkeypatch):
+@pytest.mark.parametrize("taken_in_by_235", [False, True])
+def test_a_foreign_crlf_rewrite_of_rounds_then_send_keeps_page_db(tmp_path, monkeypatch, taken_in_by_235):
     from agent_annotate import deployment
     fixture = _imported(tmp_path)
     page = fixture["page"]
     rounds = page / "rounds.ndjson"
     rounds.write_bytes(rounds.read_bytes().replace(b"\n", b"\r\n"))   # a foreign text writer restores it
+    if taken_in_by_235:   # 2.35.0's intake stored each line with its \r and the raw fingerprint
+        with monkeypatch.context() as old:
+            old.setattr(store, "_universal_newlines", lambda text: text)
+            with store.transaction(page) as tx:
+                assert tx.conn.execute("SELECT body_json FROM rounds").fetchone()[0].endswith("\r")
+        data = store.read_comments(page)
+        store.write_bytes(page / "comments.json", json.dumps(data).encode(), value=data)   # a save
     store.append_round(page, {"id": "r3", "ts": "w"})                  # the next Send
     assert _rows(fixture, "SELECT round, body_json FROM rounds ORDER BY seq") == [
         ("r1", '{"id": "r1", "ts": "t"}'), ("r2", '{"id": "r2", "ts": "u"}'), ("r3", '{"id": "r3", "ts": "w"}')]
