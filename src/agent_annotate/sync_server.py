@@ -4200,6 +4200,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                                  for r in receipts for a in r.get("answers", []) if a.get("ts")}
             submitted_edits = {e.get("revision_id") for r in receipts for e in r.get("edits", [])
                                if e.get("by") in reviewer_authors}
+            # Pushed feedback carries no timestamp: a receipt holds it when it sent these exact words
+            # after the card was last flagged (a finished Send flags it with the receipt's own time).
+            submitted_pushes = {(a.get("comment_id"), a.get("verdict"), a.get("text"), a.get("by")): (r.get("ts"), r.get("id"))
+                                for r in receipts for a in r.get("answers", []) if not a.get("ts")}
             # A copy.json that does not validate holds back only Library
             # edits; Review, Findings and Plans still go out, and the reply says so.
             library_skipped = None
@@ -4235,6 +4239,15 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         c.pop("round_pending", None)
                         c.update(flagged_for_session=True, flagged_at=sent_at, flagged_by=author)
                         recovered = True
+                    if submitted_pushes and _comment_needs_push(c, reviewer_authors):
+                        answer = _push_answers([c], reviewer_authors)[0]
+                        sent_at, delivery_id = submitted_pushes.get(
+                            (c["id"], answer["verdict"], answer["text"], answer["by"]), (None, None))
+                        if sent_at and _iso_timestamp(sent_at) > _iso_timestamp(c.get("flagged_at")):
+                            commit(c, delivery_id)
+                            _mark_notes_sent(c, sent_at, reviewer_authors)
+                            c.update(flagged_for_session=True, flagged_at=sent_at, flagged_by=author)
+                            recovered = True
             if recovered:
                 self._v2_save(store)
                 # The recovery checkpoint returned this object to the cache.
