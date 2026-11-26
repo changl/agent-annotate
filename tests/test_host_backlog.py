@@ -37,6 +37,7 @@ def test_mail_flags_unread_coordinator_mail_and_open_questions_from_running_work
         msg("m4", 40, type="question", thread_id="m4", payload=json.dumps({"dispatchId": "ctx_gone"})),
         msg("m5", 40, type="question", thread_id="m5", payload=json.dumps({"dispatchId": "ctx_live"})),
         msg("r5", 35, to_handle="dispatch:ctx_live", thread_id="m5"),  # the answer to m5
+        msg("f3", 30, thread_id="m3"),                                 # the worker's own follow-up: not an answer
     ]
     got = hb.orca_mail(mail, {"ctx_live": "run_x"}, {"run_x": "Rebex"}, NOW)
     assert sorted(got) == ["question:m3", "unread:m1"]

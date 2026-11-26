@@ -54,6 +54,21 @@ test("mails once a problem lasts two checks, again only for something new, a rem
   expect(r.mail).toBeNull();
 });
 
+test("no all-clear while a new problem is still being confirmed", () => {
+  const a = { "wait:f/a": "f/a: 1 waiting for a worker, the oldest 9 min" };
+  const b = { "wait:f/b": "f/b: 1 waiting for a worker, the oldest 6 min" };
+  let r = decide(decide({}, a, now).next, a, now + 300e3);
+  expect(r.mail?.subject).toBe("Work is piling up on the M1Max: 1 problem");
+  r = decide(r.next, b, now + 600e3); // a cleared as b appeared
+  expect(r.mail).toBeNull();
+  r = decide(r.next, b, now + 900e3);
+  expect(r.mail?.body).toContain("f/b: 1 waiting for a worker, the oldest 6 min (new)");
+  r = decide(decide(r.next, {}, now + 1200e3).next, a, now + 1500e3);
+  expect(r.mail).toBeNull();
+  r = decide(decide(r.next, a, now + 1800e3).next, {}, now + 2100e3); // a returns, is mailed, then clears
+  expect(r.mail?.subject).toBe("M1Max queues are clear again");
+});
+
 test("passes on the host check's problems, and says when it goes quiet", () => {
   const send = { "send:rebex/rebex": "Your Send on the rebex/rebex page has waited 45 min for its agent to read it" };
   expect(hostProblems(JSON.stringify({ at: ago(8), problems: send }), now)).toEqual(send);
@@ -62,4 +77,6 @@ test("passes on the host check's problems, and says when it goes quiet", () => {
     .toEqual({ "host:quiet": "The M1Max host check (page Sends, Orca mail) has not reported for 40 min" });
   expect(Object.keys(hostProblems(null, now))).toEqual(["host:quiet"]);
   expect(Object.keys(hostProblems("not json", now))).toEqual(["host:quiet"]);
+  expect(hostProblems({ at: "bad", problems: {} }, now))
+    .toEqual({ "host:quiet": "The M1Max host check (page Sends, Orca mail) has not reported for an unknown number of min" });
 });

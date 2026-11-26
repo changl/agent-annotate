@@ -36,9 +36,9 @@ export function problems(queue: Job[], runs: Record<string, Run[]>, now: number)
 export function hostProblems(raw: unknown, now: number): Record<string, string> {
   let host: { at?: string; problems?: Record<string, string> } = {};
   try { host = (typeof raw === "string" ? JSON.parse(raw) : raw) ?? {}; } catch { /* unreadable reads as quiet */ }
-  const quiet = host.at ? Math.round((now - Date.parse(host.at)) / 60000) : null;
-  if (quiet === null || quiet > LIMITS.hostQuietMin)
-    return { "host:quiet": `The M1Max host check (page Sends, Orca mail) has not reported for ${quiet ?? "an unknown number of"} min` };
+  const quiet = host.at ? Math.round((now - Date.parse(host.at)) / 60000) : NaN;
+  if (!(quiet <= LIMITS.hostQuietMin)) // a missing or unreadable time counts as quiet too
+    return { "host:quiet": `The M1Max host check (page Sends, Orca mail) has not reported for ${Number.isNaN(quiet) ? "an unknown number of" : quiet} min` };
   return host.problems ?? {};
 }
 
@@ -59,10 +59,11 @@ export function decide(state: State, current: Record<string, string>, now: numbe
       "Sent by Windmill f/ops/backlog_watch every 5 min (no AI)."].join("\n");
     return { next: { seen, mailed: confirmed, mail_at: now }, mail: { subject, body } };
   }
-  if (!confirmed.length && state.mailed?.length)
+  // Clear only when nothing at all is waiting, not while a new problem is still being confirmed.
+  if (!Object.keys(current).length && state.mailed?.length)
     return { next: { seen, mailed: [], mail_at: state.mail_at },
              mail: { subject: "M1Max queues are clear again", body: `Clear at ${new Date(now).toISOString()}.\n\nSent by Windmill f/ops/backlog_watch.` } };
-  return { next: { seen, mailed, mail_at: state.mail_at }, mail: null };
+  return { next: { seen, mailed: confirmed.length ? mailed : state.mailed ?? [], mail_at: state.mail_at }, mail: null };
 }
 
 export async function main(dry_run: boolean = false) {
@@ -81,7 +82,7 @@ export async function main(dry_run: boolean = false) {
   const [queue, schedules] = await Promise.all([call(`w/${ws}/jobs/queue/list?per_page=100`),
     call(`w/${ws}/schedules/list?per_page=100`)]);
   const runs = Object.fromEntries(await Promise.all(schedules.filter((s: any) => s.enabled).map(async (s: any) =>
-    [s.path, await call(`w/${ws}/jobs/completed/list?schedule_path=${encodeURIComponent(s.path)}&per_page=${LIMITS.failStreak + 2}`)])));
+    [s.path, await call(`w/${ws}/jobs/completed/list?schedule_path=${encodeURIComponent(s.path)}&per_page=${LIMITS.failStreak + 7}`)])));
   let host: unknown = null;
   try { host = await call(`w/${ws}/variables/get_value/${HOST}`); } catch { /* missing reads as quiet */ }
   const current = { ...problems(queue, runs, now), ...hostProblems(host, now) };
@@ -90,9 +91,13 @@ export async function main(dry_run: boolean = false) {
   try { state = JSON.parse(await call(`w/${ws}/variables/get_value/${STATE}`)); } catch { exists = false; }
   const { next, mail } = decide(state, current, now);
   if (dry_run) return { current, mail, next };
-  const save = (value: State) => exists ? call(`w/${ws}/variables/update/${STATE}`, { value: JSON.stringify(value) })
-    : call(`w/${ws}/variables/create`, { path: STATE, value: JSON.stringify(value), is_secret: false,
-        description: "f/ops/backlog_watch: checks each problem has lasted, and what was already mailed" });
+  const save = async (value: State) => {
+    await (exists ? call(`w/${ws}/variables/update/${STATE}`, { value: JSON.stringify(value) })
+      : call(`w/${ws}/variables/create`, { path: STATE, value: JSON.stringify(value), is_secret: false,
+          description: "f/ops/backlog_watch: checks each problem has lasted, and what was already mailed" }));
+    exists = true;
+  };
+  await save(next); // before the mail: if saving fails, no mail goes out, so a sent mail is never repeated
   if (mail) {
     try {
       const key = await call(`w/${ws}/variables/get_value/${KEY}`);
@@ -107,6 +112,5 @@ export async function main(dry_run: boolean = false) {
       throw e;
     }
   }
-  await save(next);
   return { current, mailed: mail?.subject ?? null };
 }

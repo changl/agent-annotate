@@ -18,7 +18,8 @@ import sys
 
 WAIT_MIN = 30
 VARIABLE = "f/ops/host_backlog"
-DELIVERIES = pathlib.Path.home() / ".claude/annotate-state/state/deliveries"
+STATE = pathlib.Path.home() / ".claude/annotate-state/state"
+DELIVERIES = STATE / "deliveries"
 OPEN = ("pending", "accepted", "started", "uncertain")
 
 
@@ -39,7 +40,9 @@ def sends(journals: dict, now) -> dict:
 
 def orca_mail(mail: list, active: dict, objectives: dict, now) -> dict:
     """mail: full inbox records, newest first. active: {dispatch id: run id} of running workers."""
-    out, replied = {}, {m.get("thread_id") for m in mail if m.get("thread_id") and m.get("thread_id") != m["id"]}
+    # Only mail to a worker answers its question; the worker's own follow-ups in the thread go to the run.
+    out, replied = {}, {m.get("thread_id") for m in mail
+                        if m.get("thread_id") and m.get("thread_id") != m["id"] and m.get("to_handle", "").startswith("dispatch:")}
     for m in mail:
         age = age_min(m["created_at"], now)
         if age < WAIT_MIN:
@@ -76,9 +79,18 @@ def _orca(*args) -> dict:
     return json.loads(proc.stdout)["result"]
 
 
+def registered(project: str) -> set:
+    try:
+        return set(json.loads((STATE / f"{project}.json").read_text()).get("slugs") or {})
+    except (OSError, ValueError, AttributeError):
+        return set()
+
+
 def collect(now) -> dict:
     journals = {}
     for path in sorted(DELIVERIES.glob("*/*.json")):
+        if path.stem not in registered(path.parent.name):  # an unpublished page keeps its journal
+            continue
         try:
             journals[f"{path.parent.name}/{path.stem}"] = list(json.loads(path.read_text()).get("deliveries", {}).values())
         except (OSError, ValueError, AttributeError):
@@ -86,8 +98,16 @@ def collect(now) -> dict:
     problems = sends(journals, now)
     try:
         objectives = {r["id"]: r["objective"].splitlines()[0][:70] for r in _orca("run-list")["runs"]}
-        workers = _orca("worker-list", "--terminal-state", "active", "--limit", "100")["workers"]
+        workers, cursor = [], []
+        for _ in range(10):  # Orca pages at 100; follow nextCursor
+            page = _orca("worker-list", "--terminal-state", "active", "--limit", "100", *cursor)
+            workers += page["workers"]
+            following = (page.get("page") or {}).get("nextCursor")
+            if not following:
+                break
+            cursor = ["--cursor", following]
         active = {w["dispatchId"]: w.get("runId") for w in workers}
+        # shortcut: the newest 500 messages reach back about 39 h (2026-11-26); mail older than that is not seen.
         problems |= orca_mail(_orca("inbox", "--limit", "500")["messages"], active, objectives, now)
         problems |= orca_workers(workers, objectives)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
