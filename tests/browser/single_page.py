@@ -35,7 +35,8 @@ CHROME = _browser()
 
 
 def ready(page):
-    page.locator('body[data-ready="1"]').wait_for(state="attached")
+    # A route change loads data like a page load does, so it gets the same 15 s as page.goto.
+    page.locator('body[data-ready="1"]').wait_for(state="attached", timeout=15000)
 
 
 def go(page, view="review", **params):
