@@ -15,9 +15,7 @@ from review_fixtures import register
 
 playwright = pytest.importorskip("playwright.sync_api")
 
-from single_page import feedback, history, ready, section  # noqa: E402
-
-CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+from single_page import CHROME, feedback, history, ready, section  # noqa: E402
 
 CARD = {
     "id": "cccccccccccc",

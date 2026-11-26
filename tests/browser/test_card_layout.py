@@ -22,9 +22,9 @@ from review_fixtures import authoring, complete, register
 
 playwright = pytest.importorskip("playwright.sync_api")
 
-from agent_annotate.pagegen import generate  # noqa: E402
+from single_page import CHROME  # noqa: E402
 
-CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+from agent_annotate.pagegen import generate  # noqa: E402
 
 CONTEXT = (
     "Lifecycle and delivery both write `status` today, so every consumer "

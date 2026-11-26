@@ -18,15 +18,13 @@ import subprocess
 import sys
 import time
 import urllib.request
-from pathlib import Path
 
 import pytest
 from test_interactive_controls import _details_page
 
 playwright = pytest.importorskip("playwright.sync_api")
 
-CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-
+from single_page import CHROME  # noqa: E402
 
 CANVAS = """
 <div class="no" id="s:demo:prose">

@@ -21,7 +21,8 @@ from test_pagegen_images import png, write  # noqa: E402
 
 playwright = pytest.importorskip("playwright.sync_api")
 
-CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+from single_page import CHROME  # noqa: E402
+
 pytestmark = pytest.mark.skipif(not CHROME.exists(), reason="Google Chrome is not installed")
 EXAMPLE = (Path(__file__).parents[1] / "fixtures" / "full_review.md").read_text()
 
