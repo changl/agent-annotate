@@ -25,12 +25,14 @@
 .l-dbar2 input[type=search]{flex:0 1 340px;min-width:0;border:1px solid var(--line);border-radius:var(--radius-field);background:var(--color-base-100);padding:6px 10px}
 .l-chips{display:inline-flex;flex-wrap:wrap;gap:6px}
 .l-chips .chipb{display:inline-flex;align-items:center;gap:5px}
-.l-d9{display:grid;grid-template-columns:20px minmax(0,1fr) auto auto auto;align-items:center;gap:10px;padding:5px 0 5px 22px;border-top:1px solid color-mix(in oklab,var(--line) 60%,transparent)}
+.l-d9{display:grid;grid-template-columns:24px minmax(0,1fr) auto auto auto;align-items:center;gap:10px;padding:5px 0 5px 22px;border-top:1px solid color-mix(in oklab,var(--line) 60%,transparent)}
 .l-d9[aria-current=true]{background:color-mix(in oklab,var(--color-primary) 8%,transparent)}
 .l-nm{text-align:left;min-width:0;overflow-wrap:anywhere}
 .l-dsub{display:block;font-weight:400}
 .l-sz,.l-dt{white-space:nowrap}
-.l-dk{display:inline-flex;color:var(--muted)}
+/* kind badges, as the mock's MD/PDF/DOC/XLS; Markdown is grey, not the mock's blue, so it is never taken for Word (his v14 note on #141) */
+.l-dk{display:inline-grid;place-items:center;width:24px;height:18px;border-radius:4px;font:700 .56rem/1 system-ui,sans-serif;letter-spacing:-.02em;color:#fff;flex:none}.chipb .l-dk{margin-right:4px}
+.l-dk.k-md{background:#57606a}.l-dk.k-pdf{background:#c2372f}.l-dk.k-word{background:#2b5797}.l-dk.k-sheet{background:#1e7a45}.l-dk.k-video{background:#6b4fa3}
 .l-more{margin:4px 0 6px 22px}
 .l-doc{border:1px solid var(--line);border-radius:var(--radius-box);background:var(--color-base-100);padding:8px 12px 12px;margin:4px 0 10px;overflow-wrap:anywhere}
 .l-dbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding-bottom:6px;border-bottom:1px solid var(--line);margin-bottom:6px}
@@ -97,7 +99,7 @@
   .l-seg button{padding:4px 8px}
   .l-prow .l-seg{order:3;margin-left:40px}
   .l-dbar2 input[type=search]{flex:1 1 100%}
-  .l-d9{grid-template-columns:20px minmax(0,1fr) auto;padding-left:0}
+  .l-d9{grid-template-columns:24px minmax(0,1fr) auto;padding-left:0}
   .l-d9 .l-sz,.l-d9 .l-dt{display:none}
   .l-bar{padding:0 1px 2px}
   .l-bv{font-size:var(--fs-xs,11px);flex-wrap:wrap;white-space:normal;line-height:1.1}

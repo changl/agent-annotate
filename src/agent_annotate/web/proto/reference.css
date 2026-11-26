@@ -8,7 +8,7 @@
 .tab-reference .chipb .n{font-weight:400;color:var(--muted)}.tab-reference .chipb[aria-pressed=true] .n{color:inherit}
 .tab-reference .chipb svg.pi{width:14px;height:14px}
 .tab-reference .chipb:disabled{opacity:.45;cursor:default}
-.tab-reference .rf-new{display:inline-block;font-size:var(--fs-xs);font-weight:700;border-radius:9px;padding:0 7px;background:color-mix(in oklab,var(--color-warning) 30%,var(--color-base-100));color:var(--warn-text);vertical-align:1px;white-space:nowrap}
+.tab-reference .rf-chd{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--orange);margin:0 2px;vertical-align:1px}
 /* the list: groups in as many columns as fit */
 .tab-reference .r8list{columns:3 470px;column-gap:28px;padding:2px 0 8px}
 .tab-reference .r8row.later{opacity:.6;cursor:default}
@@ -27,8 +27,7 @@
 .tab-reference .r8row .s{grid-row:1;grid-column:3;display:flex;gap:6px;align-items:center}
 .tab-reference .rf-st{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-xs);font-weight:700;border-radius:10px;padding:0 8px;white-space:nowrap}
 .tab-reference .rf-st i{width:7px;height:7px;border-radius:50%;background:currentColor}
-.tab-reference .rf-st.prop{background:color-mix(in oklab,var(--st-waiting) 22%,var(--color-base-100));color:var(--color-base-content)}
-.tab-reference .rf-st.prop i{background:var(--st-waiting)}
+.tab-reference .rf-st.prop{background:color-mix(in oklab,var(--color-warning) 26%,var(--color-base-100));color:var(--warn-text)}
 .tab-reference .rf-st.ok{background:var(--done-bg);color:var(--ok-text)}
 .tab-reference .rf-st.ref{background:var(--excerpt-bg);color:var(--muted)}
 .tab-reference .tact{display:inline-flex;align-items:center;gap:4px;border:1px solid transparent;background:none;border-radius:6px;padding:3px 8px;font-size:var(--fs-sm);font-weight:600;color:var(--muted);cursor:pointer;flex:none;white-space:nowrap}
@@ -60,7 +59,7 @@
 .tab-reference .sm9 svg.pi{width:12px;height:12px;stroke-width:2.4}
 .tab-reference .sm9.ok{background:var(--st-done);color:var(--color-base-100)}
 .tab-reference .sm9.fail{background:var(--st-failed);color:#fff}
-.tab-reference .sm9.blocked{background:var(--st-blocked)}
+.tab-reference .sm9.blocked{background:var(--st-blocked);color:#fff}
 .tab-reference .sm9.in{background:conic-gradient(var(--st-progress) 0 50%,transparent 50% 100%);box-shadow:inset 0 0 0 2px var(--st-progress)}
 .tab-reference .sm9.todo,.tab-reference .sm9.skp,.tab-reference .sm9.none{box-shadow:inset 0 0 0 2px var(--st-none)}
 /* documents */
@@ -101,7 +100,7 @@
 .tab-reference .vrow[aria-current=true]{border-left-color:var(--color-primary);background:color-mix(in oklab,var(--color-primary) 10%,transparent)}
 .tab-reference .vrow b{display:block}.tab-reference .vrow span{color:var(--muted)}
 .tab-reference .doc{padding:8px 12px;background:var(--color-base-100);border:1px solid var(--line);border-radius:var(--radius-field);min-width:0}
-.tab-reference .doc p,.tab-reference .doc h4{margin:0 0 8px;max-width:110ch}
+.tab-reference .doc p,.tab-reference .doc h4{margin:0 0 8px}
 .tab-reference .doc h4{font-size:var(--fs-base);margin-top:12px}
 .tab-reference .rf-embed{display:block;width:390px;max-width:100%;height:760px;border:1px solid var(--line);border-radius:var(--radius-field);background:#000;margin:4px auto}
 .tab-reference .doc .li{padding-left:16px;position:relative}.tab-reference .doc .li::before{content:"•";position:absolute;left:4px}
