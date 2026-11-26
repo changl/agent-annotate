@@ -6,7 +6,7 @@ from copy import deepcopy
 
 import pytest
 from single_page import CHROME, feedback, ready, section
-from test_explicit_send_browser import sandbox_page
+from test_explicit_send_browser import sandbox_page, wait_sends
 from test_workspace_intent import _page
 
 from agent_annotate.pagegen import generate
@@ -110,7 +110,7 @@ def test_feedback_survives_publication_and_reaches_owner(tmp_path, monkeypatch, 
         before = len(sends)
         page.locator("#round-submit-btn").click()
         page.locator("#round-confirm-backdrop").wait_for(state="hidden")
-        assert len(sends) == before + 1
+        wait_sends(sends, before + 1)
         all_cards = cards(directory)
         target = next(c for c in all_cards if c["version"] == ("v2" if keep else "v1") and c.get("number") == 11)
         assert any(TEXT in r["text"] and r.get("sent_at") for r in target.get("replies", []))
@@ -143,5 +143,5 @@ def test_carried_text_answer_does_not_leave_its_superseded_choice_pending(tmp_pa
         open_send(page, 1440)
         page.locator("#round-submit-btn").click()
         page.locator("#round-confirm-backdrop").wait_for(state="hidden")
-        assert len(sends) == 1
+        wait_sends(sends, 1)
         playwright.expect(page.locator("#send-count")).to_have_text("0")
