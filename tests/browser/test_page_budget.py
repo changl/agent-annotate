@@ -71,6 +71,60 @@ def test_first_load_and_send_stay_under_a_tenth_of_the_store(tmp_path):
         assert posts and sum(posts) < 4096, posts
 
 
+FIRST_READS = ("current.meta.json", "comments.json?view=page", "api/categories", "api/project")
+
+
+def test_first_screen_reads_leave_before_the_scripts_and_only_once(tmp_path):
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (first, base, _):
+        page = first.context.new_page()
+        requests = []
+        page.on("request", lambda r: requests.append(r.url.replace(base, "")))
+
+        def slow_script(route):
+            page.wait_for_timeout(400)  # a slow network or a busy server
+            route.continue_()
+
+        page.route("**/shell.js", slow_script)
+        page.goto(base + "#view=review", wait_until="networkidle")
+        page.locator("#comment-list .citem").first.wait_for()
+        for read in FIRST_READS:
+            assert requests.count(read) == 1, (read, requests)
+        start = page.evaluate("""(reads) => {
+          const entries = performance.getEntriesByType('resource');
+          const shell = entries.find(e => e.name.endsWith('/shell.js'));
+          return reads.map(r => entries.find(e => e.name.endsWith('/' + r)).startTime - shell.responseEnd);
+        }""", list(FIRST_READS))
+        assert all(gap < 0 for gap in start), start
+
+
+def test_scripts_arriving_after_the_head_reads_time_out_still_show_the_cards(tmp_path):
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (first, base, _):
+        page = first.context.new_page()
+        # The head's 10 s timeout, shortened: its four reads get 600 ms, every later read keeps its own.
+        page.add_init_script("""(() => { const timeout = AbortSignal.timeout.bind(AbortSignal); let head = 4;
+          AbortSignal.timeout = ms => timeout(head-- > 0 ? 600 : ms); })()""")
+
+        def late_script(route):
+            page.wait_for_timeout(1500)  # past the head reads' timeout
+            route.continue_()
+
+        page.route("**/shell.js", late_script)
+        page.goto(base + "#view=review")
+        page.locator("#comment-list .citem").first.wait_for(timeout=10000)
+
+
+def test_a_private_review_link_reads_after_its_session(tmp_path):
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (first, base, _):
+        page = first.context.new_page()
+        requests = []
+        page.on("request", lambda r: requests.append(r.url.replace(base, "")))
+        page.goto(base + "#view=review&review=not-a-key", wait_until="networkidle")
+        assert not any(url in requests for url in FIRST_READS), requests
+
+
 def test_store_snapshot_metadata_does_not_scale_with_old_cards(tmp_path):
     directory = _directory(tmp_path)
     _long_history(directory)

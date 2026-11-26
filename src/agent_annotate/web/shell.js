@@ -374,12 +374,20 @@ const pendingEdits = new Map();
 const early = {};
 function prefetch(url, read = () => pollJson(url)) { early[url] = read(); early[url].catch(() => {}); }
 function takeEarly(url) { const p = early[url]; delete early[url]; return p; }
+// uzd: a read shell.html started before the scripts ran; a refused or failed one is read again.
+function headRead(url) {
+  const reads = window.__aaReads, p = reads && reads[url];
+  if (!p) return null;
+  delete reads[url];
+  return p.then(r => r?.ok ? r : null, () => null);
+}
 async function pollJson(url, quiet, headers = {}) {
   const asked = ++pollAsked;
   const last = pollLast[url];
   if (last?.etag) headers['If-None-Match'] = last.etag;
   // uzd: a page's first read revalidates the browser's copy (a 304 when the meta or categories are unchanged).
-  const r = await fetch(apiUrl(url), { cache: last ? 'no-store' : 'no-cache', headers, signal: AbortSignal.timeout(10000) });
+  const r = (!last && !Object.keys(headers).length && await headRead(url))
+    || await fetch(apiUrl(url), { cache: last ? 'no-store' : 'no-cache', headers, signal: AbortSignal.timeout(10000) });
   // Read the empty 304 body: an unread one ends as an aborted request.
   if (!r.ok && (r.status !== 304 || !last?.etag)) return { ok: false, status: r.status };
   const text = await r.text();
