@@ -127,6 +127,8 @@ def test_process_argv_is_exact_where_ps_text_is_lossy(tmp_path):
         assert child.stdout.readline() == "ready\n"
         exact = sys.platform == "darwin" or sys.platform.startswith("linux")
         assert cli._process_argv(child.pid) == (argv if exact else None)
+        if sys.platform == "darwin":  # the one-pass table reads the same exact argv
+            assert cli._process_table()[child.pid] == argv
     finally:
         child.kill()
         child.wait()
@@ -143,25 +145,34 @@ def test_process_argv_never_reads_the_environment_as_an_argument():
     try:
         time.sleep(0.2)  # Popen returns at exec; the new image places its argv just after
         argv = cli._process_argv(child.pid)
+        table = cli._process_table() or {}
         assert child.poll() is None
     finally:
         child.kill()
         child.wait()
     assert argv == (["", "3"] if sys.platform.startswith("linux") else None)
     assert not any("WM_ARGV_SENTINEL" in arg for arg in argv or [])
+    assert child.pid not in table
 
 
-def test_running_servers_never_map_a_spaced_directory_to_its_prefix(tmp_path, monkeypatch):
+@pytest.mark.parametrize("source", ["ps", "process table"])
+def test_running_servers_never_map_a_spaced_directory_to_its_prefix(tmp_path, monkeypatch, source):
     prefix, spaced = tmp_path / "legacy", tmp_path / "legacy page"
     prefix.mkdir()
     spaced.mkdir()
     exact = {41: [sys.executable, "-I", "-m", "agent_annotate.sync_server", "--slug-dir", str(spaced),
-                  "--slug", spaced.name, "--port", "8802"]}
-    # `ps` joins argv with spaces and quotes nothing; 42's argv cannot be read (exited, or another user's).
-    table = (f"   41 {' '.join(exact[41])}\n"
-             f"   42 {sys.executable} -m agent_annotate.sync_server --slug-dir {prefix} --port 8803\n")
-    monkeypatch.setattr(subprocess, "run", lambda command, *args, **kwargs: SimpleNamespace(stdout=table))
-    monkeypatch.setattr(cli, "_process_argv", exact.get)
+                  "--slug", spaced.name, "--port", "8802"],
+             43: ["/bin/zsh", "-c", "tail --slug-dir x sync_server.log"]}  # mentions both, serves nothing
+    if source == "ps":
+        # `ps` joins argv with spaces and quotes nothing; 42's argv cannot be read (exited, or another user's).
+        table = (f"   41 {' '.join(exact[41])}\n"
+                 f"   42 {sys.executable} -m agent_annotate.sync_server --slug-dir {prefix} --port 8803\n")
+        monkeypatch.setattr(cli, "_process_table", lambda: None)
+        monkeypatch.setattr(subprocess, "run", lambda command, *args, **kwargs: SimpleNamespace(stdout=table))
+        monkeypatch.setattr(cli, "_process_argv", exact.get)
+    else:
+        monkeypatch.setattr(cli, "_process_table", lambda: dict(exact))
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("no `ps` listing on macOS"))
     assert cli._running_servers(strict=True) == {
         str(spaced.resolve()): [{"pid": 41, "port": 8802, "public_base_path": None}]}
 

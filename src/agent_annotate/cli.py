@@ -57,6 +57,7 @@ skill-directory install used (~/.claude/annotate-state/state and
 import argparse
 import contextlib
 import fcntl
+import functools
 import hashlib
 import ipaddress
 import itertools
@@ -1790,33 +1791,82 @@ def _process_argv(pid: int) -> list[str] | None:
             raw = Path(f"/proc/{int(pid)}/cmdline").read_bytes()
             args = raw[:-1].split(b"\0") if raw.endswith(b"\0") else raw.split(b"\0")
         elif sys.platform == "darwin":
-            import ctypes
-            sysctl = ctypes.CDLL(None, use_errno=True).sysctl
-            sysctl.argtypes = (ctypes.POINTER(ctypes.c_int), ctypes.c_uint, ctypes.c_void_p,
-                               ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p, ctypes.c_size_t)
-            size = ctypes.c_size_t(os.sysconf("SC_ARG_MAX"))
-            buffer = ctypes.create_string_buffer(size.value)
-            name = (ctypes.c_int * 3)(1, 49, int(pid))  # CTL_KERN, KERN_PROCARGS2
-            if sysctl(name, 3, buffer, ctypes.byref(size), None, 0) != 0:
-                return None
-            raw = buffer.raw[:size.value]
-            argc = int.from_bytes(raw[:4], sys.byteorder)
-            # argc, the executable path, NULs padding it to a multiple of 8 bytes, then
-            # argc NUL-terminated arguments and the environment. An empty argv[0] reads
-            # as one more padding NUL, so a NUL where argv[0] must start, anything but
-            # NULs in the padding, or a missing terminator leaves argv unplaced.
-            path_end = raw.index(b"\0", 4) + 1
-            start = path_end + (4 - path_end) % 8
-            parts = raw[start:].split(b"\0", argc)
-            if (raw[path_end:start].strip(b"\0") or raw[start:start + 1] in (b"", b"\0")
-                    or len(parts) <= argc):
-                return None
-            args = parts[:argc]
+            read = _procargs_reader()
+            return _procargs_argv(read(int(pid))) if read else None
         else:
             return None
     except (OSError, ValueError, IndexError, AttributeError):
         return None
     return [os.fsdecode(arg) for arg in args] if raw and args else None
+
+
+def _procargs_reader():
+    """macOS: a function pid -> raw KERN_PROCARGS2 bytes (None when the OS will not say), or None."""
+    try:
+        import ctypes
+        sysctl = ctypes.CDLL(None, use_errno=True).sysctl
+        sysctl.argtypes = (ctypes.POINTER(ctypes.c_int), ctypes.c_uint, ctypes.c_void_p,
+                           ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p, ctypes.c_size_t)
+        buffer = ctypes.create_string_buffer(os.sysconf("SC_ARG_MAX"))
+    except (OSError, ValueError, AttributeError):
+        return None
+
+    def read(pid: int) -> bytes | None:
+        size = ctypes.c_size_t(len(buffer))
+        name = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2
+        if pid <= 0 or sysctl(name, 3, buffer, ctypes.byref(size), None, 0) != 0:
+            return None
+        return ctypes.string_at(buffer, size.value)
+    return read
+
+
+def _procargs_argv(raw: bytes | None) -> list[str] | None:
+    """argv from a macOS KERN_PROCARGS2 buffer, or None when it cannot be placed exactly."""
+    if not raw:
+        return None
+    try:
+        argc = int.from_bytes(raw[:4], sys.byteorder)
+        # argc, the executable path, NULs padding it to a multiple of 8 bytes, then
+        # argc NUL-terminated arguments and the environment. An empty argv[0] reads
+        # as one more padding NUL, so a NUL where argv[0] must start, anything but
+        # NULs in the padding, or a missing terminator leaves argv unplaced.
+        path_end = raw.index(b"\0", 4) + 1
+    except ValueError:
+        return None
+    start = path_end + (4 - path_end) % 8
+    parts = raw[start:].split(b"\0", argc)
+    if (raw[path_end:start].strip(b"\0") or raw[start:start + 1] in (b"", b"\0")
+            or len(parts) <= argc):
+        return None
+    return [os.fsdecode(arg) for arg in parts[:argc]] or None
+
+
+def _process_table() -> dict[int, list[str]] | None:
+    """pid -> exact argv of every process this user may read, in one in-process pass.
+
+    A `ps` listing of the busy M1 cost ~160 ms CPU and each `pgrep -f` ~35 ms, and revive
+    ran up to three listings and six pgreps a minute (2026-11-26). None off macOS or when
+    libproc fails; callers then fall back to `ps` and `pgrep`.
+    """
+    if sys.platform != "darwin":
+        return None
+    read = _procargs_reader()
+    try:
+        import ctypes
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
+        count = libproc.proc_listallpids(None, 0)
+        pids = (ctypes.c_int * (max(count, 0) + 256))()  # room for processes started since
+        count = libproc.proc_listallpids(pids, ctypes.sizeof(pids))
+    except (OSError, AttributeError):
+        return None
+    if not read or count <= 0:
+        return None
+    table = {}
+    for pid in pids[:count]:
+        argv = _procargs_argv(read(pid))
+        if argv:
+            table[pid] = argv
+    return table
 
 
 def _running_servers(strict: bool = False) -> dict:
@@ -1826,26 +1876,32 @@ def _running_servers(strict: bool = False) -> dict:
     (a supervisor, a manual relaunch, a peer session) keeps the ORIGINAL pid in
     the state file forever, so a live page reads as dead everywhere slugs are
     enumerated. slug_dir is the stable identity — pid and port both move.
-    `ps` only finds candidates; each one's arguments are its exact argv.
+    Each server's arguments are its exact argv: from one in-process pass on macOS,
+    else `ps` finds candidates and each is read exactly.
     """
-    try:
-        out = subprocess.run(
-            ["ps", "-ww", "-eo", "pid=,args="], capture_output=True, text=True, timeout=10, check=strict
-        ).stdout
-    except Exception as exc:
-        if strict:
-            raise OSError(f"could not list running page servers with ps: {exc}") from exc
-        return {}
-    found: dict[str, list[dict]] = {}
-    for line in out.splitlines():
-        if "sync_server" not in line or "--slug-dir" not in line:
-            continue
+    table = _process_table()
+    if table is not None:
+        candidates = {pid: argv for pid, argv in table.items() if "--slug-dir" in argv}
+    else:
         try:
-            pid = int(line.split()[0])
-        except ValueError:
-            continue
-        argv = _process_argv(pid)
-        if not argv:
+            out = subprocess.run(
+                ["ps", "-ww", "-eo", "pid=,args="], capture_output=True, text=True, timeout=10, check=strict
+            ).stdout
+        except Exception as exc:
+            if strict:
+                raise OSError(f"could not list running page servers with ps: {exc}") from exc
+            return {}
+        candidates = {}
+        for line in out.splitlines():
+            if "sync_server" in line and "--slug-dir" in line:
+                try:
+                    pid = int(line.split()[0])
+                except ValueError:
+                    continue
+                candidates[pid] = _process_argv(pid)
+    found: dict[str, list[dict]] = {}
+    for pid, argv in sorted(candidates.items()):  # pid order, as `ps` listed them
+        if not argv or not any("sync_server" in arg for arg in argv):
             continue
 
         def _arg(flag, argv=argv):
@@ -3616,9 +3672,19 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
         if (_project_config(project).get("transport") == "funnel"
                 and record.get("transport") != "funnel"):
             return "skipped", "non-Funnel page needs explicit publication; no legacy route created"
-        if _entry_is_dead(record, live):
+        dead = _entry_is_dead(record, live)
+        if dead:
+            # Checked before the rescan: each rescan lists every process (~160 ms CPU on a busy Mac),
+            # and a page that can never come back cost one every minute (2026-11-26).
+            slug_dir = Path(record.get("slug_dir") or "")
+            if not (slug_dir / "current.html").exists():
+                return "skipped", f"no current.html in {slug_dir}"
+            port = int(record.get("port") or 0)
+            if not port:
+                return "skipped", "no recorded port"
             live = _running_servers()
-        if not _entry_is_dead(record, live):
+            dead = _entry_is_dead(record, live)
+        if not dead:
             procs = live.get(str(Path(record.get("slug_dir", "")).resolve())) or []
             if len(procs) == 1 and procs[0]["pid"] != record.get("pid"):
                 # The fleet snapshot can predate a concurrent runtime restart.
@@ -3641,12 +3707,6 @@ def _revive_one(project: str, slug: str, live: dict, dry_run: bool,
             if moved and moved[0] == "rerouted":
                 _save_state_for_project(project, state)
             return moved or ("alive", "")
-        slug_dir = Path(record.get("slug_dir") or "")
-        if not (slug_dir / "current.html").exists():
-            return "skipped", f"no current.html in {slug_dir}"
-        port = int(record.get("port") or 0)
-        if not port:
-            return "skipped", "no recorded port"
         try:
             free = _find_free_port_after(port, registered_pid=record.get("pid"), slug_dir=slug_dir)
         except RuntimeError as e:
@@ -3771,8 +3831,10 @@ def cmd_revive(args) -> int:
         by_session: dict = {}
         for project, slug, record in entries:
             by_session.setdefault(record.get("owner_session"), {})[(project, slug)] = record
+        # One process pass for every exited owner's search, read only if one is needed.
+        processes = functools.cache(_process_table)
         for session, records in by_session.items():
-            refresh_session_owners(session, records, via="watchdog")
+            refresh_session_owners(session, records, via="watchdog", processes=processes)
     for project, slug, _record in entries:
         try:
             outcome, detail = _revive_one(project, slug, live, args.dry_run, live_host)

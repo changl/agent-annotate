@@ -136,6 +136,20 @@ def test_empty_stale_snapshot_adopts_fresh_server_without_creating_duplicate(est
     assert estate.started == []
 
 
+@pytest.mark.parametrize("broken", ["no current.html", "no recorded port"])
+def test_a_page_that_cannot_come_back_is_skipped_without_listing_processes(estate, monkeypatch, broken):
+    if broken == "no current.html":
+        (estate.slug_dir / "current.html").unlink()
+    else:
+        state = cli._load_state_for_project("reviews")
+        state["slugs"]["demo"]["port"] = None
+        cli._save_state_for_project("reviews", state)
+    monkeypatch.setattr(cli, "_running_servers", lambda: pytest.fail("a second process listing every minute"))
+    outcome, detail = cli._revive_one("reviews", "demo", {}, False)
+    assert (outcome, detail.split(" in ")[0]) == ("skipped", broken)
+    assert estate.started == []
+
+
 def test_funnel_default_never_revives_inactive_cloudflare_rounds(estate, monkeypatch):
     state = cli._load_state_for_project('reviews')
     state['slugs']['demo']['transport'] = 'cloudflare_tailscale'

@@ -212,6 +212,7 @@ def test_an_unregistered_legacy_server_is_found_and_reported(estate, page_server
     monkeypatch.setattr(subprocess, "run", lambda command, *args, **kwargs: SimpleNamespace(stdout=legacy)
                         if command[:1] == ["ps"] else original(command, *args, **kwargs))
     monkeypatch.setattr(cli, "_process_argv", argv.get)
+    monkeypatch.setattr(cli, "_process_table", lambda: None)  # the `ps` path, whose text is lossy
     monkeypatch.setattr(version_guard, "_unregistered_servers", UNREGISTERED_SERVERS)
     code, out, _err = _doctor(capsys)
     assert code == 1

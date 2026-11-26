@@ -73,7 +73,7 @@ def test_section_publish_resolves_the_previous_owner(tmp_path, monkeypatch, resu
     monkeypatch.setattr(delivery, "_target_exited", lambda target: target == old)
     monkeypatch.setattr(delivery, "capture_target", lambda session, agent: publisher)
 
-    def resumed_target(session, agent):
+    def resumed_target(session, agent, processes=None):
         assert (session, agent) == (old["session"], old["agent"])
         return replacement if resumed else None
 
