@@ -2,15 +2,16 @@
 import argparse
 import copy
 import http.client
-import io
 import itertools
 import json
+import os
+import runpy
 import shutil
-import subprocess
 import sys
-import tarfile
 import threading
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -105,16 +106,17 @@ def _ids(data, areas=cold.AREAS):
 
 
 def _cold_path(root, gen=None):
-    """The cold file comments.json names (in place, else in the attic)."""
-    if (root / "comments.cold.json").exists():  # d6640fa1's one mutable file: the regression tests run there too
-        return root / "comments.cold.json"
-    gen = gen or _raw(root)[cold.KEY]["gen"]
-    main, attic = root / ".cold" / f"{gen}.json", root / ".cold/attic" / f"{gen}.json"
-    return main if main.exists() or not attic.exists() else attic
+    """The cold generation comments.json names."""
+    return root / ".cold" / f"{gen or _raw(root)[cold.KEY]['gen']}.json"
 
 
 def _cold_data(root, gen=None):
     return json.loads(_cold_path(root, gen).read_text())
+
+
+def _split(root):
+    """Does the page hold a cold generation?"""
+    return bool(list((root / ".cold").glob("*.json")))
 
 
 def request(httpd, path, method="GET", payload=None, headers=None):
@@ -139,6 +141,7 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(delivery, "_orca", lambda *a: {"send": {"accepted": True}})
     monkeypatch.setattr(sync_server, "_now_iso", lambda: "2026-11-26T00:00:00Z")
     monkeypatch.setattr(cold, "MIN_ITEMS", 5)
+    monkeypatch.setattr(cold, "SPLIT", True, raising=False)  # 2.35.0
     counter = {"n": itertools.count(1)}
     monkeypatch.setattr(sync_server.uuid, "uuid4", lambda: uuid.UUID(int=next(counter["n"]) << 80))
     servers = []
@@ -225,7 +228,7 @@ def test_split_page_reads_and_writes_exactly_as_one_file(tmp_path, sandbox, back
     # The first page view migrates: settled older feedback moves out, nothing else changes.
     _same(a, b, root_a, root_b)
     raw = _raw(root_a)
-    assert cold.KEY in raw and cold.exists(root_a) and not cold.exists(root_b)
+    assert cold.KEY in raw and _split(root_a) and not _split(root_b)
     cold_ids = _ids(_cold_data(root_a))
     assert COLD <= cold_ids and not (HOT & cold_ids) and not (_ids(raw) & cold_ids)
     assert json.dumps(store.read_comments(root_a)) == original
@@ -258,7 +261,7 @@ def test_split_page_reads_and_writes_exactly_as_one_file(tmp_path, sandbox, back
     raw = _raw(root_a)
     assert raw[cold.KEY]["docs"] == _docs_sig(_docs(root_a))
     assert _cold_path(root_a, gen).read_bytes() == before
-    assert raw[cold.KEY]["gen"] == gen or not (root_a / ".cold" / f"{gen}.json").exists()  # else in the attic
+    assert raw[cold.KEY]["gen"] >= gen  # numbers only grow
     # Reopened and changes-requested items are not settled: they stay hot.
     assert {"settled", "old-q-3"} <= _ids(raw)
 
@@ -266,7 +269,7 @@ def test_split_page_reads_and_writes_exactly_as_one_file(tmp_path, sandbox, back
 def test_reader_of_a_page_without_cold_store_is_unchanged(tmp_path):
     root = _page(tmp_path / "p")
     assert json.dumps(store.read_comments(root)) == json.dumps(_store())
-    assert cold.merged(root, _store()) == _store() and not cold.exists(root)
+    assert cold.merged(root, _store()) == _store() and not _split(root)
 
 
 def test_small_page_stays_one_file_until_it_grows(tmp_path, sandbox, monkeypatch):
@@ -280,13 +283,14 @@ def test_small_page_stays_one_file_until_it_grows(tmp_path, sandbox, monkeypatch
     for _ in range(3):
         assert request(httpd, "/comments.json?view=page")[0] == 200
         request(httpd, "/api/comments/now/reply", "POST", {"text": "More"})
-    assert not cold.exists(root) and cold.KEY not in _raw(root)
+    assert not _split(root) and cold.KEY not in _raw(root)
     assert str(root) in handler._cold_declined and calls == [1]
 
 
 def _split_with(root, failing_call=None, monkeypatch=None, failing_name=None):
     """One server split, with store.write_bytes failing (before its rename) on call `failing_call`
     or on the first write to a file named `failing_name`."""
+    monkeypatch.setattr(cold, "SPLIT", True, raising=False)  # 2.35.0
     handler = sync_server.make_handler(root, slug="page", bus_dir=None, local_author="reviewer@example.test")
     real, count = store.write_bytes, itertools.count(1)
 
@@ -326,7 +330,9 @@ def test_a_crash_at_any_write_of_a_split_leaves_the_whole_store(tmp_path, monkey
         assert cold.KEY in raw and raw[cold.KEY]["docs"] == _docs_sig(_docs(root))
         assert json.dumps(store.read_comments(root)) == original
         assert reuse or not resplit or "fresh" in _ids(_cold_data(root)) - _ids(raw)
-        assert not list((root / ".cold").glob("*.json"))[1:]  # one generation in place, the rest in the attic
+        # comments.json names the newest generation; nothing half-written is left.
+        assert raw[cold.KEY]["gen"] == max(int(p.stem) for p in (root / ".cold").glob("*.json"))
+        assert not list((root / ".cold").glob(".new-*"))
 
 
 def test_a_cold_file_from_another_split_is_never_merged(tmp_path, monkeypatch):
@@ -335,6 +341,7 @@ def test_a_cold_file_from_another_split_is_never_merged(tmp_path, monkeypatch):
     _split_with(root, None, monkeypatch)
     other = _cold_data(root)
     other["anchors"].popitem()
+    _cold_path(root).chmod(0o644)  # a deliberate change (out of scope for the read-only files)
     _cold_path(root).write_text(json.dumps(other))
     with pytest.raises(ValueError):
         cold.attach(root, _raw(root), fresh=True)
@@ -346,7 +353,8 @@ def _split_hot(root, whole):
     docs = _docs(root)
     rules, sig = _page_rules(docs), _docs_sig(docs)
     hot, data, count = cold.split(whole, rules, _page_keep(whole, docs, rules), sig)
-    hot[cold.KEY]["gen"] = cold._write_generation(root, data).gen
+    index = cold._write_generation(root, data)
+    hot[cold.KEY].update(gen=index.gen, digest=index.digest)
     return cold.attach(root, json.loads(json.dumps(hot))), rules, sig
 
 
@@ -356,18 +364,18 @@ def test_an_item_cold_again_is_read_from_its_new_copy(tmp_path, monkeypatch):
     root = _page(tmp_path / "p")
     whole = _store()
     hot, rules, sig = _split_hot(root, whole)
-    old = hot.index.gen
+    old, digest = hot.index.gen, hot.index.digest
     item = cold.anchor_items(hot, "d:old2", lambda c: True)[1]
     item["text"] = "edited"
     cold.settle(hot, rules, sig)  # moved back, the generation keeps the old copy
     docs = _docs(root)
     hot = cold.rebalance(root, hot, rules, lambda w: _page_keep(w, docs, rules), sig,
                          lambda h: store.write_json(root / "comments.json", h))
-    assert hot.index.gen != old and (root / ".cold/attic" / f"{old}.json").exists()
+    assert hot.index.gen > old and _cold_path(root, old).exists()  # kept for readers that named it
     assert item["id"] not in _ids(hot) and len(hot.index.ids()[item["id"]]) == 1
     area, aid, i = cold.live_id(hot, item["id"])
     assert hot.index.lists[area][aid][i]["text"] == "edited"
-    assert cold.load_index(root, old).lists[area][aid][1]["text"] != "edited"  # the old generation is untouched
+    assert cold.load_index(root, old, digest, fresh=True).lists[area][aid][1]["text"] != "edited"  # the old generation is untouched
     expected = copy.deepcopy(whole)
     expected["anchors"]["d:old2"][1]["text"] = "edited"
     assert json.dumps(store.read_comments(root)) == json.dumps(expected)
@@ -398,46 +406,24 @@ def test_a_changed_checkout_moves_back_in_place(tmp_path):
 
 # ── PR #180 review (orch-20261124): one regression test per finding, each failing on d6640fa1 ──
 
-PREVIOUS = "0f8d63d5"  # main before the cold store: the release a rollback installs
-READER = ("import json, sys\nsys.path.insert(0, sys.argv[1])\nfrom agent_annotate import store\n"
-          "data = store.read_comments(sys.argv[2])\n"
-          "print(json.dumps(sorted(c['id'] for a in ('anchors', 'archived') for i in data.get(a, {}).values() for c in i)))\n")
-
-
-def _previous_release_ids(root, work):
-    """The item ids the previous release's own reader code sees on this page (run in its own interpreter).
-    Without git history (the suite runner's source archive) it reads as that release does: comments.json
-    alone, through the same validator; the cold store adds nothing it would see."""
-    repo = Path(__file__).resolve().parents[1]
-    archive = subprocess.run(["git", "-C", str(repo), "archive", "--format=tar", PREVIOUS, "src/agent_annotate"],
-                             capture_output=True)
-    if archive.returncode:
-        return _ids(sync_server._validate_store(_raw(root)))
-    work.mkdir()
-    with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
-        tar.extractall(work, filter="data")
-    (work / "read.py").write_text(READER)
-    out = subprocess.run([sys.executable, "-I", str(work / "read.py"), str(work / "src"), str(root)],
-                         capture_output=True, text=True, check=True)
-    return set(json.loads(out.stdout))
-
-
-def test_review_1_cold_off_joins_split_pages_for_the_previous_release(tmp_path, sandbox, monkeypatch):
-    from agent_annotate import cli, db_command
-    root = _page(tmp_path / "p")
-    httpd, _ = sandbox(root, "proj")
-    assert request(httpd, "/comments.json?view=page")[0] == 200
-    assert cold.KEY in _raw(root) and len(_ids(_raw(root))) < len(_ids(_store()))
-    monkeypatch.setattr(cli, "_registry_entries", lambda: [("proj", "page", {"slug_dir": str(root)})])
-    try:
-        assert db_command.cmd_cold(argparse.Namespace(cold_action="off")) == 0
-        assert cold.KEY not in _raw(root) and not cold.exists(root) and list((root / ".cold/attic").glob("*.json"))
-        assert request(httpd, "/comments.json?view=page")[0] == 200
-        assert cold.KEY not in _raw(root)  # switched off: the page stays one file
-        assert _previous_release_ids(root, tmp_path / "previous") == _ids(_store())
-        assert json.dumps(store.read_comments(root)) == json.dumps(_store())
-    finally:
-        cold.set_enabled(True)
+def test_review_1_2_34_serves_a_page_2_35_split_and_leaves_it_split(tmp_path, sandbox, monkeypatch):
+    """Rolling 2.35.0 back to 2.34.0 touches no data: 2.34.0 reads, writes and promotes a split page."""
+    root_a, root_b = _page(tmp_path / "a"), _page(tmp_path / "b")
+    _split_with(root_a, None, monkeypatch)  # 2.35.0
+    gen = _raw(root_a)[cold.KEY]["gen"]
+    monkeypatch.setattr(cold, "SPLIT", False)  # 2.34.0
+    (a, _), (b, _) = sandbox(root_a, "proj-a"), sandbox(root_b, "proj-b")
+    _same(a, b, root_a, root_b)
+    assert not _split(root_b)  # 2.34.0 never splits
+    results = [_writes(s, sandbox) for s in (a, b)]
+    assert results[0] == results[1]
+    _same(a, b, root_a, root_b)
+    assert {"settled", "old-q-3", "old-note"} <= _ids(_raw(root_a))  # promoted
+    for root in (root_a, root_b):
+        _publish_v4(root)
+    _same(a, b, root_a, root_b)
+    assert _raw(root_a)[cold.KEY]["gen"] == gen and [p.name for p in (root_a / ".cold").glob("*.json")] == [f"{gen}.json"]
+    assert not _split(root_b)
 
 
 def test_review_2_a_prior_cold_file_put_back_fails_loudly(tmp_path, monkeypatch):
@@ -452,6 +438,7 @@ def test_review_2_a_prior_cold_file_put_back_fails_loudly(tmp_path, monkeypatch)
     _publish_v4(root)
     _split_with(root, None, monkeypatch)
     assert "fresh" in _ids(_cold_data(root)) and "fresh" in _ids(store.read_comments(root))
+    _cold_path(root).chmod(0o644)
     _cold_path(root).write_bytes(v3)  # the v3 cold file back under the v4 comments.json
     with pytest.raises(ValueError):
         store.read_comments(root)
@@ -480,7 +467,7 @@ def test_review_3_plans_restore_after_an_interrupted_split_is_readable(tmp_path,
     assert cold.KEY not in _raw(root)
     with pytest.raises(OSError):
         _split_with(root, None, monkeypatch, "comments.json")  # the next split stops after its cold generation
-    assert cold.exists(root) and cold.KEY not in _raw(root)
+    assert _split(root) and cold.KEY not in _raw(root)
     restore_page(root, backup)
     assert json.dumps(store.read_comments(root)) == original
 
@@ -611,3 +598,306 @@ def test_review_10_review_saves_reuse_plan_documents(tmp_path, sandbox, monkeypa
     for text in ("One", "Two"):
         assert request(httpd, "/api/comments/now/reply", "POST", {"text": text})[0] in (200, 201)
     assert not [path for path in reads if "/plans/" in path]
+
+
+# ── Second review (orch-20261124/review-cold-store-2.md): one test per finding left after the redesign ──
+
+def _damage(path):
+    """Same-length damage with the mtime put back: only the content and ctime tell."""
+    before, body = path.stat(), path.read_bytes()
+    path.chmod(0o644)  # deliberate: the read-only mode is what stops an accidental write
+    path.write_bytes(body.replace(b'"id":"old-note"', b'"id":"bad-note"'))
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert (path.stat().st_size, path.stat().st_mtime_ns) == (before.st_size, before.st_mtime_ns)
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+def test_round2_1_a_changed_generation_is_never_served_from_a_cache(tmp_path, sandbox, backend):
+    root = _page(tmp_path / "p")
+    if backend == "sqlite":
+        store.import_page(root, project="p", slug="page")
+    server, handler = sandbox(root, "proj")
+    paths = ("/comments.json?view=page", "/comments.json", "/api/history", "/api/categories")
+    for path in paths:
+        assert request(server, path)[0] == 200
+    assert "old-note" in _ids(store.snapshot(root).comments)
+    _damage(_cold_path(root))
+    with pytest.raises(ValueError, match="does not match its content"):  # cold.Unreadable
+        store.read_comments(root)
+    with pytest.raises(ValueError):
+        store.snapshot(root).comments
+    with pytest.raises(ValueError):
+        handler.__new__(handler)._v2_load(read_only=True, merged=True)
+    for path in paths[1:3]:
+        assert request(server, path)[0] == 500, path
+    hot = (root / "comments.json").read_bytes()
+    assert request(server, "/api/comments/now", "PUT", {"status": "archived"})[0] == 500
+    assert (root / "comments.json").read_bytes() == hot
+
+
+@pytest.mark.parametrize("cid", ["old-note", "now"])  # cold, and hot as in 2.33.0
+def test_round2_5_a_receipt_shows_its_own_write_not_the_next_writers(tmp_path, sandbox, monkeypatch, cid):
+    root = _page(tmp_path / "p")
+    server, handler = sandbox(root, "proj")
+    assert request(server, "/comments.json?view=page")[0] == 200
+    real, injected = handler._session_fields, []
+
+    def after_commit(self):  # the handler paused after its commit; a rejected writer runs meanwhile
+        if not injected:
+            injected.append(1)
+            status, _, body = request(server, f"/api/comments/{cid}", "PUT",
+                                      {"status": "open", "text": "Rejected text", "decision_request": {}})
+            assert status == 400, body
+        return real(self)
+
+    monkeypatch.setattr(handler, "_session_fields", after_commit)
+    status, _, body = request(server, f"/api/comments/{cid}", "PUT", {"status": "archived"})
+    assert status == 200 and injected, body
+    assert json.loads(body)["text"] != "Rejected text" and json.loads(body)["status"] == "archived"
+    assert "Rejected text" not in (root / "comments.json").read_text()
+    events = [json.loads(line) for line in (root / "proj/page.ndjson").read_text().splitlines()]
+    assert events[-1]["new_status"] == "archived"
+
+
+@pytest.mark.parametrize("live", [False, True])
+def test_round2_6_close_leaves_a_card_answered_after_it_was_listed(tmp_path, sandbox, monkeypatch, capsys, live):
+    from agent_annotate import cli
+    data = _store()
+    data["anchors"]["d:ask"] = [_q("old-ask", "d:ask", "v1", "Never answered?", 80, status="addressed_by_agent",
+                                   created_at="2026-01-01T00:00:00Z")]
+    root = _page(tmp_path / "p", data)
+    server, _ = sandbox(root, "proj")
+    assert request(server, "/comments.json?view=page")[0] == 200 and "old-ask" not in _ids(_raw(root))
+    record = {"slug_dir": str(root), "bus_file": None, "port": server.server_address[1]}
+    monkeypatch.setattr(cli, "_resolve_scoped_slug", lambda *_: ("proj", "page", record))
+
+    def answered_after_selection(_):
+        status, _, body = request(server, "/api/comments/old-ask/decision", "POST", {"verdict": "changes", "text": "Please revise"})
+        assert status == 200, body
+        return {"port": server.server_address[1]} if live else None
+
+    monkeypatch.setattr(cli, "_live_server_for", answered_after_selection)
+    args = argparse.Namespace(slug="page", project=None, older_than="1d", dry_run=False, author="agent:test")
+    assert cli.cmd_close(args) == 0
+    out = capsys.readouterr().out
+    assert "archived 0 card(s)" in out and "left 1 answered while closing: old-ask" in out
+    whole = store.read_comments(root)
+    assert "old-ask" in _ids(whole, ("anchors",)) and "old-ask" not in _ids(whole, ("archived",))
+    status, _, body = request(server, "/api/rounds/submit", "POST", {})
+    assert status == 200 and b"old-ask" in body, body
+
+
+def test_round2_7_generations_are_numbered_written_once_and_cleaned_by_age(tmp_path):
+    root = _page(tmp_path / "p")
+    data = {"anchors": {"d:x": [_note("x", "d:x", "v1", 1)]}, "archived": {}}
+    first = cold._write_generation(root, data)
+    inode, body = _cold_path(root, first.gen).stat().st_ino, _cold_path(root, first.gen).read_bytes()
+    second = cold._write_generation(root, data)  # identical data: a new file all the same
+    assert second.gen == first.gen + 1 and second.digest == first.digest
+    assert (_cold_path(root, first.gen).stat().st_ino, _cold_path(root, first.gen).read_bytes()) == (inode, body)
+    assert cold.cleanup(root, keep=second.gen) == []  # inside the grace: a reader may still name it
+    later = time.time() + cold.GRACE + 1
+    assert cold.cleanup(root, keep=second.gen, now=later) == [first.gen]
+    assert cold.cleanup(root, keep=None, now=later) == []  # the newest stays: numbers never repeat
+    assert cold._write_generation(root, data).gen == second.gen + 1
+    assert cold._write_generation(root, data, floor=10).gen == 11
+
+
+def test_round2_7_a_re_split_of_the_same_data_writes_a_new_generation(tmp_path, monkeypatch):
+    monkeypatch.setattr(cold, "MIN_ITEMS", 5)
+    monkeypatch.setattr(cold, "_reuse", lambda *a: None)
+    root = _page(tmp_path / "p")
+    _split_with(root, None, monkeypatch)
+    old = _raw(root)[cold.KEY]
+    before = _cold_path(root, old["gen"]).stat()
+    _publish_v4(root)
+    _split_with(root, None, monkeypatch)
+    new = _raw(root)[cold.KEY]
+    assert new["gen"] > old["gen"] and _cold_path(root, old["gen"]).stat().st_ino == before.st_ino
+    assert json.dumps(store.read_comments(root)) == json.dumps(_store())
+
+
+def test_round2_8_an_item_named_batch_takes_a_reply_when_cold(tmp_path, sandbox):
+    data = _store()
+    data["anchors"]["s:note"][1]["id"] = "batch"
+    root_a, root_b = _page(tmp_path / "a", copy.deepcopy(data)), _page(tmp_path / "b", data)
+    (a, _), (b, _) = sandbox(root_a, "a"), sandbox(root_b, "b", split=False)
+    assert request(a, "/comments.json?view=page")[0] == 200 and "batch" not in _ids(_raw(root_a))
+    for s in (a, b):
+        assert request(s, "/api/comments/batch/reply", "POST", {"text": "Reply"})[0] == 200
+    assert json.dumps(store.read_comments(root_a)) == json.dumps(store.read_comments(root_b))
+
+
+def test_round2_9_readers_over_many_pages_report_unreadable_not_empty(tmp_path, monkeypatch):
+    from agent_annotate import cli, metrics
+    from agent_annotate import eval as evaluate
+    from agent_annotate.hooks import check_comment_bus
+    monkeypatch.setattr(cold, "MIN_ITEMS", 5)
+    root = _page(tmp_path / "p")
+    monkeypatch.setattr(evaluate, "load_registry", lambda: {"proj/page": {"project": "proj", "slug_dir": str(root)}})
+    monkeypatch.setattr(evaluate, "load_bus", lambda *_: (None, []))
+    whole = evaluate.collect_slugs()["proj/page"]["comments"]
+    _split_with(root, None, monkeypatch)
+    assert evaluate.collect_slugs()["proj/page"]["comments"] == whole
+    _cold_path(root).rename(root / "moved-aside.json")
+    info = evaluate.collect_slugs()["proj/page"]
+    assert "is missing" in info["unreadable"] and info["store"] is None
+    aggregate = metrics._empty()
+    metrics._quality(str(root), aggregate)
+    assert aggregate["unreadable_pages"] == 1 and aggregate["decision_quality"]["cards"] == 0
+    with pytest.raises(cold.Unreadable):
+        cli._load_store({"slug_dir": str(root)})
+    with pytest.raises(cold.Unreadable):
+        check_comment_bus._load_cards(str(root))
+
+
+def test_round2_10_bench_checks_read_a_split_page_whole(tmp_path, monkeypatch):
+    monkeypatch.setattr(cold, "MIN_ITEMS", 5)
+    root = _page(tmp_path / "p")
+    bench = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/bench.py"))
+    spec = {"version": "v2", "count": 1}
+    before = bench["chk_posed"](spec, {}, root)
+    _split_with(root, None, monkeypatch)
+    assert cold.KEY in _raw(root) and bench["chk_posed"](spec, {}, root) == before
+
+
+# ── Third review (orch-20261124/review-cold-store-3.md) ──
+
+def test_round3_3_a_generation_cannot_be_opened_for_writing(tmp_path, monkeypatch):
+    monkeypatch.setattr(cold, "MIN_ITEMS", 5)
+    root = _page(tmp_path / "p")
+    _split_with(root, None, monkeypatch)
+    path = _cold_path(root)
+    assert path.stat().st_mode & 0o777 == 0o444
+    for mode in ("r+b", "ab", "wb"):  # r+b is what a writable mapping needs
+        with pytest.raises(PermissionError):
+            open(path, mode)
+
+
+def test_round3_4_a_retried_split_gives_the_old_generation_its_grace(tmp_path, monkeypatch):
+    monkeypatch.setattr(cold, "MIN_ITEMS", 5)
+    monkeypatch.setattr(cold, "_reuse", lambda *_: None)
+    root = _page(tmp_path / "p")
+    _split_with(root, None, monkeypatch)
+    first = _cold_path(root)
+    _publish_v4(root)
+    with pytest.raises(OSError, match="disk full"):
+        _split_with(root, None, monkeypatch, "comments.json")
+    orphan = _cold_path(root, 2)
+    assert orphan.is_file() and _cold_path(root) == first
+    then = time.time() - cold.GRACE - 5
+    os.utime(orphan, (then, then))  # written long ago, never named
+    reader = _raw(root)  # a reader holding the pointer to 1
+    _split_with(root, None, monkeypatch)
+    assert _cold_path(root).name == "3.json" and first.exists()
+    assert _ids(cold.merged(root, reader)) == _ids(_store())
+    assert cold.cleanup(root, keep=3, now=time.time() + cold.GRACE + 1) == [1, 2]
+
+
+def test_round3_5_a_server_keeps_two_parsed_generations_and_none_deleted(tmp_path, monkeypatch):
+    monkeypatch.setattr(cold, "MIN_ITEMS", 5)
+    monkeypatch.setattr(cold, "GRACE", -1)
+    root = _page(tmp_path / "p")
+    _split_with(root, None, monkeypatch)
+    versions = ["v1", "v2", "v3"]
+    for number in range(4, 10):  # each publish files enough new feedback for a new generation
+        hot = _raw(root)
+        for i in range(20 * number):
+            cid = f"extra-{number}-{i}"
+            hot["anchors"][f"d:{cid}"] = [_note(cid, f"d:{cid}", versions[-1], number * 1000 + i)]
+        store.write_json(root / "comments.json", hot)
+        versions.append(f"v{number}")
+        (root / "versions" / f"v{number}.html").write_text("<p>new</p>")
+        store.write_text(root / "current.meta.json", json.dumps({"current": versions[-1], "history": [{"version": r} for r in versions]}))
+        _split_with(root, None, monkeypatch)
+    cached = {key[1] for key in cold._FILES if key[0] == str(root)}
+    assert _raw(root)[cold.KEY]["gen"] >= 7 and len(cached) <= 2 and cached <= set(cold._numbers(root))
+
+
+def test_round3_6_parallel_bench_jobs_each_read_through_their_own_build(tmp_path, monkeypatch):
+    monkeypatch.setattr(cold, "MIN_ITEMS", 5)
+    root, whole = _page(tmp_path / "p"), _page(tmp_path / "whole")
+    old = tmp_path / "old-src/agent_annotate"  # a build before the cold store: comments.json is all
+    old.mkdir(parents=True)
+    (old / "__init__.py").write_text("")
+    (old / "store.py").write_text("import json\n\ndef read_comments(d):\n    return json.load(open(d + '/comments.json'))\n")
+    g = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/bench.py"))["run_checks"].__globals__
+    monkeypatch.setitem(g, "page_record", lambda home, slug: {"slug_dir": str(home)})
+    new = {"python": sys.executable, "src": Path(__file__).resolve().parents[1] / "src"}
+    scenario = {"checks": [{"check": "posed", "version": "v2", "count": 1}]}
+    want = g["run_checks"]({"home": root, "build": new}, scenario, "page")
+    _split_with(root, None, monkeypatch)
+    real, entered, started = g["CHECKS"]["posed"], threading.Event(), threading.Event()
+
+    def paused(spec, rec, slug_dir):  # the split page's job reads only after the other job started
+        if Path(slug_dir) == root:
+            entered.set()
+            assert started.wait(5)
+        else:
+            started.set()
+        return real(spec, rec, slug_dir)
+
+    monkeypatch.setitem(g["CHECKS"], "posed", paused)
+    with ThreadPoolExecutor(2) as pool:
+        split_job = pool.submit(g["run_checks"], {"home": root, "build": new}, scenario, "page")
+        assert entered.wait(5)
+        whole_job = pool.submit(g["run_checks"], {"home": whole, "build": {"src": tmp_path / "old-src"}}, scenario, "page")
+        assert split_job.result(timeout=60) == want == whole_job.result(timeout=60)
+
+
+@pytest.mark.parametrize("split", [False, True])
+def test_round3_a_writer_never_saves_over_a_comments_json_it_could_not_read(tmp_path, sandbox, monkeypatch, split):
+    root = _page(tmp_path / "p")
+    if split:
+        _split_with(root, None, monkeypatch)
+    hot = root / "comments.json"
+    before = hot.read_bytes()
+    server, _ = sandbox(root, "proj")
+    _eio(monkeypatch)
+    status, _, body = request(server, "/api/comments", "POST", {"id": "new", "anchor_id": "d:new", "text": "New"})
+    assert status == 500 and b"unreadable" in body, body
+    with pytest.raises(store.Unreadable), store.transaction(root) as tx:
+        tx.comments
+    assert request(server, "/comments.json")[0] == 500  # readers too (round 4)
+    with open(hot, "rb") as handle:
+        assert handle.read() == before
+
+
+def _eio(patch):
+    """Reading comments.json fails with EIO (a flaky disk or mount); every other file reads."""
+    def failing(real):
+        def read(path, *args, **kwargs):
+            if path.name == "comments.json":
+                raise OSError(5, "Input/output error")
+            return real(path, *args, **kwargs)
+        return read
+
+    patch.setattr(Path, "read_text", failing(Path.read_text))
+    patch.setattr(Path, "read_bytes", failing(Path.read_bytes))
+
+
+# ── Fourth review (orch-20261124/review-cold-store-4.md) ──
+
+@pytest.mark.parametrize("split", [False, True])
+def test_round4_3_a_read_error_caches_nothing(tmp_path, sandbox, monkeypatch, split):
+    root = _page(tmp_path / "p")
+    if split:
+        _split_with(root, None, monkeypatch)
+    server, _ = sandbox(root, "proj")
+    with monkeypatch.context() as fault:
+        _eio(fault)
+        for path in ("/comments.json", "/comments.json?view=page", "/api/categories"):
+            status, headers, body = request(server, path)  # categories reports page data errors as 400
+            assert status in (400, 500) and b"unreadable" in body, (path, status, body)
+            assert "etag" not in {k.lower() for k in headers}, path
+    status, _, body = request(server, "/comments.json")  # the file never changed: no new signature
+    assert status == 200 and _ids(json.loads(body)) == _ids(_store()) - {"draft"}  # drafts stay the agent's
+
+
+@pytest.mark.parametrize("private", [True, False])
+def test_round4_a_generation_is_as_private_as_its_hot_file(tmp_path, monkeypatch, private):
+    monkeypatch.setattr(cold, "MIN_ITEMS", 5)
+    root = _page(tmp_path / "p")
+    (root / "comments.json").chmod(0o600 if private else 0o644)
+    _split_with(root, None, monkeypatch)
+    assert _cold_path(root).stat().st_mode & 0o777 == (0o400 if private else 0o444)

@@ -122,36 +122,7 @@ def cmd_db(args) -> int:
     return 1 if failed else 0
 
 
-def cmd_cold(args) -> int:
-    """`annotate cold off`: stop splitting, then join every page back to one comments.json (cold.join),
-    each under its store lock. Run before installing a release older than the cold store."""
-    from . import cold
-    from .cli import _registry_entries
-    cold.set_enabled(args.cold_action == "on")
-    if args.cold_action == "on":
-        print("cold store on · pages split on their next view")
-        return 0
-    failed = 0
-    for project, slug, record in _registry_entries():
-        directory = Path(record.get("slug_dir") or "")
-        if not record.get("slug_dir") or not directory.is_dir():
-            continue
-        try:
-            count = cold.join(directory)
-        except (OSError, ValueError) as exc:
-            failed += 1
-            print(f"{project}/{slug} not joined: {exc}")
-            continue
-        print(f"{project}/{slug} " + (f"joined · {count:,} items back in comments.json" if count else "one file"))
-    print("cold store off" + (f" · {failed} page(s) not joined" if failed else " · every page is one comments.json"))
-    return 1 if failed else 0
-
-
 def add_parser(sub) -> None:
-    cp = sub.add_parser("cold", help="turn the cold store off (join every page) or on (operator only)")
-    actions = cp.add_subparsers(dest="cold_action", required=True)
-    actions.add_parser("off", help="stop splitting and join every page back to one comments.json").set_defaults(func=cmd_cold)
-    actions.add_parser("on", help="split again on each page's next view").set_defaults(func=cmd_cold)
     sp = sub.add_parser("db", help="move a page's records into page.db and back (operator only)")
     actions = sp.add_subparsers(dest="db_action", required=True)
     for name, text in (("import", "build page.db from the page's files, diff it, then enable it"),

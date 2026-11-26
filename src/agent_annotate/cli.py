@@ -3239,15 +3239,16 @@ def _store_file(record: dict) -> Path | None:
     return Path(slug_dir) / "comments.json" if slug_dir else None
 
 
-def _read_store_file(path: Path) -> dict:
+def _read_store_file(path: Path, strict=False) -> dict:
     """The store exactly as written, not the flattened view `_load_store` gives.
 
     `close` has to write this back, so it may not lose `schema_version` or
-    turn the `archived` map into a list on the way through.
+    turn the `archived` map into a list on the way through. `strict`: its
+    read before that write (store.read_json_strict).
     """
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    from .store import read_json, read_json_strict
+    data = read_json_strict(path) if strict else read_json(path)
+    if data is None:
         return {"schema_version": 2, "anchors": {}, "archived": {}}
     if not isinstance(data, dict) or not isinstance(data.get("anchors"), dict):
         raise ValueError("expected a v2 comment store with anchors")
@@ -3266,6 +3267,13 @@ def _unanswered_cards(store: dict) -> list[tuple[str, dict]]:
     from .categories import unanswered_card
     return [(c.get("anchor_id") or anchor_id, c) for anchor_id, items in (store.get("anchors") or {}).items()
             if isinstance(items, list) for c in items if unanswered_card(c)]
+
+
+def _closable(c: dict, older_than: float, now: datetime | None = None) -> bool:
+    """What `close` archives: a card nobody answered, at least `older_than` seconds old."""
+    from .categories import unanswered_card
+    age = _age_seconds(c.get("created_at"), now)
+    return unanswered_card(c) and age is not None and age >= older_than
 
 
 def _archive_comment_in_store(store: dict, comment_id: str, author: str, now: str) -> bool:
@@ -3349,10 +3357,10 @@ def cmd_close(args) -> int:
     store = merged(store_path.parent, _read_store_file(store_path))  # cold items too
     stale, young = [], 0
     for anchor_id, c in _unanswered_cards(store):
-        age = _age_seconds(c.get("created_at"), now)
-        if age is None or age < threshold:
+        if not _closable(c, threshold, now):
             young += 1
             continue
+        age = _age_seconds(c.get("created_at"), now)
         stale.append({
             "id": c.get("id") or "?",
             "anchor_id": anchor_id,
@@ -3380,7 +3388,7 @@ def cmd_close(args) -> int:
 
     author = _resolve_author(getattr(args, "author", None))
     ids = [row["id"] for row in stale]
-    archived_ids, failures = [], []
+    archived_ids, failures, answered = [], [], []
     live = _live_server_for(record)
     if live:
         # The page is serving: its server owns comments.json, so go through
@@ -3391,9 +3399,13 @@ def cmd_close(args) -> int:
         if live.get("port"):
             target["local_url"] = f"http://localhost:{live['port']}/"
         for cid in ids:
-            code, payload = _api(target, "POST", f"/api/comments/{cid}/archive", {}, author)
+            # Conditional: a card answered since it was listed is left for Send.
+            code, payload = _api(target, "POST", f"/api/comments/{cid}/archive",
+                                 {"if_unanswered_older_than": threshold}, author)
             if code == 200:
                 archived_ids.append(cid)
+            elif code == 409:
+                answered.append(cid)
             else:
                 failures.append((cid, code, payload))
     else:
@@ -3403,10 +3415,14 @@ def cmd_close(args) -> int:
             from .store import transaction as _locked_store
             from .store import write_json as _atomic_write_json
             with _locked_store(store_path.parent):
-                store = attach(store_path.parent, _read_store_file(store_path))
+                store = attach(store_path.parent, _read_store_file(store_path, strict=True))
                 for cid in ids:
                     promote_id(store, cid)  # a cold card comes back hot first, in this transaction
-                    if _archive_comment_in_store(store, cid, author, stamp):
+                    card = next((c for items in (store.get("anchors") or {}).values() if isinstance(items, list)
+                                 for c in items if isinstance(c, dict) and c.get("id") == cid), None)
+                    if card is not None and not _closable(card, threshold):  # answered since it was listed
+                        answered.append(cid)
+                    elif _archive_comment_in_store(store, cid, author, stamp):
                         archived_ids.append(cid)
                     else:
                         failures.append((cid, 0, "not found in store"))
@@ -3427,6 +3443,8 @@ def cmd_close(args) -> int:
         "older_than": args.older_than,
     })
     print(f"  archived {len(archived_ids)} card(s); {remaining} unanswered card(s) remain.")
+    if answered:
+        print(f"  left {len(answered)} answered while closing: {', '.join(answered)}")
     for cid, code, payload in failures:
         print(f"  FAILED {cid}: HTTP {code} {payload}", file=sys.stderr)
     return 2 if failures else 0
@@ -4997,9 +5015,11 @@ def _load_store(record: dict) -> dict:
     slug_dir = record.get("slug_dir")
     if not slug_dir:
         return {"anchors": {}, "archived": []}
+    from .cold import Unreadable, merged
     try:
-        from .cold import merged
         data = merged(slug_dir, json.loads((Path(slug_dir) / "comments.json").read_text(encoding="utf-8")))
+    except Unreadable:
+        raise  # never an empty page: main() says which page and why
     except Exception:
         return {"anchors": {}, "archived": []}
     if not isinstance(data, dict):
@@ -6146,7 +6166,12 @@ def main():
         # Runs before every prompt; building the full parser costs over a second on a busy Mac.
         sys.exit(cmd_hook_check(None))
     args = build_parser().parse_args()
-    sys.exit(run_command(args))
+    from .store import Unreadable
+    try:
+        sys.exit(run_command(args))
+    except Unreadable as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

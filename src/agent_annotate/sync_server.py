@@ -302,7 +302,11 @@ def _asset_bytes(path: Path) -> bytes:
 # ────────────────────────────────────────────────────────────────────────────
 # V2 storage helpers (file lock + shape coercion)
 # ────────────────────────────────────────────────────────────────────────────
-from .store import _STORE_LOCAL, _STORE_LOCK  # noqa: E402,F401  (tests inspect the held locks)
+from .store import (  # noqa: E402,F401  (tests inspect the held locks)
+    _STORE_LOCAL,
+    _STORE_LOCK,
+    Unreadable,  # noqa: E402  (cold.Unreadable is one)
+)
 from .store import bus_append as _bus_append  # noqa: E402
 from .store import transaction as _locked_store  # noqa: E402
 from .store import write_json as _atomic_write_json  # noqa: E402
@@ -1114,8 +1118,9 @@ def _anchor_miss(artifact_dir: Path, version: str, anchor_id: str, what: str) ->
 
 
 def _load_v2_store(path: Path) -> dict:
-    from .store import read_json
-    raw = read_json(path)
+    """comments.json, validated; empty only when missing: any other read error raises store.Unreadable."""
+    from .store import read_json_strict
+    raw = read_json_strict(path)
     if raw is None:
         return {"schema_version": 2, "anchors": {}, "archived": {}}
     return _validate_store(raw)
@@ -1295,6 +1300,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 return super().handle_one_request()
             except ConnectionError:
                 self.close_connection = True
+            except Unreadable as exc:  # raised by the store load, before any response: say so, never serve less
+                self.close_connection = True
+                self._respond(500, json.dumps({"error": str(exc)}).encode())
 
     protocol_version = "HTTP/1.1"
     timeout = 15  # Bound idle keep-alive sockets, including abandoned browser connections.
@@ -1806,7 +1814,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         route_path = self._strip_base(parsed.path)
         if self._refuse_moved_write(route_path):
             return
-        self._promote_ids = self._route_ids(route_path)
+        self._promote_ids = self._route_ids(route_path, self.command)
 
         if route_path == "/api/reviewer/session":
             return self._reviewer_session()
@@ -1865,7 +1873,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         route_path = self._strip_base(parsed.path)
         if self._refuse_moved_write(route_path):
             return
-        self._promote_ids = self._route_ids(route_path)
+        self._promote_ids = self._route_ids(route_path, self.command)
         if route_path.startswith("/api/comments/") and "/replies/" in route_path:
             return self._v2_reply_note(route_path, "PUT")
         if route_path.startswith("/api/comments/"):
@@ -1880,7 +1888,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         route_path = self._strip_base(parsed.path)
         if self._refuse_moved_write(route_path):
             return
-        self._promote_ids = self._route_ids(route_path)
+        self._promote_ids = self._route_ids(route_path, self.command)
         if route_path.startswith("/api/comments/") and "/replies/" in route_path:
             return self._v2_reply_note(route_path, "DELETE")
         if route_path.startswith("/api/comments/"):
@@ -2033,22 +2041,24 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         return self.artifact_dir / "current.meta.json"
 
     def _store_signature(self):
-        # comments.json names its immutable cold generation (cold.py): its stat covers both.
+        from .cold import stamp
+        # The cold generations' stat too (cold.py): a damaged generation never hides behind a warm cache.
         try:
             stat = self._store_path().stat()
-            return (str(self._store_path()), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+            hot = (str(self._store_path()), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
         except FileNotFoundError:
-            return (str(self._store_path()),)
+            hot = (str(self._store_path()),)
+        return hot + (stamp(self.artifact_dir),)
 
     _promote_ids = ()  # this request's target ids (see _route_ids)
 
     @staticmethod
-    def _route_ids(route_path: str) -> tuple:
+    def _route_ids(route_path: str, method: str) -> tuple:
         """The item a write route targets, raw and unquoted (handlers use either)."""
-        if not route_path.startswith("/api/comments/"):
+        if not route_path.startswith("/api/comments/") or (method, route_path) == ("POST", "/api/comments/batch"):
             return ()
         cid = route_path[len("/api/comments/"):].split("/", 1)[0]
-        return () if cid in ("", "batch") else tuple({cid, urllib.parse.unquote(cid)})
+        return tuple({cid, urllib.parse.unquote(cid)}) if cid else ()
 
     def _v2_load(self, *, read_only=False, merged=False) -> dict:
         """comments.json as a cold.Hot: what writes and the page view use. `merged`: the whole
@@ -2056,14 +2066,21 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
         A writer's load (not read_only) owns the snapshot; the item its route targets, if cold,
         is moved back here, so promotion persists only with that transaction's save."""
-        from .cold import attach, merge, promote_id
+        from .cold import Hot, attach, merge, promote_id
         cls = type(self)
         with _locked_store(self.artifact_dir, write=False):
             signature = self._store_signature()
             snapshot = cls._store_snapshot
             if snapshot is None or snapshot[0] != signature:
+                # Unreadable (not missing) raises for readers too: a 500 caches nothing, so no empty
+                # projection or ETag outlives the fault, and the next request reads again.
                 store = attach(self.artifact_dir, _load_v2_store(self._store_path()))
                 snapshot = (self._store_signature(), store)
+                cls._store_snapshot = snapshot
+            elif not isinstance(snapshot[1], Hot):
+                # A save's bytes (_write_hot), parsed now: no object its handler still reads.
+                body, index = snapshot[1]
+                snapshot = (snapshot[0], Hot(json.loads(body), index=index))
                 cls._store_snapshot = snapshot
             if merged:
                 if cls._store_merged is None or cls._store_merged[0] != snapshot[0]:
@@ -2095,15 +2112,19 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _write_hot(self, store: dict) -> None:
         from .store import write_bytes as _atomic_bytes
-        _atomic_bytes(self._store_path(), json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode(), value=store)
-        type(self)._store_snapshot = (self._store_signature(), store)
+        body = json.dumps(store, ensure_ascii=False, separators=(",", ":")).encode()
+        _atomic_bytes(self._store_path(), body, value=store)
+        # The cache keeps the bytes, never this writer's objects: its handler reads them after the lock
+        # (receipt, bus event) while the next writer would own and change them.
+        type(self)._store_snapshot = (self._store_signature(), (body, getattr(store, "index", None)))
         type(self)._store_responses.clear()
 
     def _split_due(self, store, sig) -> bool:
         """Does comments.json need a new split for the page view's documents (`sig`)?"""
-        from .cold import KEY, MIN_ITEMS, count_items, enabled
-        if not enabled():
-            return False  # `annotate cold off`: a joined page stays one file
+        from . import cold
+        from .cold import KEY, MIN_ITEMS, count_items
+        if not cold.SPLIT:
+            return False  # 2.34.0: a split page is kept as it is, a whole one stays whole
         if KEY in store:
             return store[KEY].get("docs") != sig
         count = count_items(store)
@@ -2367,8 +2388,8 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         latest = urllib.parse.parse_qs(parsed.query).get("latest") == ["1"]
 
         def disk_signature():
-            # comments.json names its immutable cold generation: its stat covers both.
-            paths = [self._store_path(), self._meta_path(), self.artifact_dir / "rounds.ndjson",
+            from .cold import stamp
+            paths =[self._store_path(), self._meta_path(), self.artifact_dir / "rounds.ndjson",
                      *history_buses(bus, BUS_ARCHIVE_ROOT)]
             if not latest:
                 paths.extend(self.artifact_dir / kind for kind in ("versions", "content"))
@@ -2381,7 +2402,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 except FileNotFoundError:
                     signature.append((str(path),))
             # SQLite indexes the bus. The read transaction can update its WAL even when History inputs are unchanged.
-            return (backend(self.artifact_dir) if bus is not None else None, signature)
+            return (backend(self.artifact_dir) if bus is not None else None, signature, stamp(self.artifact_dir))
 
         responses = type(self)._history_responses
         cache = responses.get(latest, {})
@@ -3612,6 +3633,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
 
     def _v2_post_archive(self, comment_id: str, parsed):
         author = self._author(parsed)
+        try:
+            payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            return self._respond(400, b'{"error":"expected a JSON object"}')
+        # `annotate close`: archive only a card still unanswered and old enough, checked under the lock.
+        older_than = payload.get("if_unanswered_older_than")
         with _locked_store(self.artifact_dir):
             store = self._v2_load()
             archived = store.setdefault("archived", {})
@@ -3619,6 +3648,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             for anchor_id, items in list(store["anchors"].items()):
                 for c in list(items):
                     if c.get("id") == comment_id:
+                        if isinstance(older_than, (int, float)) and not isinstance(older_than, bool):
+                            from .cli import _closable
+                            if not _closable(c, older_than):
+                                self._respond(409, b'{"error":"answered, or newer than asked: left as it is"}')
+                                return
                         remember(c, author)
                         c["status"] = "archived"
                         if not human(author) and isinstance(c.get("agent_snapshot"), dict):

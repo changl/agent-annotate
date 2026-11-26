@@ -6,15 +6,18 @@ Those items live in a cold generation; comments.json keeps the rest plus a
 "cold" summary. Merged, the two are exactly the one store every reader saw
 before: the same items, list order and key order.
 
-Generations are immutable and content-addressed: .cold/<digest>.json, where
-the digest is blake2b of the file's bytes. The summary's `gen` is that digest,
-so comments.json names the exact cold content it was split against. Every
-uncached load checks the digest and every range against the file; a mismatch
-raises ValueError (readers fail loudly, writers cannot load a store to persist).
-A generation comments.json no longer names moves to .cold/attic/ (never deleted);
-a reader that raced the move finds it there.
+Generations are numbered and written once: .cold/<n>.json, n one past every
+number this page has used, made read-only (comments.json's read bits), then given its name by a hard
+link that fails if the name exists. A file is never renamed, rewritten or reused.
+The summary names `gen` (n) and `digest` (blake2b of the file's bytes): the first
+read of a file checks the digest and every range, later reads trust it while its
+stat (inode, size, mtime_ns, ctime_ns) is unchanged, and every cache over merged
+data keys on that stat too (`stamp`). Any failure raises Unreadable: readers fail
+loudly, writers cannot load a store to persist. Once comments.json stops naming a
+generation, the next `cleanup` records it retired (RETIRED) and removes it GRACE
+seconds later; the newest file always stays, so numbers only grow.
 
-Summary: {"gen", "docs", "keys": {area: [anchor, ...]}, "lists": {area: {anchor: tokens}}}.
+Summary: {"gen", "digest", "docs", "keys": {area: [anchor, ...]}, "lists": {area: {anchor: tokens}}}.
 `keys` is the merged key order. In `tokens`, [i, j] stands for cold items
 i..j-1 of that list and a string for the next hot item (its id). `docs` is the
 fingerprint of the documents the split was made for (sync_server._docs_sig).
@@ -32,8 +35,10 @@ written before comments.json names it; the old one stays readable until then.
 Moving an item back is one write of comments.json: the item joins its list and
 leaves its range; the generation keeps a copy nobody reads.
 
-Rollback: `annotate cold off` (join) writes every split page back to one
-comments.json under its store lock and stops further splits.
+Releases: 2.34.0 reads, promotes into and writes split pages but never splits
+one (SPLIT off); 2.35.0 splits (SPLIT on). Rolling back from 2.35 to 2.34 so
+touches no data. Once a release that splits goes on, scripts/rollout.py keeps a
+floor of 2.34.0 and never installs anything older.
 """
 
 from __future__ import annotations
@@ -44,16 +49,27 @@ import json
 import os
 import re
 import threading
+import time
 from pathlib import Path
+
+from .store import Unreadable as _Unreadable
 
 KEY = "cold"
 AREAS = ("anchors", "archived")
 DIR = ".cold"
-ATTIC = "attic"
-OFF = "cold-store-off"
+SPLIT = False  # 2.34.0: split pages are read and written, never made
+GRACE = 3600  # seconds a retired generation stays for readers that named it
+RETIRED = "retired"  # in DIR, JSON {n: when comments.json was first seen not naming it}; not *.json, no generation
 # Below this many cold items a page keeps one file.
 MIN_ITEMS = 200
-_DIGEST = re.compile(r"[0-9a-f]{32}")
+_NAME = re.compile(r"([1-9][0-9]{0,17})\.json")
+
+
+class Unreadable(_Unreadable):
+    """A split page whose cold generation is missing, damaged or not the one comments.json names."""
+
+    def __init__(self, slug_dir, why):
+        super().__init__(f"{slug_dir}: earlier feedback is unreadable: {why}")
 
 
 class Hot(dict):
@@ -69,8 +85,8 @@ class Hot(dict):
 class Index:
     """One parsed cold generation, read-only, with what readers derive from it."""
 
-    def __init__(self, data: dict, gen=None):
-        self.gen = gen
+    def __init__(self, data: dict, gen=None, digest=None):
+        self.gen, self.digest = gen, digest
         self.lists = {area: data.get(area) if isinstance(data.get(area), dict) else {} for area in AREAS}
         self._ids = None
         self._stamps = None
@@ -131,7 +147,7 @@ class Index:
 
 
 # ── generations ──────────────────────────────────────────────────────────
-_FILES: dict[tuple, tuple] = {}  # (page dir, gen) -> (file stat, Index); the newest two per page
+_FILES: dict[tuple, tuple] = {}  # (page dir, gen) -> (file stat, digest, Index); the newest two per page
 _FILES_LOCK = threading.Lock()
 
 
@@ -139,124 +155,149 @@ def _digest(body: bytes) -> str:
     return hashlib.blake2b(body, digest_size=16).hexdigest()
 
 
-def _paths(slug_dir, gen):
-    base = Path(slug_dir) / DIR
-    return base / f"{gen}.json", base / ATTIC / f"{gen}.json"
+def _stat(st) -> tuple:
+    return st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns  # ctime: no write can keep it
 
 
-def _find(slug_dir, gen):
-    """(path, stat) of generation `gen`, in place or in the attic (a split may have just moved it)."""
-    if not isinstance(gen, str) or not _DIGEST.fullmatch(gen):
-        raise ValueError(f"comments.json names no valid cold generation: {gen!r}")
-    for path in _paths(slug_dir, gen):
-        try:
-            st = path.stat()
-        except FileNotFoundError:
-            continue
-        return path, (st.st_ino, st.st_size, st.st_mtime_ns)  # a move to the attic keeps all three
-    raise ValueError(f"cold generation {gen} named by comments.json is missing")
-
-
-def load_index(slug_dir, gen, *, fresh=False) -> Index:
-    """Generation `gen`, its digest checked. `fresh`: parsed anew, objects nobody else holds."""
-    path, stat = _find(slug_dir, gen)
-    key = (str(Path(slug_dir)), gen)
-    if not fresh:
-        with _FILES_LOCK:
-            hit = _FILES.get(key)
-        if hit and hit[0] == stat:
-            return hit[1]
+def _numbers(slug_dir) -> dict:
+    """{n: stat} of the generation files on disk."""
+    out = {}
     try:
-        body = path.read_bytes()
+        with os.scandir(Path(slug_dir) / DIR) as entries:
+            for entry in entries:
+                match = _NAME.fullmatch(entry.name)
+                if match:
+                    try:
+                        out[int(match[1])] = entry.stat()
+                    except FileNotFoundError:  # removed by cleanup meanwhile
+                        pass
+    except (FileNotFoundError, NotADirectoryError):
+        pass
+    return out
+
+
+def stamp(slug_dir) -> tuple:
+    """Every generation file's stat: part of each cache key over merged data."""
+    return tuple((n, *_stat(st)) for n, st in sorted(_numbers(slug_dir).items()))
+
+
+def load_index(slug_dir, gen, digest, *, fresh=False) -> Index:
+    """Generation `gen`, its digest checked on first read. `fresh`: parsed anew, objects nobody else holds."""
+    if type(gen) is not int or gen < 1 or not isinstance(digest, str):
+        raise Unreadable(slug_dir, f"comments.json names no valid cold generation ({gen!r})")
+    path, key = Path(slug_dir) / DIR / f"{gen}.json", (str(Path(slug_dir)), gen)
+    try:
+        with open(path, "rb") as stream:
+            stat = _stat(os.fstat(stream.fileno()))
+            with _FILES_LOCK:
+                hit = _FILES.get(key)
+            if not fresh and hit and hit[:2] == (stat, digest):
+                return hit[2]
+            body = stream.read()
     except FileNotFoundError:
-        body = _paths(slug_dir, gen)[1].read_bytes()
-    if _digest(body) != gen:
-        raise ValueError(f"cold generation {gen} does not match its content")
-    data = json.loads(body)
-    index = Index(data if isinstance(data, dict) else {}, gen)
+        raise Unreadable(slug_dir, f"{DIR}/{gen}.json is missing") from None
+    except OSError as exc:
+        raise Unreadable(slug_dir, f"{DIR}/{gen}.json: {exc}") from None
+    if _digest(body) != digest:
+        raise Unreadable(slug_dir, f"{DIR}/{gen}.json does not match its content")
+    try:
+        data = json.loads(body)
+    except ValueError as exc:
+        raise Unreadable(slug_dir, f"{DIR}/{gen}.json: {exc}") from None
+    index = Index(data if isinstance(data, dict) else {}, gen, digest)
     if not fresh:
-        with _FILES_LOCK:
-            for old in [k for k in _FILES if k[0] == key[0] and k != key][:-1]:
-                del _FILES[old]
-            _FILES[key] = (stat, index)
+        _remember(key, (stat, digest, index))
     return index
 
 
-def _write_generation(slug_dir, cold: dict) -> Index:
+def _remember(key, entry) -> None:
+    """Cache one generation's parse, keeping a page's newest two (a reader may still name the older)."""
+    with _FILES_LOCK:
+        _FILES[key] = entry
+        for old in sorted(k for k in _FILES if k[0] == key[0])[:-2]:
+            del _FILES[old]
+
+
+def _fsync_dir(path) -> None:
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _write_generation(slug_dir, cold: dict, floor=0) -> Index:
+    """A new generation numbered past every one this page used (and `floor`), written once."""
     from .store import write_bytes
     body = json.dumps(cold, ensure_ascii=False, separators=(",", ":")).encode()
-    gen = _digest(body)
-    main, attic = _paths(slug_dir, gen)
-    if attic.exists() and not main.exists():
-        os.replace(attic, main)  # the same content was retired once: bring it back
-    if not main.exists():
-        write_bytes(main, body)
-    return load_index(slug_dir, gen)  # parsed from the bytes: no object shared with the store split
-
-
-def retire(slug_dir, keep=()) -> list:
-    """Move every generation but `keep` to the attic (never deleted)."""
     base = Path(slug_dir) / DIR
-    moved = []
-    for path in sorted(base.glob("*.json")) if base.is_dir() else ():
-        if path.stem not in keep:
-            (base / ATTIC).mkdir(exist_ok=True)
-            os.replace(path, base / ATTIC / path.name)
-            moved.append(path.name)
-    return moved
+    temporary = base / f".new-{os.getpid()}-{threading.get_ident()}"
+    write_bytes(temporary, body)
+    try:
+        # Read-only before any name publishes it: no write, mapped or not, can open it. Deliberately
+        # changing a read-only file's bytes in place (chmod, root) is out of scope. Who may read it is
+        # who may read comments.json (private by default: 0400).
+        try:
+            hot_mode = (Path(slug_dir) / "comments.json").stat().st_mode
+        except FileNotFoundError:
+            hot_mode = 0o600
+        os.chmod(temporary, hot_mode & 0o444)
+        gen = max([floor, *_numbers(slug_dir)]) + 1
+        while True:
+            try:
+                os.link(temporary, base / f"{gen}.json")  # fails if the name exists: never overwritten
+                break
+            except FileExistsError:
+                gen += 1
+    finally:
+        temporary.unlink(missing_ok=True)
+    _fsync_dir(base)
+    stat = _stat((base / f"{gen}.json").stat())  # after the unlink: it changes the inode's ctime
+    # Parsed from the bytes: no object shared with the store split.
+    index = Index(json.loads(body), gen, _digest(body))
+    _remember((str(Path(slug_dir)), gen), (stat, index.digest, index))
+    return index
 
 
-def exists(slug_dir) -> bool:
-    base = Path(slug_dir) / DIR
-    return base.is_dir() and any(base.glob("*.json"))
-
-
-def enabled() -> bool:
-    """Splitting is on unless `annotate cold off` set the switch."""
-    from . import paths
-    return not (paths.STATE_DIR / OFF).exists()
-
-
-def set_enabled(on: bool) -> None:
-    from . import paths
-    flag = paths.STATE_DIR / OFF
-    if on:
-        flag.unlink(missing_ok=True)
-    else:
-        flag.parent.mkdir(parents=True, exist_ok=True)
-        flag.write_text("cold store off: pages stay one comments.json (annotate cold on)\n")
-
-
-def join(slug_dir) -> int:
-    """Under the page's store lock, write the whole store back to one comments.json and retire
-    its generations. Returns the items brought back (0 when the page was not split)."""
-    from .store import read_comments, read_json, transaction, write_bytes
-    slug_dir = Path(slug_dir)
-    with transaction(slug_dir):
-        raw = read_json(slug_dir / "comments.json")
-        count = 0
-        if isinstance(raw, dict) and KEY in raw:
-            whole = read_comments(slug_dir)  # fresh and verified: a bad generation refuses here
-            count = count_items(whole) - count_items(raw)
-            write_bytes(slug_dir / "comments.json",
-                        json.dumps(whole, ensure_ascii=False, separators=(",", ":")).encode(), value=whole)
-        retire(slug_dir)
-    return count
+def cleanup(slug_dir, keep=None, now=None) -> list:
+    """Called after comments.json is written, naming `keep` (None: no generation). Every other
+    generation is retired from now on, recorded in RETIRED, and removed GRACE seconds after that.
+    The newest file stays, so numbers never repeat."""
+    from .store import read_json, write_bytes
+    base, files = Path(slug_dir) / DIR, _numbers(slug_dir)
+    now = time.time() if now is None else now
+    retired = read_json(base / RETIRED, {})
+    retired = retired if isinstance(retired, dict) else {}
+    records, removed = {}, []
+    for n in sorted(files)[:-1]:
+        if n == keep:
+            continue
+        since = retired.get(str(n))
+        if isinstance(since, (int, float)) and now - since > GRACE:
+            (base / f"{n}.json").unlink(missing_ok=True)
+            removed.append(n)
+            with _FILES_LOCK:
+                _FILES.pop((str(Path(slug_dir)), n), None)
+        else:
+            records[str(n)] = since if isinstance(since, (int, float)) else now
+    if records != retired:
+        write_bytes(base / RETIRED, json.dumps(records).encode())
+    return removed
 
 
 # ── reading ──────────────────────────────────────────────────────────────
-def _check(hot: Hot) -> None:
+def _check(slug_dir, hot: Hot) -> None:
     """Every range the summary names must lie inside its generation's list."""
     summary, index = hot[KEY], hot.index
     for area in AREAS:
         lists = (summary.get("lists") or {}).get(area)
-        if not isinstance(lists, dict):
-            raise ValueError("comments.json has a malformed cold summary")
+        if not isinstance(lists, dict) or not isinstance((summary.get("keys") or {}).get(area), list):
+            raise Unreadable(slug_dir, "comments.json has a malformed cold summary")
         for aid, tokens in lists.items():
             size = len(index.lists[area].get(aid) or ())
             for t in tokens:
                 if isinstance(t, list) and not (len(t) == 2 and 0 <= t[0] < t[1] <= size):
-                    raise ValueError(f"cold generation {index.gen} lacks {area}/{aid} items {t}")
+                    raise Unreadable(slug_dir, f"{DIR}/{index.gen}.json lacks {area}/{aid} items {t}")
 
 
 def attach(slug_dir, raw: dict, *, fresh=False) -> Hot:
@@ -265,9 +306,9 @@ def attach(slug_dir, raw: dict, *, fresh=False) -> Hot:
     summary = hot.get(KEY)
     if summary is not None:
         if not isinstance(summary, dict):
-            raise ValueError("comments.json has a malformed cold summary")
-        hot.index = load_index(slug_dir, summary.get("gen"), fresh=fresh)
-        _check(hot)
+            raise Unreadable(slug_dir, "comments.json has a malformed cold summary")
+        hot.index = load_index(slug_dir, summary.get("gen"), summary.get("digest"), fresh=fresh)
+        _check(slug_dir, hot)
     return hot
 
 
@@ -580,7 +621,7 @@ def settled(c) -> bool:
 
 def split(store: dict, rules, keep: set, sig):
     """(hot with summary, cold generation content, cold count) for a whole store. `gen` is set on write."""
-    summary = {"gen": None, "docs": sig, "keys": {}, "lists": {}}
+    summary = {"gen": None, "digest": None, "docs": sig, "keys": {}, "lists": {}}
     hot = Hot({k: v for k, v in store.items() if k != KEY})
     cold = {}
     count = 0
@@ -660,7 +701,7 @@ def _own(hot: dict, index) -> Hot:
 def rebalance(slug_dir, store: Hot, rules, keep_of, sig, write_hot) -> Hot:
     """Split the whole store again for these documents; returns what comments.json now holds.
 
-    A new generation is written before comments.json names it; unnamed ones then go to the attic."""
+    A new generation is written before comments.json names it; old ones go later (cleanup)."""
     whole = merge(store) if KEY in store else {k: v for k, v in store.items() if k != KEY}
     keep = keep_of(whole)
     hot, cold, count = split(whole, rules, keep, sig)
@@ -669,19 +710,19 @@ def rebalance(slug_dir, store: Hot, rules, keep_of, sig, write_hot) -> Hot:
             return store
         joined = _own(whole, None)
         write_hot(joined)
-        retire(slug_dir)
+        cleanup(slug_dir)
         return joined
     reused = _reuse(store, whole, rules, keep, sig, hot, cold, count) if KEY in store else None
     if reused is not None:
-        reused[KEY]["gen"] = store.index.gen
+        reused[KEY]["gen"], reused[KEY]["digest"] = store.index.gen, store.index.digest
         hot = _own(reused, store.index)
     else:
-        index = _write_generation(slug_dir, cold)
-        hot[KEY]["gen"] = index.gen
+        index = _write_generation(slug_dir, cold, store.index.gen if KEY in store else 0)
+        hot[KEY]["gen"], hot[KEY]["digest"] = index.gen, index.digest
         hot = _own(hot, index)
-        _check(hot)
+        _check(slug_dir, hot)
     write_hot(hot)
-    retire(slug_dir, keep={hot.index.gen})
+    cleanup(slug_dir, hot.index.gen)
     return hot
 
 

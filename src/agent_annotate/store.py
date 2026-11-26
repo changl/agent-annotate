@@ -5,8 +5,8 @@ Record files of a page directory: comments.json, current.meta.json,
 categories.json, plan-topics.json, cards.json and rounds.ndjson. Outside it:
 the page's bus <bus root>/<project>/<slug>.ndjson and its delivery journal
 <state>/deliveries/<project>/<slug>.json. Settled feedback from older versions
-lives in immutable generations under .cold/ (cold.py): written only by the page
-server, never mirrored into page.db, and merged back in by read_comments.
+lives in numbered write-once generations under .cold/ (cold.py): written only by
+the page server, never mirrored into page.db, and merged back in by read_comments.
 
 Every writer goes through this module, so the storage behind a page can
 change in one place. This is the JSON backend: each function does exactly
@@ -49,12 +49,29 @@ def read_json(path, default=None):
         return default
 
 
-def read_comments(slug_dir) -> dict:
+class Unreadable(ValueError):
+    """A store a writer must not load: saving over it would lose what it holds."""
+
+
+def read_json_strict(path, default=None):
+    """As read_json for a writer: `default` only when the file is missing; any other
+    read or parse error raises Unreadable, so nothing is saved over a store it could not read."""
+    try:
+        return json.loads(Path(path).read_bytes())
+    except FileNotFoundError:
+        return default
+    except (OSError, ValueError) as exc:
+        raise Unreadable(f"{path} is unreadable: {exc}") from None
+
+
+def read_comments(slug_dir, *, strict=False) -> dict:
     """The whole store: comments.json and, merged in, its cold generation (cold.py), checked.
-    Every object is parsed anew: a writer (Tx) may mutate what this returns."""
+    Every object is parsed anew: a writer (Tx) may mutate what this returns. `strict`: a writer's
+    read (read_json_strict)."""
     from .cold import merged
     from .sync_server import _validate_store
-    data = read_json(Path(slug_dir) / "comments.json")
+    path = Path(slug_dir) / "comments.json"
+    data = read_json_strict(path) if strict else read_json(path)
     if data is None:
         return json.loads(json.dumps(_EMPTY_STORE))
     return merged(slug_dir, _validate_store(data), fresh=True)
@@ -110,7 +127,7 @@ class DbSnapshot(Snapshot):
             from .cold import merged
             from .sync_server import _validate_store
             value = self._value("comments.json", None)
-            # The generation this commit names stays readable (in place or in the attic).
+            # The generation this commit names stays readable (cold.cleanup waits GRACE seconds).
             self._parsed["comments"] = (merged(self.dir, _validate_store(value)) if isinstance(value, dict)
                                         else json.loads(json.dumps(_EMPTY_STORE)))
         return self._parsed["comments"]
@@ -145,12 +162,14 @@ def snapshot(slug_dir) -> Snapshot:
     connection committed."""
     if backend(slug_dir) != "sqlite":
         return Snapshot(slug_dir)
+    from .cold import stamp
     key = str(Path(slug_dir).resolve() / DB_NAME)
     with _SNAPSHOT_LOCK:
         conn, version, cached = _SNAPSHOTS.get(key, (None, None, None))
         if conn is None:
             conn = connect(key)
-        current = conn.execute("PRAGMA data_version").fetchone()[0]
+        # The cold generations' stat too: their merged copy is cached with the records.
+        current = (conn.execute("PRAGMA data_version").fetchone()[0], stamp(slug_dir))
         if cached is None or current != version:
             conn.execute("BEGIN")
             try:
@@ -251,8 +270,9 @@ class Tx:
     """One locked read-modify-write of a page. Loads lazily and, on a clean
     exit, writes back only the records whose serialized text changed."""
 
-    def __init__(self, slug_dir):
+    def __init__(self, slug_dir, strict=False):
         self.dir = Path(slug_dir)
+        self.strict = strict  # a writer's transaction: comments.json is read strictly
         self._loaded: dict[str, tuple[object, str]] = {}
         self._events: list[tuple] = []
         self.conn = None
@@ -301,7 +321,7 @@ class Tx:
 
     @property
     def comments(self) -> dict:
-        return self._load("comments", lambda: read_comments(self.dir))
+        return self._load("comments", lambda: read_comments(self.dir, strict=self.strict))
 
     @property
     def meta(self) -> dict:
@@ -361,7 +381,7 @@ def transaction(directory, *, write=True):
             if os.access(path.parent, os.W_OK):
                 raise
             lock = None
-        tx = Tx(directory)
+        tx = Tx(directory, strict=write)
         if lock is None:
             yield tx
             tx._flush()

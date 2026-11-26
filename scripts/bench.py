@@ -422,7 +422,7 @@ def make_sandbox(build: dict, scenario: dict, port_base: int, python: str, provi
         claude_tmp = temp_root / f"claude-{os.getuid()}" / slug
         claude_tmp.mkdir(parents=True, exist_ok=True, mode=0o700)
     return {"root": root, "home": home, "cwd": cwd, "bin": bin_dir, "env": env,
-            "claude_tmp": claude_tmp,
+            "claude_tmp": claude_tmp, "build": {"python": python, "src": build["src"]},
             "settings": settings, "port_base": port_base}
 
 
@@ -583,8 +583,22 @@ def _read_json(path: Path, default):
         return default
 
 
-def _comments(slug_dir: Path) -> list[dict]:
-    store = _read_json(slug_dir / "comments.json", {})
+# The build under test reads its own store (a split page merges its cold generation); run_checks passes
+# each job's build in its `rec`, so parallel jobs never read through another's.
+BUILD = {"python": sys.executable, "src": Path(__file__).resolve().parents[1] / "src"}  # this checkout
+READ_STORE = ("import json, sys\nsys.path.insert(0, sys.argv[1])\ntry:\n    from agent_annotate.store import read_comments\n"
+              "except ImportError:  # a build before store.py: comments.json is the whole store\n"
+              "    read_comments = lambda d: json.load(open(d + '/comments.json'))\n"
+              "print(json.dumps(read_comments(sys.argv[2])))\n")
+
+
+def _comments(slug_dir: Path, build=None) -> list[dict]:
+    if not (slug_dir / "comments.json").is_file():
+        return []
+    build = {**BUILD, **(build or {})}
+    proc = subprocess.run([build["python"], "-I", "-c", READ_STORE, str(build["src"]), str(slug_dir)],
+                          capture_output=True, text=True, timeout=120, check=True)
+    store = json.loads(proc.stdout)
     anchors = store.get("anchors") if isinstance(store, dict) else None
     if not isinstance(anchors, dict):
         anchors = {k: v for k, v in (store or {}).items() if isinstance(v, list)}
@@ -651,13 +665,13 @@ def chk_source_cards(spec, rec, slug_dir):
 
 
 def chk_posed(spec, rec, slug_dir):
-    n = sum(1 for c in _comments(slug_dir) if c.get("decision_request")
+    n = sum(1 for c in _comments(slug_dir, rec.get("build")) if c.get("decision_request")
             and c.get("version") == spec["version"] and c.get("status") != "archived")
     return n >= spec.get("count", 1), f"{n} posed"
 
 
 def chk_disposed(spec, rec, slug_dir):
-    left = [c.get("anchor_id") or c.get("id") for c in _comments(slug_dir)
+    left = [c.get("anchor_id") or c.get("id") for c in _comments(slug_dir, rec.get("build"))
             if c.get("version") == spec["version"]
             and (c.get("status") or "open") in ("open", "addressed_by_agent")]
     return not left, f"still open: {', '.join(map(str, left))}" if left else ""
@@ -700,6 +714,7 @@ def sandbox_problems(sb: dict, records=None) -> list[str]:
 def run_checks(sb: dict, scenario: dict, slug: str | None) -> dict:
     rec = page_record(sb["home"], slug)
     slug_dir = Path(rec["slug_dir"]) if rec and rec.get("slug_dir") else None
+    job = {**(rec or {}), "build": sb.get("build")}  # the record, plus this job's build
     out = {}
     for spec in scenario["checks"]:
         key = spec["check"] + (f":{spec['version']}" if "version" in spec else "")
@@ -707,7 +722,7 @@ def run_checks(sb: dict, scenario: dict, slug: str | None) -> dict:
             ok, detail = False, "no registered page"
         else:
             try:
-                ok, detail = CHECKS[spec["check"]](spec, rec, slug_dir)
+                ok, detail = CHECKS[spec["check"]](spec, job, slug_dir)
             except Exception as e:
                 ok, detail = False, f"{type(e).__name__}: {_clip(e, 160)}"
         out[key] = {"ok": bool(ok), "detail": detail}

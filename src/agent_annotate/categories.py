@@ -138,7 +138,8 @@ def save_findings_sets(page_dir: Path | str, findings_sets: list[dict]) -> dict:
 
 
 def _comments(page_dir):
-    """comments.json as a cold.Hot (findings never go cold; labels count the cold items)."""
+    """comments.json as a cold.Hot (findings never go cold; labels count the cold items).
+    An unreadable file raises store.Unreadable, never reads as empty."""
     from .cold import attach
     from .sync_server import _load_v2_store
     return attach(page_dir, _load_v2_store(safe_path(page_dir, "comments.json")))
@@ -248,7 +249,7 @@ def mark_finding_fixed(page_dir: Path | str, number_or_id, *, by: str, note: str
     proof = validate_proof(page_dir, proof)
     with _locked_store(page_dir):
         store = _comments(page_dir)
-        comment = _finding(store, number_or_id, _json(safe_path(page_dir, "current.meta.json"), {}).get("current"))
+        comment = _finding(store, number_or_id,_json(safe_path(page_dir, "current.meta.json"), {}).get("current"))
         now = datetime.now(timezone.utc).isoformat()
         if comment.get("fixed"):
             comment.setdefault("fixed_history", []).append(comment["fixed"])
