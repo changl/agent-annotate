@@ -5400,15 +5400,9 @@ def cmd_disconnect(args) -> int:
 def cmd_hook_check(args) -> int:
     """The UserPromptSubmit hook, in-process: same code as check-comment-bus.sh
     execs, reading Claude Code's payload from stdin. Always exits 0."""
-    from .hooks.check_comment_bus import main as hook_main
+    from .entry import hook_check
 
-    try:
-        hook_main()
-    except SystemExit:
-        pass
-    except Exception:
-        pass
-    return 0
+    return hook_check()
 
 
 def cmd_prune_bus(args) -> int:

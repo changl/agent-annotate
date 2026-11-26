@@ -27,7 +27,7 @@ mcp = ["mcp>=1.0"]
 browser = ["playwright>=1.50"]
 
 [project.scripts]
-annotate = "agent_annotate.cli:main"
+annotate = "agent_annotate.entry:main"
 
 [project.urls]
 Homepage = "https://github.com/changl/agent-annotate"

@@ -33,7 +33,6 @@ from pathlib import Path
 
 from . import __version__, paths
 from .page_names import page_name
-from .updates import build_identity, runtime_manifest
 
 OK, MISMATCH, SKIP = "OK", "MISMATCH", "SKIP"
 PLUGIN_NAME = "agent-annotate"
@@ -85,6 +84,9 @@ def _package_dir(python: Path) -> Path | None:
 
 def runtime_identity(python: Path) -> dict:
     """{python, package_dir, version, build_id} of the agent_annotate a Python runs."""
+    # updates pulls urllib and importlib.metadata (~60 ms); the prompt hook imports this module every prompt.
+    from .updates import build_identity, runtime_manifest
+
     python = Path(python)
     if os.path.abspath(python.parent.parent) == os.path.abspath(sys.prefix):
         manifest = runtime_manifest()
@@ -423,6 +425,8 @@ def check(*, local_only: bool = False, pages: bool = True, server: tuple[str, st
         if pages:
             rows += _page_rows(release, local_only, scope)
         if server is not None:
+            from .updates import runtime_manifest
+
             record = next((r for p, s, r in _registry() if (p, s) == server), {})
             rows.append(_compare("page", f"{page_name(record)} (this server)", __version__,
                                  runtime_manifest()["build_id"], release,
