@@ -15,7 +15,6 @@ import datetime
 import json
 import os
 import pathlib
-import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -28,11 +27,16 @@ OPEN = ("pending", "accepted", "started", "uncertain")
 BUSY_PERCENT = 80  # Chang 2026-11-26: no new work on a Mac at 80% or more
 BUSY_MIN = 30
 GAP_MIN = 25  # a gap longer than two runs (asleep, off) restarts a Mac's busy clock
+SAMPLE_S = 90  # mac-admit samples every Mac at once and each probe stops at 50 s
+CENSUS_S = 30
 MAC_ADMIT = pathlib.Path.home() / ".local/bin/mac-admit"
 PRESSURE = pathlib.Path.home() / ".local/state/annotate-host-backlog/pressure.json"
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 PS = {"M1Max": [], "M5Max": SSH + ["m5max"], "M1Max16": SSH + ["m1max16"]}  # this script runs on the M1 Max
-ADMIT_LINE = re.compile(r"^(admit|room|wait|stop) (\S+): (.*)$")
+ASLEEP = "ssh_host_offline_or_asleep"
+SLOW = ("ssh_host_or_probe_timeout", "host_probe_failed")  # wm-test probe_host: connected, no sample in time
+REACH = {"ssh_login_refused": "its SSH login was refused", "host_probe_identity": "another Mac answered for it",
+         "not_configured": "it is not in the wm-test config"}
 
 
 def age_min(stamp: str, now: datetime.datetime) -> float:
@@ -87,22 +91,47 @@ def orca_workers(workers: list, objectives: dict) -> dict:
     return out
 
 
-def reading(text: str):
-    """One `mac-admit --no-reserve --mac X` output -> {"idle", "memory", "hot"}, idle None when the Mac answers
-    too slowly to sample, or None when it is off, asleep or refuses SSH (that is not load)."""
-    for line in text.splitlines():
-        match = ADMIT_LINE.match(line.strip())
-        if not match:
+def moment(text: str) -> datetime.datetime:
+    """An ISO time with its zone; raises ValueError, TypeError or AttributeError for anything else."""
+    parsed = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("time without a zone")
+    return parsed
+
+
+def reading(observed: dict) -> dict:
+    """One Mac from `mac-admit --json` -> {"kind": measured | slow | asleep | unreachable, ...}.
+    slow: it answers SSH but not the load check in time; asleep: off or asleep, which is not load."""
+    error = observed.get("error")
+    if error:
+        if error.startswith(ASLEEP):
+            return {"kind": "asleep"}
+        return {"kind": "slow" if error.startswith(SLOW) else "unreachable", "why": error}
+    sample = observed.get("sample") or {}
+    idle, memory = sample.get("cpu_idle_percent"), sample.get("memory_free_percent")
+    if not all(isinstance(v, (int, float)) and 0 <= v <= 100 for v in (idle, memory)):  # NaN fails the range
+        return {"kind": "slow", "why": "sample unreadable"}
+    hot = isinstance(observed.get("cores"), int) and observed.get("all_cores", 0) > observed["cores"]
+    return {"kind": "measured", "idle": float(idle), "memory": float(memory), "hot": hot,
+            "at": sample.get("observed_at")}
+
+
+def load_state(path: pathlib.Path) -> dict:
+    """The busy clocks from the last run; an unusable file or entry restarts only what it held."""
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    kept = {}
+    for mac, entry in (raw.items() if isinstance(raw, dict) else ()):
+        try:
+            moment(entry["since"]), moment(entry["last"])
+            checks, busy = int(entry["checks"]), int(entry["busy"])
+            if checks >= 1 and 0 <= busy <= checks:
+                kept[mac] = {"since": entry["since"], "last": entry["last"], "checks": checks, "busy": busy}
+        except (TypeError, KeyError, ValueError, AttributeError):
             continue
-        rest = match.group(3)
-        if rest.startswith("ssh_host_or_probe_timeout") or rest.startswith("its load sample failed"):
-            return {"idle": None, "memory": None, "hot": False}
-        # The first idle-and-memory pair is the sample; a wait reason before it and the figures after recent
-        # starts both count reservations, which are not load.
-        figures = re.search(r"cpu idle ([\d.]+)%, memory free ([\d.]+)%", rest)
-        if match.group(1) != "stop" and figures:
-            return {"idle": float(figures.group(1)), "memory": float(figures.group(2)), "hot": "too hot" in rest}
-    return None
+    return kept
 
 
 def families(ps_text: str, top: int = 3) -> str:
@@ -123,27 +152,49 @@ def families(ps_text: str, top: int = 3) -> str:
 
 
 def pressure(readings: dict, state: dict, now, census) -> tuple:
-    """readings: {mac: reading() or None}. state: {mac: {"since", "last"}} from the previous run.
-    census(mac) -> families() text, asked only for a Mac being reported. Returns (problems, next state)."""
-    out, following = {}, {}
+    """readings: {mac: reading()}. state: load_state(). census(macs) -> {mac: families() text}, asked only for
+    Macs reported as measured busy. Returns (problems, next state).
+    A run of checks that were busy or too slow to answer, each within GAP_MIN of the last, is reported once it
+    spans BUSY_MIN by the Macs' own sample times; the text says how many checks measured it busy."""
+    out, following, due = {}, {}, {}
     floor = 100 - BUSY_PERCENT
     for mac, r in readings.items():
-        if r is None or (r["idle"] is not None and r["idle"] > floor and r["memory"] > floor):
-            continue  # off, asleep or fine: its clock restarts
-        before = state.get(mac) or {}
-        since = before.get("since") if before.get("last") and age_min(before["last"], now) <= GAP_MIN else None
-        following[mac] = {"since": since or stamp(now), "last": stamp(now)}
-        minutes = age_min(following[mac]["since"], now)
-        if minutes < BUSY_MIN:
+        before = state.get(mac)
+        if r["kind"] == "unreachable":
+            out[f"mac:{mac}"] = f"The host check cannot sample the {mac}: {REACH.get(r['why'].split(':')[0], r['why'])}"
+            if before:
+                following[mac] = before  # nothing known: its clock neither runs nor restarts
             continue
-        if r["idle"] is None:
-            now_text = "too busy to answer its load check"
+        busy = r["kind"] == "measured" and (r["idle"] <= floor or r["memory"] <= floor)
+        if r["kind"] == "asleep" or (r["kind"] == "measured" and not busy):
+            continue  # off, asleep or fine: its clock restarts
+        try:
+            at = moment(r.get("at"))
+        except (TypeError, ValueError, AttributeError):
+            at = now  # a slow Mac has no sample time
+        gap = (at - moment(before["last"])).total_seconds() / 60 if before else None
+        if gap is not None and 0 <= gap <= GAP_MIN:
+            run = {**before, "last": at.isoformat(), "checks": before["checks"] + 1, "busy": before["busy"] + busy}
         else:
-            now_text = f"CPU {100 - r['idle']:.0f}% busy, memory {100 - r['memory']:.0f}% used"
-        now_text += ", running hot so macOS switched cores off" if r["hot"] else ""
-        using = census(mac)
-        out[f"mac:{mac}"] = (f"The {mac} has been over {BUSY_PERCENT}% busy for {int(minutes)} min ({now_text})"
-                             + (f"; using the most CPU: {using}" if using else ""))
+            run = {"since": at.isoformat(), "last": at.isoformat(), "checks": 1, "busy": int(busy)}
+        following[mac] = run
+        if (minutes := (at - moment(run["since"])).total_seconds() / 60) >= BUSY_MIN:
+            due[mac] = (r, run, int(minutes))
+    using = census([mac for mac, (r, _, _) in due.items() if r["kind"] == "measured"]) if due else {}
+    for mac, (r, run, minutes) in due.items():
+        if r["kind"] == "measured":
+            now_text = f"now CPU {100 - r['idle']:.0f}% busy, memory {100 - r['memory']:.0f}% used"
+            now_text += ", running hot so macOS switched cores off" if r["hot"] else ""
+        else:
+            now_text = "now too busy to answer"
+        if not run["busy"]:
+            text = f"The {mac} has not answered its load check for {minutes} min"
+        elif run["busy"] == run["checks"]:
+            text = f"The {mac} has been over {BUSY_PERCENT}% busy for {minutes} min ({now_text})"
+        else:
+            text = (f"The {mac} has been over {BUSY_PERCENT}% busy or too busy to answer for {minutes} min "
+                    f"(measured busy in {run['busy']} of {run['checks']} checks; {now_text})")
+        out[f"mac:{mac}"] = text + (f"; using the most CPU: {using[mac]}" if using.get(mac) else "")
     return out, following
 
 
@@ -155,21 +206,38 @@ def _run(command: list, timeout: int) -> str:
         return ""
 
 
-def mac_pressure(now, save: bool) -> dict:
-    # mac-admit runs on its own python3 (it needs 3.11); launchd's PATH puts Homebrew's first.
-    macs = list(PS)
+def census(macs: list) -> dict:
+    """What uses each Mac's CPU, all Macs at once; an empty text when ps does not answer in time."""
+    macs = [mac for mac in macs if mac in PS]
+    if not macs:
+        return {}
     with ThreadPoolExecutor(len(macs)) as pool:
-        outputs = pool.map(lambda mac: _run([str(MAC_ADMIT), "--no-reserve", "--mac", mac], 120), macs)
-    readings = {mac: reading(text) for mac, text in zip(macs, outputs)}
+        texts = pool.map(lambda mac: families(_run(PS[mac] + ["ps", "-axo", "pcpu=,comm="], CENSUS_S)), macs)
+    return dict(zip(macs, texts))
+
+
+def sample_macs() -> list:
+    # mac-admit needs Python 3.11 and runs on its own python3; launchd's PATH puts Homebrew's first.
+    proc = subprocess.run([str(MAC_ADMIT), "--json"], capture_output=True, text=True, timeout=SAMPLE_S,
+                          stdin=subprocess.DEVNULL)
     try:
-        state = json.loads(PRESSURE.read_text())
-    except (OSError, ValueError):
-        state = {}
-    problems, following = pressure(readings, state, now,
-                                   lambda mac: families(_run(PS[mac] + ["ps", "-axo", "pcpu=,comm="], 60)))
+        observed = json.loads(proc.stdout)
+    except ValueError:
+        observed = None
+    if proc.returncode or not isinstance(observed, list) or not all(
+            isinstance(o, dict) and isinstance(o.get("target"), str) for o in observed):
+        raise RuntimeError(f"mac-admit exited {proc.returncode}: {(proc.stderr.strip() or proc.stdout.strip())[-160:]}")
+    return observed
+
+
+def mac_pressure(now, save: bool) -> dict:
+    """Raises when the Macs cannot be sampled; the clocks on disk are then kept for the next run."""
+    problems, following = pressure({o["target"]: reading(o) for o in sample_macs()}, load_state(PRESSURE), now, census)
     if save:
         PRESSURE.parent.mkdir(parents=True, exist_ok=True)
-        PRESSURE.write_text(json.dumps(following, sort_keys=True))
+        partial = PRESSURE.with_suffix(".partial")
+        partial.write_text(json.dumps(following, sort_keys=True))
+        os.replace(partial, PRESSURE)  # a run stopped mid-write keeps the previous clocks
     return problems
 
 
@@ -189,6 +257,17 @@ def registered(project: str) -> set:
 
 
 def collect(now, save: bool = True) -> dict:
+    with ThreadPoolExecutor(1) as pool:
+        macs = pool.submit(mac_pressure, now, save)  # sampling the Macs over SSH overlaps the queue reads
+        problems = queues(now)
+        try:
+            problems |= macs.result()
+        except Exception as error:  # noqa: BLE001 - the Mac check is extra and must never cost the queue report
+            problems["macs:unreadable"] = f"The host check could not sample the Macs: {str(error)[:200] or type(error).__name__}"
+    return problems
+
+
+def queues(now) -> dict:
     journals = {}
     for path in sorted(DELIVERIES.glob("*/*.json")):
         if path.stem not in registered(path.parent.name):  # an unpublished page keeps its journal
@@ -214,10 +293,6 @@ def collect(now, save: bool = True) -> dict:
         problems |= orca_workers(workers, objectives)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         problems["orca:unreadable"] = f"The host check could not read Orca: {type(error).__name__}"
-    try:
-        problems |= mac_pressure(now, save)
-    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
-        problems["macs:unreadable"] = f"The host check could not sample the Macs: {type(error).__name__}"
     return problems
 
 

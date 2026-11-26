@@ -51,17 +51,31 @@ def test_workers_flag_only_those_asking_for_action():
     assert hb.orca_workers(workers, {"run_x": "FLD"}) == {"worker:ctx_a": 'An Orca worker in "FLD" is stuck: permission'}
 
 
-def test_reading_takes_the_sample_and_tells_slow_from_asleep():
-    # Live mac-admit line, 2026-11-26: the reason and the after-starts figures count a reservation, not load.
-    assert hb.reading("wait M1Max: cpu idle 12% < 20% (1 recent starts reserved) (cpu idle 52%, memory free 82%, "
-                      "disk free 96 GB, 10 cores; after 1 recent starts: cpu idle 12%, memory free 76%)"
-                      ) == {"idle": 52.0, "memory": 82.0, "hot": False}
-    assert hb.reading("admit M1Max: cpu idle 59%, memory free 82%, disk free 98 GB, "
-                      "8 of 10 cores (macOS switched the rest off: too hot), room 1.9 cores")["hot"] is True
-    assert hb.reading("stop M1Max16: ssh_host_or_probe_timeout:M1Max16")["idle"] is None
-    assert hb.reading("wait M1Max16: its load sample failed (host_probe_failed:M1Max16)")["idle"] is None
-    assert hb.reading("stop M5Max: ssh_host_offline_or_asleep:M5Max") is None
-    assert hb.reading("") is None
+def sample(mac, idle, minutes_ago=0.0, memory=60, cores=10, all_cores=10):
+    """One Mac as `mac-admit --json` prints it."""
+    at = (NOW - datetime.timedelta(minutes=minutes_ago)).isoformat()
+    return {"target": mac, "cores": cores, "all_cores": all_cores,
+            "sample": {"cpu_idle_percent": idle, "memory_free_percent": memory, "observed_at": at}}
+
+
+def runs(observations, state=None, census=lambda macs: {}):
+    """Feed successive mac-admit outputs through pressure(); returns each run's problems and the last state."""
+    state, seen = state or {}, []
+    for observed in observations:
+        got, state = hb.pressure({o["target"]: hb.reading(o) for o in observed}, state, NOW, census)
+        seen.append(got)
+    return seen, state
+
+
+def test_reading_keeps_the_measured_figures_and_the_failure_kind():
+    assert hb.reading(sample("M1Max", 20.4)) == {"kind": "measured", "idle": 20.4, "memory": 60.0, "hot": False,
+                                                 "at": NOW.isoformat()}
+    assert hb.reading(sample("M1Max", 50, cores=6))["hot"] is True
+    for slow in ("ssh_host_or_probe_timeout:M1Max16", "host_probe_failed:M1Max16"):
+        assert hb.reading({"target": "M1Max16", "error": slow})["kind"] == "slow"
+    assert hb.reading(sample("M5Max", float("nan")))["kind"] == "slow"
+    assert hb.reading({"target": "M5Max", "error": "ssh_host_offline_or_asleep:M5Max"}) == {"kind": "asleep"}
+    assert hb.reading({"target": "M5Max", "error": "ssh_login_refused:M5Max"})["kind"] == "unreachable"
 
 
 def test_families_sum_cpu_by_command_and_count_simulators_as_one():
@@ -71,23 +85,73 @@ def test_families_sum_cpu_by_command_and_count_simulators_as_one():
     assert hb.families(ps) == "iOS simulators about 6.5 cores (2 processes), fseventsd about 1.1 cores (1 process)"
 
 
-def test_a_mac_is_reported_after_30_busy_minutes_and_a_gap_restarts_its_clock():
-    busy, fine = {"idle": 5.0, "memory": 60.0, "hot": False}, {"idle": 50.0, "memory": 60.0, "hot": False}
+def test_the_clock_uses_the_sample_times_and_the_measured_idle():
     asked = []
 
-    def census(mac):
-        asked.append(mac)
-        return "fseventsd about 1.1 cores (1 process)"
-    state = {"M1Max16": {"since": ago(40), "last": ago(10)},  # busy since 40 min, seen 10 min ago
-             "M5Max": {"since": ago(300), "last": ago(200)},  # an old run: asleep since
-             "M1Max": {"since": ago(40), "last": ago(10)}}
-    got, following = hb.pressure({"M1Max16": busy, "M5Max": busy, "M1Max": fine}, state, NOW, census)
-    assert list(got) == ["mac:M1Max16"] and asked == ["M1Max16"]
-    assert got["mac:M1Max16"].startswith("The M1Max16 has been over 80% busy for 40 min (CPU 95% busy")
-    assert following == {"M1Max16": {"since": ago(40), "last": ago(0)}, "M5Max": {"since": ago(0), "last": ago(0)}}
-    slow = {"idle": None, "memory": None, "hot": False}
-    got, _ = hb.pressure({"M1Max16": slow, "M5Max": None}, state, NOW, lambda mac: "")
-    assert got == {"mac:M1Max16": "The M1Max16 has been over 80% busy for 40 min (too busy to answer its load check)"}
-    full_memory = {"idle": 60.0, "memory": 15.0, "hot": True}
-    got, _ = hb.pressure({"M1Max": full_memory}, state, NOW, lambda mac: "")
-    assert "memory 85% used, running hot" in got["mac:M1Max"]
+    def census(macs):
+        asked.extend(macs)
+        return {mac: "rustc about 3.0 cores (3 processes)" for mac in macs}
+    # Sampled 30.5, 20.5, 10.5 and 0.5 min ago: 30 min apart by the Mac's clock, though the runs spanned 30.5.
+    seen, _ = runs([[sample("M1Max16", 5, minutes_ago=m)] for m in (30.5, 20.5, 10.5, 0.5)], census=census)
+    assert seen[:3] == [{}, {}, {}] and asked == ["M1Max16"]
+    assert seen[3] == {"mac:M1Max16": "The M1Max16 has been over 80% busy for 30 min (now CPU 95% busy, memory 40% "
+                                      "used); using the most CPU: rustc about 3.0 cores (3 processes)"}
+    seen, _ = runs([[sample("M1Max16", 5, minutes_ago=m)] for m in (29.5, 20, 10, 0.5)])
+    assert seen[3] == {}  # 29 min by the sample times
+    seen, _ = runs([[sample("M1Max", 20.4, minutes_ago=m)] for m in (40, 30, 20, 10, 0)])
+    assert seen[-1] == {}  # 79.6% busy is under the line even though mac-admit prints it as 20% idle
+    seen, _ = runs([[sample("M1Max", 60, memory=15, cores=6, minutes_ago=m)] for m in (30, 20, 10, 0)])
+    assert "memory 85% used, running hot" in seen[-1]["mac:M1Max"]
+
+
+def test_failed_probes_never_read_as_measured_load():
+    slow = {"target": "M1Max16", "error": "ssh_host_or_probe_timeout:M1Max16"}
+    asked = []
+    seen, state = runs([[slow]] * 4, census=lambda macs: asked.extend(macs) or {})
+    assert seen == [{}] * 4 and state["M1Max16"]["checks"] == 4 and state["M1Max16"]["busy"] == 0
+    # A slow sample has no sample time of its own, so it counts at the run's time; spread over 30 min:
+    state = {"M1Max16": {"since": ago(30), "last": ago(10), "checks": 3, "busy": 0}}
+    seen, _ = runs([[slow]], state=state, census=lambda macs: asked.extend(macs) or {})
+    assert seen[0] == {"mac:M1Max16": "The M1Max16 has not answered its load check for 30 min"} and asked == []
+    mixed = {"M1Max16": {"since": ago(30), "last": ago(10), "checks": 3, "busy": 1}}
+    seen, _ = runs([[sample("M1Max16", 1)]], state=mixed)
+    assert seen[0]["mac:M1Max16"].startswith("The M1Max16 has been over 80% busy or too busy to answer for 30 min "
+                                             "(measured busy in 2 of 4 checks; now CPU 99% busy")
+
+
+def test_asleep_restarts_the_clock_and_a_refused_login_is_reported_and_keeps_it():
+    state = {mac: {"since": ago(40), "last": ago(10), "checks": 4, "busy": 4} for mac in ("M5Max", "M1Max16")}
+    got, following = hb.pressure({"M5Max": {"kind": "asleep"},
+                                  "M1Max16": hb.reading({"target": "M1Max16", "error": "ssh_login_refused:M1Max16"})},
+                                 state, NOW, lambda macs: {})
+    assert got == {"mac:M1Max16": "The host check cannot sample the M1Max16: its SSH login was refused"}
+    assert following == {"M1Max16": state["M1Max16"]}
+    # A record older than two runs restarts the clock rather than alerting on one sample.
+    seen, _ = runs([[sample("M5Max", 0)]], state={"M5Max": {"since": ago(300), "last": ago(200), "checks": 9, "busy": 9}})
+    assert seen == [{}]
+
+
+def test_unusable_state_restarts_only_what_it_held(tmp_path):
+    path = tmp_path / "pressure.json"
+    path.write_text("[]")
+    assert hb.load_state(path) == {}
+    good = {"since": ago(20), "last": ago(10), "checks": 2, "busy": 2}
+    path.write_text(json.dumps({"M1Max": good, "M5Max": {"since": "yesterday"}, "M1Max16": [],
+                                "X": {**good, "busy": 5}, "Y": {**good, "last": "2026-11-26T08:00:00"}}))
+    assert hb.load_state(path) == {"M1Max": good}
+
+
+def test_a_failed_mac_check_keeps_the_queue_report_and_the_clocks(tmp_path, monkeypatch):
+    clocks = json.dumps({"M1Max": {"since": ago(20), "last": ago(10), "checks": 2, "busy": 2}})
+    monkeypatch.setattr(hb, "PRESSURE", tmp_path / "pressure.json")
+    hb.PRESSURE.write_text(clocks)
+    monkeypatch.setattr(hb, "MAC_ADMIT", tmp_path / "missing-mac-admit")
+    monkeypatch.setattr(hb, "queues", lambda now: {"send:reviews/a": "waiting"})
+    got = hb.collect(NOW)
+    assert got["send:reviews/a"] == "waiting" and got["macs:unreadable"].startswith("The host check could not sample")
+    assert hb.PRESSURE.read_text() == clocks
+    monkeypatch.setattr(hb, "sample_macs", lambda: [sample("M1Max", 5)])
+    monkeypatch.setattr(hb, "census", lambda macs: {})
+    assert hb.collect(NOW) == {"send:reviews/a": "waiting"}  # 20 min of a 30 min run so far
+    assert json.loads(hb.PRESSURE.read_text())["M1Max"]["checks"] == 3
+    assert [p.name for p in tmp_path.iterdir()] == ["pressure.json"]  # written whole, no partial left
