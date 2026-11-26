@@ -4,9 +4,10 @@
 // Mails Chang when a problem lasts two checks, again only for something new or every 6 h while it lasts, and once
 // when all is clear. No AI. Off: disable schedule f/ops/backlog_watch.
 const STATE = "f/ops/backlog_watch_state";
+const HOST = "f/ops/host_backlog"; // scripts/host_backlog.py on the M1 Max: page Sends and Orca queues Docker cannot see
 const KEY = "f/fld_ops/sendgrid_api_key"; // the SendGrid key f/fld_ops/down_alert already mails Chang with
 const TO = "changl@gmail.com";
-export const LIMITS = { waitMin: 5, runMin: 60, failStreak: 3, confirmChecks: 2, remindHours: 6 };
+export const LIMITS = { waitMin: 5, runMin: 60, failStreak: 3, confirmChecks: 2, remindHours: 6, hostQuietMin: 30 };
 
 type Job = { id: string; script_path?: string; running: boolean; scheduled_for: string; started_at?: string | null };
 type Run = { success: boolean; canceled?: boolean };
@@ -32,6 +33,15 @@ export function problems(queue: Job[], runs: Record<string, Run[]>, now: number)
   return out;
 }
 
+export function hostProblems(raw: unknown, now: number): Record<string, string> {
+  let host: { at?: string; problems?: Record<string, string> } = {};
+  try { host = (typeof raw === "string" ? JSON.parse(raw) : raw) ?? {}; } catch { /* unreadable reads as quiet */ }
+  const quiet = host.at ? Math.round((now - Date.parse(host.at)) / 60000) : null;
+  if (quiet === null || quiet > LIMITS.hostQuietMin)
+    return { "host:quiet": `The M1Max host check (page Sends, Orca mail) has not reported for ${quiet ?? "an unknown number of"} min` };
+  return host.problems ?? {};
+}
+
 export function decide(state: State, current: Record<string, string>, now: number) {
   const seen: Record<string, number> = {};
   for (const k of Object.keys(current)) seen[k] = (state.seen?.[k] ?? 0) + 1;
@@ -41,16 +51,17 @@ export function decide(state: State, current: Record<string, string>, now: numbe
   const due = confirmed.length > 0 && now - (state.mail_at ?? 0) >= LIMITS.remindHours * 3600e3;
   if (fresh.length || due) {
     const lines = confirmed.map((k) => `- ${current[k]}${fresh.includes(k) ? " (new)" : ""}`);
-    const subject = `Windmill work is piling up on the M1Max: ${confirmed.length} problem${confirmed.length > 1 ? "s" : ""}`;
+    const subject = `Work is piling up on the M1Max: ${confirmed.length} problem${confirmed.length > 1 ? "s" : ""}`;
     const body = [`Found ${new Date(now).toISOString()}:`, ...lines, "",
-      `Waiting means queued over ${LIMITS.waitMin} min past its start time; long means running over ${LIMITS.runMin} min.`,
+      `Windmill: waiting means queued over ${LIMITS.waitMin} min past its start time; long means running over ${LIMITS.runMin} min.`,
+      "Pages and Orca: a Send, a coordinator's mail or a worker's question untouched for 30 min, or a worker Orca marks stuck.",
       `No repeat unless something new appears; a reminder every ${LIMITS.remindHours} h while it lasts; one mail when clear.`,
       "Sent by Windmill f/ops/backlog_watch every 5 min (no AI)."].join("\n");
     return { next: { seen, mailed: confirmed, mail_at: now }, mail: { subject, body } };
   }
   if (!confirmed.length && state.mailed?.length)
     return { next: { seen, mailed: [], mail_at: state.mail_at },
-             mail: { subject: "Windmill queue is clear again", body: `Clear at ${new Date(now).toISOString()}.\n\nSent by Windmill f/ops/backlog_watch.` } };
+             mail: { subject: "M1Max queues are clear again", body: `Clear at ${new Date(now).toISOString()}.\n\nSent by Windmill f/ops/backlog_watch.` } };
   return { next: { seen, mailed, mail_at: state.mail_at }, mail: null };
 }
 
@@ -71,7 +82,9 @@ export async function main(dry_run: boolean = false) {
     call(`w/${ws}/schedules/list?per_page=100`)]);
   const runs = Object.fromEntries(await Promise.all(schedules.filter((s: any) => s.enabled).map(async (s: any) =>
     [s.path, await call(`w/${ws}/jobs/completed/list?schedule_path=${encodeURIComponent(s.path)}&per_page=${LIMITS.failStreak + 2}`)])));
-  const current = problems(queue, runs, now);
+  let host: unknown = null;
+  try { host = await call(`w/${ws}/variables/get_value/${HOST}`); } catch { /* missing reads as quiet */ }
+  const current = { ...problems(queue, runs, now), ...hostProblems(host, now) };
   let state: State = {};
   let exists = true;
   try { state = JSON.parse(await call(`w/${ws}/variables/get_value/${STATE}`)); } catch { exists = false; }

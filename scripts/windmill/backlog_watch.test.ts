@@ -1,6 +1,6 @@
 // bun test scripts/windmill
 import { expect, test } from "bun:test";
-import { decide, problems } from "./backlog_watch";
+import { decide, hostProblems, problems } from "./backlog_watch";
 
 const now = Date.parse("2026-11-26T07:30:00Z");
 const ago = (min: number) => new Date(now - min * 60000).toISOString();
@@ -35,7 +35,7 @@ test("mails once a problem lasts two checks, again only for something new, a rem
   let r = decide({}, one, now);
   expect(r.mail).toBeNull(); // a single check is not yet a backlog
   r = decide(r.next, one, now + 300e3);
-  expect(r.mail?.subject).toBe("Windmill work is piling up on the M1Max: 1 problem");
+  expect(r.mail?.subject).toBe("Work is piling up on the M1Max: 1 problem");
   expect(r.mail?.body).toContain("- f/a: 3 waiting for a worker, the oldest 9 min (new)");
   r = decide(r.next, one, now + 600e3);
   expect(r.mail).toBeNull(); // unchanged: no repeat
@@ -43,13 +43,23 @@ test("mails once a problem lasts two checks, again only for something new, a rem
   r = decide(r.next, two, now + 900e3);
   expect(r.mail).toBeNull(); // the new one has lasted only one check
   r = decide(r.next, two, now + 1200e3);
-  expect(r.mail?.subject).toBe("Windmill work is piling up on the M1Max: 2 problems");
+  expect(r.mail?.subject).toBe("Work is piling up on the M1Max: 2 problems");
   expect(r.mail?.body).toContain("- f/x: 1 waiting for a worker, the oldest 6 min (new)");
   expect(r.mail?.body).not.toContain("9 min (new)");
   r = decide(r.next, two, now + 1200e3 + 6 * 3600e3);
-  expect(r.mail?.subject).toBe("Windmill work is piling up on the M1Max: 2 problems"); // 6 h reminder
+  expect(r.mail?.subject).toBe("Work is piling up on the M1Max: 2 problems"); // 6 h reminder
   r = decide(r.next, {}, now + 7 * 3600e3);
-  expect(r.mail?.subject).toBe("Windmill queue is clear again");
+  expect(r.mail?.subject).toBe("M1Max queues are clear again");
   r = decide(r.next, {}, now + 7 * 3600e3 + 300e3);
   expect(r.mail).toBeNull();
+});
+
+test("passes on the host check's problems, and says when it goes quiet", () => {
+  const send = { "send:rebex/rebex": "Your Send on the rebex/rebex page has waited 45 min for its agent to read it" };
+  expect(hostProblems(JSON.stringify({ at: ago(8), problems: send }), now)).toEqual(send);
+  expect(hostProblems({ at: ago(8), problems: {} }, now)).toEqual({});
+  expect(hostProblems(JSON.stringify({ at: ago(40), problems: send }), now))
+    .toEqual({ "host:quiet": "The M1Max host check (page Sends, Orca mail) has not reported for 40 min" });
+  expect(Object.keys(hostProblems(null, now))).toEqual(["host:quiet"]);
+  expect(Object.keys(hostProblems("not json", now))).toEqual(["host:quiet"]);
 });
