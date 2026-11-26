@@ -175,6 +175,7 @@ def kill_worker(page: Path) -> None:
     from agent_annotate import cli, store
     (page / ".review-drafts").mkdir(exist_ok=True)
     n = int(json.loads((page / "current.meta.json").read_text())["current"][1:]) + 1
+    print("ready", flush=True)
     while True:
         with store.transaction(page):
             data = cli._coerce_store_file(page)
@@ -197,10 +198,11 @@ def run_kills(kills: int) -> dict:
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p)}
     problems, recovered = [], 0
     for k in range(kills):
-        worker = subprocess.Popen([sys.executable, __file__, "--kill-worker", "--page", str(page)], env=env)
-        time.sleep(0.3 + random.random() * 0.4)
-        worker.send_signal(signal.SIGKILL)
-        worker.wait()
+        with subprocess.Popen([sys.executable, __file__, "--kill-worker", "--page", str(page)], env=env,
+                              stdout=subprocess.PIPE, text=True) as worker:
+            worker.stdout.readline()  # startup alone can outlast the kill window on a busy Mac
+            time.sleep(0.3 + random.random() * 0.4)
+            worker.send_signal(signal.SIGKILL)
         recovered += (page / "page.db.writing").exists()
         with store.transaction(page) as tx:     # the next writer repairs
             differences = store.diff(tx.conn, store.Sources(page, project="stress", slug="page", bus_file=bus))[0]
