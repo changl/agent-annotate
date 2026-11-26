@@ -300,9 +300,10 @@ def waits_on_him(notes, title=""):
     m = re.search(r"BLOCKED BY:?\s*([^|]*)", notes or "")
     if not m or not re.search(r"\bchang\b", m.group(1), re.I):
         return None
-    mg = bool(re.search(r"merge", (title or "") + m.group(1), re.I))
-    why = next((t for r, t in _WHY if re.search(r, m.group(1), re.I)), "waits for your yes to merge it" if mg else "waits for your answer on its question")
-    return why, mg
+    why = next((t for r, t in _WHY if re.search(r, m.group(1), re.I)), None)
+    # a merge mark only on a row whose reason is the merge: one waiting on his phone, a sign-in or a choice is not a merge (r13 running 6)
+    mg = why is None and bool(re.search(r"merge", (title or "") + m.group(1), re.I))
+    return why or ("waits for your yes to merge it" if mg else "waits for your answer on its question"), mg
 
 
 def _cut(s, n=2500):

@@ -9,6 +9,9 @@ from agent_annotate.proto_data import running as R
 def test_waits_on_him_reads_the_board_notes():
     assert R.waits_on_him("BLOCKED BY: Chang merge approval", "Land the fix") == ("waits for your yes to merge it", True)
     assert R.waits_on_him("BLOCKED BY Chang - phone session needed")[0] == "needs your phone for a short test session"
+    # r13 running 6: a row waiting on his phone, a sign-in or a choice carries no merge mark, even when "merge" is in its notes
+    assert R.waits_on_him("BLOCKED BY: Chang card (merge both phones), then the phone session") == ("needs your phone for a short test session", False)
+    assert R.waits_on_him("BLOCKED BY: Chang picks the plan before merge")[1] is False
     assert R.waits_on_him("BLOCKED BY: another task") is None
     assert R.waits_on_him("") is None
 

@@ -105,7 +105,8 @@ def test_questions_data_for_close_move_change_and_new(tmp_path, monkeypatch):
     assert q["act"] == "2026-11-20T05:00:00Z"  # the agent's last word, not his
 
 
-def test_history_answers_offer_change(tmp_path):
+def test_history_answers_are_read_only(tmp_path):
+    """r13 running 15: History stays read-only, so no past answer offers Change (#75); an earlier pick still reads as one."""
     page = tmp_path / "page"
     page.mkdir()
     q = {"id": "c1", "number": 1, "version": "v2", "anchor_id": "d:q1", "author": "agent:x", "status": "open",
@@ -116,9 +117,9 @@ def test_history_answers_offer_change(tmp_path):
               {"id": "r2", "ts": "2026-11-20T00:00:00Z", "version": "v2", "answers": [{"comment_id": "c1", "prompt": "Ship?", "text": "B"}]}]
     (page / "rounds.ndjson").write_text("".join(json.dumps(r) + "\n" for r in rounds))
     a = history.build(page)["answers"]
-    assert [(x["a"], x["id"], x["ch"]) for x in a] == [("B", "c1", True), ("A", "c1", True)]
-    li = grab(HIST, "  function li(h, ctx, ro) {", "\n  }")
-    assert "your earlier pick, changed since" in li and "data-hchange" in li
+    assert [(x["a"], x["id"], "ch" in x) for x in a] == [("B", "c1", False), ("A", "c1", False)]
+    li = grab(HIST, "  function li(h, ctx) {", "\n  }")
+    assert "your earlier pick, changed since" in li and ">Change<" not in li and "data-hchange" not in li and "hchange" not in HIST
 
 
 def test_note_controls_and_marks_are_wired():

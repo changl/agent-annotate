@@ -39,7 +39,7 @@ Proto.tab({key: 'questions',                     // questions|reference|running|
 - Prefs on a copy are kept per copy (`annotate-proto:p/<key>:...`), except Settings (`theme`, `fs`, `rem`, `optsFirst`, `zoomDef`).
 - Phone: the frame folds into its menu up to 900 px (`ctx.phone`), not 600. From 601 to 900 your desk layout sits under a 44 px header: the frame re-pins `.qbar` and `.ajump` to `top:44px` and shows `.ph-only`. A new pinned bar should do the same.
 - Jumps and skip links scroll their target clear of the frame and of any pinned bar of yours (`scrollClear`).
-- History's ← → are handled by the frame while `#history/<version>` is open: they call `ctx.go('history', <older or newer>)`.
+- History has no ← → stepping (#116, round 13): the eye opens a version, Close returns.
 
 **ctx**
 - `base`: the page's URL, ending in `/`. Use relative paths.

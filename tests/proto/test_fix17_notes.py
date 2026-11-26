@@ -138,10 +138,10 @@ def test_links_notes_use_the_shared_kit():
 
 
 def test_version_reader_has_no_change(tmp_path):
-    """Running 1: the read-only version reader lists the answers without Change; History's main list keeps it."""
-    li = grab(HIST, "  function li(h, ctx, ro) {", "\n  }")
+    """Running 1, r13 running 15: neither the version reader nor History's main list offers Change (#75)."""
+    li = grab(HIST, "  function li(h, ctx) {", "\n  }")
     node(tmp_path, "const assert = require('assert'); const ctx = {esc: s => String(s)};\n"
-         "const h = {id: 'c1', n: 3, q: 'Ship?', a: 'B', ch: true, v: 'v2'}, old = {...h, a: 'A'}; const D = {answers: [h, old]};\n"
-         + li + "\nassert(/data-hchange/.test(li(h, ctx)) && !/data-hchange/.test(li(h, ctx, true)));\n"
-         "assert(/your earlier pick/.test(li(old, ctx, true)));\n")
-    assert "li(h, ctx, true)" in grab(HIST, "  function openView(", "\n  }")
+         "const h = {id: 'c1', n: 3, q: 'Ship?', a: 'B', v: 'v2'}, old = {...h, a: 'A'}; const D = {answers: [h, old]};\n"
+         + li + "\nassert(!/Change/.test(li(h, ctx)));\n"
+         "assert(/your earlier pick/.test(li(old, ctx)));\n")
+    assert "li(h, ctx)" in grab(HIST, "  function openView(", "\n  }")
