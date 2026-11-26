@@ -36,6 +36,8 @@ KIT = grab(Q, "  const stOf = ", "\n  };")
 STUBS = """const assert = require('assert'); const P = {}; global.document = {getElementById: () => null};
 const esc = s => String(s), ic = k => '', cut = (s, n) => s, pl = (n, a, b) => n + ' ' + (n === 1 ? a : b);
 const mk = n => `[${n}]`, ibw = (k, label, t, attrs) => `<button ${attrs}>${label}</button>`;
+// note actions are icons alone (#103): the stub names each by its icon, so the tests still read the action set
+const IBW = {edit: 'Edit', undo: 'Remove', place: 'Move', rerun: 'Re-open', archive: 'Close', copy: 'Copy', link: 'Link'}, ib = (k, t, attrs) => `<button ${attrs}>${IBW[k]}</button>`;
 const store = {}, calls = [], toasts = [];
 const c = {prefs: {get: (k, d) => k in store ? JSON.parse(JSON.stringify(store[k])) : d, set: (k, v) => { store[k] = v; }},
   toast: (m, o) => toasts.push([m, o]), go: (t, a) => calls.push(['go', t, a])};

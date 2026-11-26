@@ -35,7 +35,7 @@ def node(tmp_path, js):
 KIT = grab(Q, "  const stOf = ", "\n  };")
 STUBS = """const assert = require('assert'); const P = {};
 const esc = s => String(s), ic = k => '', cut = (s, n) => s, pl = (n, a, b) => n + ' ' + (n === 1 ? a : b);
-const mk = n => `[${n}]`, ibw = (k, label, t, attrs) => `<button ${attrs}>${label}</button>`;
+const mk = n => `[${n}]`, ibw = (k, label, t, attrs) => `<button ${attrs}>${label}</button>`, ib = (k, t, attrs) => `<button ${attrs} title="${t}"></button>`;
 const store = {}, calls = [], toasts = [];
 const c = {prefs: {get: (k, d) => k in store ? JSON.parse(JSON.stringify(store[k])) : d, set: (k, v) => { store[k] = v; }},
   toast: (m, o) => toasts.push([m, o]), go: (t, a) => calls.push(['go', t, a])};

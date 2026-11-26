@@ -156,8 +156,8 @@ def test_eighth_check_fixes_stay():
     assert "S.note = next = fromBack(next);\n    ctx.prefs.set('q:newnote', next);" in s
     # 2: Go to it beside a note typed in a card's evidence opens the filter that lists the card
     assert "const nq = nn && nn.inq && qOf(nn.inq);" in s and "reveal(nq)" in s
-    # 3: Cards only gives every open card its fold chevron
-    assert "(done || S.view === 'list') && !inList ? `<button class=\"qfold\"" in s
+    # 3: Cards only gives every open card its fold chevron: the line itself, as folded (r13 questions 09)
+    assert "const head = lined ? line() :" in s and "aria-expanded=\"${open}\"" in s
     # 4: an evidence jump leaves Back to Q N
     assert "backPill(el, ds.evq)" in s and "if (ds.back)" in s
     # 5: a card inside its evidence section shows only the blocks above its own spot

@@ -169,15 +169,16 @@
     // every note's actions on every tab, today's menu (shell.js cardMenuItems): Edit on his own (canEditComment), Remove while
     // the server would delete it (canDeleteComment), Move (Re-pin), Re-open beside Close where today offers Resolve, and one
     // Close for Resolve or Archive (#138); a closed one has Re-open (Restore). before: the tab's own; del: the tab's Remove
+    // standalone icons, no words, at every width: note actions are icons (#103, the mock's noteBox); words are for card actions (#139)
     acts: (c, n, moving, before, del = 'nundo') => { if (n.closed) return NK.closedActs(n);
       const id = esc(n.id);
-      return (before || '') + (NK.own(n) ? ibw('edit', 'Edit', n.sent ? 'Edit this note; the change goes with your next Send' : 'Edit this note', `data-nedit="${id}"`) : '')
-        + (NK.removable(n) ? ibw('undo', 'Remove', 'Undo: remove this note', `data-${del}="${id}"`) : '')
+      return (before || '') + (NK.own(n) ? ib('edit', n.sent ? 'Edit this note; the change goes with your next Send' : 'Edit this note', `data-nedit="${id}"`) : '')
+        + (NK.removable(n) ? ib('undo', 'Undo: remove this note', `data-${del}="${id}"`) : '')
         // Move only on a note saved on its page's current version, as today's Re-pin (n.old: an earlier one) (r12 audit24 running 1)
-        + (n.old ? '' : ibw('place', moving ? 'Moving' : 'Move', moving ? 'Click a new spot in the document; Esc cancels' : 'Move this note to another spot', `data-nmove="${id}" aria-pressed="${!!moving}"`))
-        + (NK.resolves(n) && !NK.isReo(c, n) ? ibw('rerun', 'Re-open', 'Re-open: the agent looks at it again with your next Send', `data-nreopen="${id}"`) : '')
-        + ibw('archive', 'Close', 'Close this note: nothing more to do. Undo until you leave', `data-nclose="${id}"`); },
-    closedActs: n => ibw('rerun', 'Re-open', 'Re-open this note', `data-nopen="${esc(n.id)}"`),
+        + (n.old ? '' : ib('place', moving ? 'Moving: click a new spot in the document; Esc cancels' : 'Move this note to another spot', `data-nmove="${id}" aria-pressed="${!!moving}"`))
+        + (NK.resolves(n) && !NK.isReo(c, n) ? ib('rerun', 'Re-open: the agent looks at it again with your next Send', `data-nreopen="${id}"`) : '')
+        + ib('archive', 'Close this note: nothing more to do. Undo until you leave', `data-nclose="${id}"`); },
+    closedActs: n => ib('rerun', 'Re-open this note', `data-nopen="${esc(n.id)}"`),
     // his Close, Re-open and their Undo in this visit, by note id ({closed, st}). A reader's note on screen and the feed's copy
     // Send lists from are separate objects, and a read can answer after the write: every feed read (frame data()) and every
     // feed already read takes it, so the reader, the sheet, the top count and the round read one state (r12 audit42 reference 1, frame 1)
@@ -714,12 +715,16 @@
     if (q.closed) return `<span class="saved">${ic('archive')} Closed: no answer needed</span><button class="lk small" data-reopen="${q.id}">Undo</button>`;
     const pd = pendA(q); if (pd) return `<span class="saved">${ic('tick')} ${pendW(q, pd)} · goes with Send</span>`;  // in the store, no draft to undo
     // a sent answer shows what he picked, with Change for a new pick; the old one stays under Decided before (catalog 52)
-    if (q.sent) { const dc = q.decision || {}, was = (dc.option_id && optLabel(q, dc.option_id)) || (dc.text || '').split('\n')[0];
-      return `<span class="saved">${ic('send')} Sent${was ? ': ' + esc(cut(was, 40)) : ''} · ${esc(fmt(dc.ts))}</span>${q.read ? `<span class="qread">${ic('eye')} read by the agent</span>` : '<span class="small mut">not read yet</span>'}<button class="lk small" data-change="${q.id}" title="Pick again: the new answer goes with your next Send; this one stays under Decided before">Change</button>`; }
+    // one short line, as the mock's: "Sent 09:03 · read by the agent"; the answer itself is in its title and under Decided before (#42; r13 questions 03)
+    if (q.sent) { const dc = q.decision || {}, was = (dc.option_id && optLabel(q, dc.option_id)) || (dc.text || '').split('\n')[0], at = sentAt(dc.ts);
+      return `<span class="saved qsent${q.read ? ' read' : ''}"${was ? ` title="Your answer: ${esc(cut(was, 120))}"` : ''}>Sent${at ? ' ' + esc(at) : ''} · ${q.read ? 'read by the agent' : 'not read yet'}</span><button class="lk small" data-change="${q.id}" title="Pick again: the new answer goes with your next Send; this one stays under Decided before">Change</button>`; }
     if (q.later) return `<span class="small mut">${ic('later')} Set aside</span><button class="lk small" data-unlater="${q.id}">Back to waiting</button>`;
     return '';
   }
   const fmt = ts => { if (!ts) return ''; const t = new Date(ts); return isNaN(t) ? '' : t.toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}); };
+  // the mock's "09:03": the time alone today, with the day before it on another day
+  const sentAt = ts => { const t = new Date(ts || NaN); if (isNaN(t)) return ''; const hm = t.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false});
+    return t.toDateString() === new Date().toDateString() ? hm : t.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ' ' + hm; };
   const IMPW = {high: 'High impact', medium: 'Medium impact', low: 'Low impact'};
   const impMark = q => IMPW[q.impact] ? `<span class="impw ${q.impact}" title="${IMPW[q.impact]}: how much the agent says this answer changes"><span class="imp ${q.impact}" aria-hidden="true"><i></i><i></i><i></i></span>${q.impact === 'medium' ? 'Med' : q.impact[0].toUpperCase() + q.impact.slice(1)}</span>` : '<span class="impw none" aria-hidden="true"></span>';
   const blkMark = q => q.blocking ? `<span class="blkp" title="A task on the board waits on this answer">${ic('block')}Blocks a task</span>` : '';
@@ -765,21 +770,23 @@
     const d = draft(q.id), open = inList ? true : cardOpen(q);
     const cls = `qcard${d.pick || (d.words || '').trim() ? ' answered' : q.sent ? ' sent' : q.closed || isClosing(q) ? ' closed' : q.later ? ' later' : ''}${S.hl === q.id ? ' hl' : ''}`;
     const marks = `<span class="qmarks">${blkMark(q)}${impMark(q)}</span>`;
-    if (!open) {
-      if (S.view !== 'list') return `<div class="${cls} folded" id="q-${q.id}" data-q="${q.id}"><div class="qhead"><button class="qfold" data-fold="${q.id}" aria-expanded="false" title="Open this card">${numChip(q)}<span class="qt">${esc(q.prompt)}</span></button><span class="qstate">${stateOf(q)}</span>${marks}</div></div>`;
-      // Cards only: one line keeps the section, the marks and a one-click answer (#13)
-      const rec = q.options.find(o => o.id === q.rec), ap = !rec && q.options.find(o => /^approve$/i.test(o.label)), st = stateOf(q);
+    if (!open && S.view !== 'list') return `<div class="${cls} folded" id="q-${q.id}" data-q="${q.id}"><div class="qhead"><button class="qfold" data-fold="${q.id}" aria-expanded="false" title="Open this card">${numChip(q)}<span class="qt">${esc(q.prompt)}</span></button><span class="qstate">${stateOf(q)}</span>${marks}</div></div>`;
+    // Cards only: one line keeps the section, the marks and a one-click answer (#13); open or folded, the line is the same,
+    // so the impact mark keeps its spot before the state (the mock's qline, #104; r13 questions 09)
+    const line = () => { const rec = q.options.find(o => o.id === q.rec), ap = !rec && q.options.find(o => /^approve$/i.test(o.label)), st = stateOf(q);
       const right = st ? `<span class="qstate">${st}</span>` : rec ? `<button class="btn sm quick rec" data-pick="${q.id}" data-opt="${esc(rec.id)}" title="Agree with the recommended answer: ${esc(rec.label)}">${ic('tick')} ${esc(cut(rec.label, 26))}</button>`
         : ap ? `<button class="btn sm quick" data-pick="${q.id}" data-opt="${esc(ap.id)}">${ic('tick')} Approve</button>`
         : `<button class="btn sm quick" data-fold="${q.id}">${q.options.length ? 'No recommendation · Open' : 'Needs words · Open'}</button>`;
-      return `<div class="${cls} folded qline" id="q-${q.id}" data-q="${q.id}"><div class="qhead"><button class="qfold" data-fold="${q.id}" aria-expanded="false" title="Open the whole card here, with its evidence">${numChip(q)}<span class="qt">${esc(q.prompt)}</span><span class="small mut qsect hide-ph">${esc(cut(secTitle(q), 40))}</span></button>${marks}<span class="qright">${right}</span></div></div>`;
-    }
+      return `<div class="qhead"><button class="qfold" data-fold="${q.id}" aria-expanded="${open}" title="${open ? 'Fold this card back to its line' : 'Open the whole card here, with its evidence'}">${numChip(q)}<span class="qt">${esc(q.prompt)}</span><span class="small mut qsect hide-ph">${esc(cut(secTitle(q), 40))}</span></button>${marks}<span class="qright">${right}</span></div>`; };
+    if (!open) return `<div class="${cls} folded qline" id="q-${q.id}" data-q="${q.id}">${line()}</div>`;
     const done = isDone(q), rp = d.replyOpen || (d.reply || '').trim();
     // no Later while a reply of his waits in the store for Send: the store refuses it (409) (r12 audit38 reference 4)
     const acts = `${done || pendR(q).length ? '' : ibw('later', 'Later', 'Answer later: set it aside; it comes back under Answer later', `data-later="${q.id}"`)}${ibw('reply', 'Reply', 'Reply to the agent without answering', `data-reply="${q.id}" aria-pressed="${!!rp}"`)}${S.copied === q.id ? ibw('copied', 'Copied', 'Link copied', `data-link="${q.id}"`) : ibw('link', 'Link', 'Copy a link to this question', `data-link="${q.id}"`)}${done ? '' : ibw('archive', 'Close', 'Close without an answer: no answer needed. Goes with Send; Undo until then', `data-close="${q.id}"`)}`;
     // Cards only: every open card folds to its line by its chevron, a waiting one too (the mock's qline, audit8 #03)
-    const title = (done || S.view === 'list') && !inList ? `<button class="qfold" data-fold="${q.id}" aria-expanded="true" title="${S.view === 'list' ? 'Fold this card back to its line' : 'Fold this card'}">${numChip(q)}<span class="qt">${esc(q.prompt)}</span></button>` : `<span class="qfold static">${numChip(q)}<span class="qt">${esc(q.prompt)}</span></span>`;
-    const head = `<div class="qhead">${title}<span class="qstate">${stateOf(q)}</span><span class="eacts">${acts}</span>${marks}</div>`;
+    const title = done && !inList ? `<button class="qfold" data-fold="${q.id}" aria-expanded="true" title="Fold this card">${numChip(q)}<span class="qt">${esc(q.prompt)}</span></button>` : `<span class="qfold static">${numChip(q)}<span class="qt">${esc(q.prompt)}</span></span>`;
+    // Cards only: the line shows the number, title, marks and state; under its evidence the card adds its actions on their own row (the mock's ecard inList)
+    const lined = S.view === 'list' && !inList;
+    const head = lined ? line() : `<div class="qhead">${title}<span class="qstate">${stateOf(q)}</span><span class="eacts">${acts}</span>${marks}</div>`;
     const cx = q.context ? `<div class="qctx p-primary">${q.context.split('\n').map(p => `<p>${beadText(esc(p))}</p>`).join('')}</div>` : '';
     const th = q.replies.filter(r => !r.dec), tOpen = S.open.has('th' + q.id);
     const typing = (d.reply || '').trim() ? `<li class="you"><span class="who">You · goes with Send</span> ${esc(d.reply)}</li>` : '';
@@ -794,11 +801,12 @@
       <textarea class="qwords" data-words="${q.id}" aria-label="Answer in words" placeholder="${q.options.length ? 'Answer in words. With no choice picked, this is your answer; with one, it goes with it.' : 'Your answer: there are no choices'}">${esc(d.words || '')}</textarea>
       <p class="hint">Saved as you type · <kbd>⌘↵</kbd> opens Send</p>
       ${rp ? `<label class="small"><b>Reply to the agent</b></label><textarea class="qwords" data-replytext="${q.id}" placeholder="Ask or tell the agent something about this question">${esc(d.reply || '')}</textarea><p class="hint">Saved as you type; goes with your next Send. <button class="lk small" data-unreply="${q.id}">Remove</button></p>` : ''}`;
-    const body = `<div class="qbody"><div class="qcx">${cx}${thread}${meta}</div><div class="qan">${an}</div></div>`;
+    const body = `<div class="qbody">${lined ? `<div class="qlacts"><span class="eacts">${acts}</span></div>` : ''}<div class="qcx">${cx}${thread}${meta}</div><div class="qan">${an}</div></div>`;
     return `<div class="${cls}" id="q-${q.id}" data-q="${q.id}">${head}${body}</div>`;
   }
-  // tasks the agent names: title · bead id · state
-  const beadText = h => h.replace(/\bFLD-[a-z0-9]+(?:\.\d+)*\b/g, m => (D.beads || {})[m] ? taskChip(m) : m);
+  // tasks the agent names, in his text: a title link, then bead id and state, no pill (the mock's beadIn, #46; r13 questions 06)
+  const beadText = h => h.replace(/\bFLD-[a-z0-9]+(?:\.\d+)*\b/g, m => { const b = (D.beads || {})[m]; return b
+    ? `<button class="lk bdl" data-task="${esc(m)}" title="Open task ${esc(m)} here">${esc(cut(b.title, 48))}</button> <span class="bid">${esc(m)}</span><span class="small mut"> · ${esc(b.status.replace('_', ' '))}</span>` : m; });
 
   /* ---------- the document ---------- */
   // Markdown the agent left unrendered: links become links, pictures the page has become pictures (#02)
@@ -913,7 +921,7 @@
     const id = esc(n.id), move = S.move === n.id;
     // a closed note folds to one line, its Re-open beside it, as an answered card keeps its Undo (#138)
     if (n.closed) return `<div class="qnote sent closed" id="n-${id}" data-note="${id}">${mkb(no, n)}<span class="saved">${ic('archive')} Note ${no} closed</span> <span class="mut">${esc(cut(n.text, 80))}</span><span class="nacts">${NK.closedActs(n)}</span></div>`;
-    const cp = ibw('copy', 'Copy', 'Copy the note text', `data-ncopy="${id}"`) + ibw('link', 'Link', 'Copy a link to this note', `data-nlink="${id}"`);
+    const cp = ib('copy', 'Copy the note text', `data-ncopy="${id}"`) + ib('link', 'Copy a link to this note', `data-nlink="${id}"`);
     const acts = NK.acts(ctx, n, move, '', 'ndel') + cp;  // the kit's one list, sent or not (r12 audit19)
     const st = n.sent ? NK.words(ctx, n) : '<span class="saved">· goes with Send</span>';
     return `<div class="qnote${n.sent ? ' sent' : ''}${move ? ' moving' : ''}" id="n-${id}" data-note="${id}">${mkb(no, n)}<b>Note ${no} ${what}:</b> ${esc(n.text)} ${st} ${NK.view(n)}<span class="nacts">${acts}</span>${NK.thread(ctx, n)}</div>`;
@@ -1217,7 +1225,8 @@
 
   /* ---------- the bar ---------- */
   const FILTERS = {
-    need: q => !q.sent && !q.later && !q.closed,  // an answered card stays at its place in Waiting, with its Undo (#20)
+    // an answered card stays at its place in Waiting, with its Undo (#20); a Close leaves it at once, for Closed and To send (the mock's gone, #138; r13 questions 14)
+    need: q => !q.sent && !q.later && !q.closed && !isClosing(q),
     later: q => q.later && !q.closed && !isDraft(q) && !q.sent,
     ready: q => isDraft(q) || isClosing(q) || hasReply(q) || pending(q), wait: q => q.sent, arch: q => q.closed || isClosing(q)};
   function bar() {
