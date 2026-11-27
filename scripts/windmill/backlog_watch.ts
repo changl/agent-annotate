@@ -51,10 +51,11 @@ export function decide(state: State, current: Record<string, string>, now: numbe
   const due = confirmed.length > 0 && now - (state.mail_at ?? 0) >= LIMITS.remindHours * 3600e3;
   if (fresh.length || due) {
     const lines = confirmed.map((k) => `- ${current[k]}${fresh.includes(k) ? " (new)" : ""}`);
-    const subject = `Work is piling up on the M1Max: ${confirmed.length} problem${confirmed.length > 1 ? "s" : ""}`;
+    const subject = `Work is piling up: ${confirmed.length} problem${confirmed.length > 1 ? "s" : ""}`; // the lines name the Mac
     const body = [`Found ${new Date(now).toISOString()}:`, ...lines, "",
       `Windmill: waiting means queued over ${LIMITS.waitMin} min past its start time; long means running over ${LIMITS.runMin} min.`,
       "Pages and Orca: a Send, a coordinator's mail or a worker's question untouched for 30 min, or a worker Orca marks stuck.",
+      "Macs: one at 80% CPU or memory or more, or load 2.5 per core or more, for 30 min.",
       `No repeat unless something new appears; a reminder every ${LIMITS.remindHours} h while it lasts; one mail when clear.`,
       "Sent by Windmill f/ops/backlog_watch every 5 min (no AI)."].join("\n");
     return { next: { seen, mailed: confirmed, mail_at: now }, mail: { subject, body } };
@@ -62,7 +63,7 @@ export function decide(state: State, current: Record<string, string>, now: numbe
   // Clear only when nothing at all is waiting, not while a new problem is still being confirmed.
   if (!Object.keys(current).length && state.mailed?.length)
     return { next: { seen, mailed: [], mail_at: state.mail_at },
-             mail: { subject: "M1Max queues are clear again", body: `Clear at ${new Date(now).toISOString()}.\n\nSent by Windmill f/ops/backlog_watch.` } };
+             mail: { subject: "Queues and Macs are clear again", body: `Clear at ${new Date(now).toISOString()}.\n\nSent by Windmill f/ops/backlog_watch.` } };
   return { next: { seen, mailed: confirmed.length ? mailed : state.mailed ?? [], mail_at: state.mail_at }, mail: null };
 }
 

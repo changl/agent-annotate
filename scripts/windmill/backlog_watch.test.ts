@@ -35,7 +35,7 @@ test("mails once a problem lasts two checks, again only for something new, a rem
   let r = decide({}, one, now);
   expect(r.mail).toBeNull(); // a single check is not yet a backlog
   r = decide(r.next, one, now + 300e3);
-  expect(r.mail?.subject).toBe("Work is piling up on the M1Max: 1 problem");
+  expect(r.mail?.subject).toBe("Work is piling up: 1 problem");
   expect(r.mail?.body).toContain("- f/a: 3 waiting for a worker, the oldest 9 min (new)");
   r = decide(r.next, one, now + 600e3);
   expect(r.mail).toBeNull(); // unchanged: no repeat
@@ -43,13 +43,13 @@ test("mails once a problem lasts two checks, again only for something new, a rem
   r = decide(r.next, two, now + 900e3);
   expect(r.mail).toBeNull(); // the new one has lasted only one check
   r = decide(r.next, two, now + 1200e3);
-  expect(r.mail?.subject).toBe("Work is piling up on the M1Max: 2 problems");
+  expect(r.mail?.subject).toBe("Work is piling up: 2 problems");
   expect(r.mail?.body).toContain("- f/x: 1 waiting for a worker, the oldest 6 min (new)");
   expect(r.mail?.body).not.toContain("9 min (new)");
   r = decide(r.next, two, now + 1200e3 + 6 * 3600e3);
-  expect(r.mail?.subject).toBe("Work is piling up on the M1Max: 2 problems"); // 6 h reminder
+  expect(r.mail?.subject).toBe("Work is piling up: 2 problems"); // 6 h reminder
   r = decide(r.next, {}, now + 7 * 3600e3);
-  expect(r.mail?.subject).toBe("M1Max queues are clear again");
+  expect(r.mail?.subject).toBe("Queues and Macs are clear again");
   r = decide(r.next, {}, now + 7 * 3600e3 + 300e3);
   expect(r.mail).toBeNull();
 });
@@ -58,7 +58,7 @@ test("no all-clear while a new problem is still being confirmed", () => {
   const a = { "wait:f/a": "f/a: 1 waiting for a worker, the oldest 9 min" };
   const b = { "wait:f/b": "f/b: 1 waiting for a worker, the oldest 6 min" };
   let r = decide(decide({}, a, now).next, a, now + 300e3);
-  expect(r.mail?.subject).toBe("Work is piling up on the M1Max: 1 problem");
+  expect(r.mail?.subject).toBe("Work is piling up: 1 problem");
   r = decide(r.next, b, now + 600e3); // a cleared as b appeared
   expect(r.mail).toBeNull();
   r = decide(r.next, b, now + 900e3);
@@ -66,7 +66,7 @@ test("no all-clear while a new problem is still being confirmed", () => {
   r = decide(decide(r.next, {}, now + 1200e3).next, a, now + 1500e3);
   expect(r.mail).toBeNull();
   r = decide(decide(r.next, a, now + 1800e3).next, {}, now + 2100e3); // a returns, is mailed, then clears
-  expect(r.mail?.subject).toBe("M1Max queues are clear again");
+  expect(r.mail?.subject).toBe("Queues and Macs are clear again");
 });
 
 test("passes on the host check's problems, and says when it goes quiet", () => {
