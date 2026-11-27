@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Host check on M1, every 10 min (scripts/host_backlog.py). Install: copy scripts/host_backlog.py to
+     ~/.local/share/annotate-sweeps/host_backlog.py and this file to ~/Library/LaunchAgents/, then
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.changlee.annotate-host-backlog.plist
+     Stop: launchctl bootout gui/$(id -u)/com.changlee.annotate-host-backlog and remove the file. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.changlee.annotate-host-backlog</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>-I</string>
+        <string>/Users/changlee/.local/share/annotate-sweeps/host_backlog.py</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/changlee</string>
+        <key>PATH</key>
+        <string>/Users/changlee/.npm-global/bin:/Applications/Orca.app/Contents/Resources/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>StartInterval</key>
+    <integer>600</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <!-- Standard, not Background: Background starved it on an overloaded M1 Max, so mac-admit (90 s),
+         Orca (60 s) and the upload (120 s) timed out exactly when a busy warning was due. -->
+    <key>ProcessType</key>
+    <string>Standard</string>
+    <key>StandardOutPath</key>
+    <string>/Users/changlee/Library/Logs/annotate-host-backlog.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/changlee/Library/Logs/annotate-host-backlog.err.log</string>
+</dict>
+</plist>
