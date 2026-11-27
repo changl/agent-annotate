@@ -5190,10 +5190,15 @@ async function loadDocState(doc) {
 // screen and tells every tab.
 // `back`: an action's readBack() (Send, Discard). Each read that succeeded is
 // reused; one that failed is read again. A failed store read-back marks the
-// shown store stale as of the action's finish; the first store read asked
-// after that which succeeds, a poll's too, shows it. An earlier read cannot.
+// shown store stale as of the action's finish (called right after its POST
+// succeeded); the first store read asked after that which succeeds, a poll's
+// too, shows it, even one that landed before the failure. An earlier read cannot.
 function readBack() {
-  const store = loadStore().then(ok => { if (!ok) staleAfter = storeAsked; return ok; });
+  const done = storeAsked;
+  const store = loadStore().then(ok => {
+    if (!ok) { if (storeTaken > done) applyLive(); else staleAfter = done; } // reloadPage shows it
+    return ok;
+  });
   return { store, read: loadReadState(), cats: loadCategories() };
 }
 async function reloadPage(back) {

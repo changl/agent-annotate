@@ -229,3 +229,55 @@ def test_a_poll_asked_before_a_failed_read_back_cannot_clear_its_recovery(tmp_pa
         with page.expect_response(lambda r: urlsplit(r.url).path == "/comments.json" and r.status in (200, 304), timeout=4500):
             _poll(page)
         assert _pending(page) == 0
+
+
+@pytest.mark.parametrize("lands", ["after", "before"])
+def test_a_poll_asked_after_the_action_clears_the_recovery_when_its_read_back_fails(tmp_path, lands):
+    # Review of 50eaf26: the mark was taken when the read-back failed, after this poll had its number.
+    # It may land after the failure, or before it while the read-back is still settling.
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (page, _, _):
+        _manual(page)
+        _answer(page)
+        _poll(page, 2)
+        posted, first, faults, passing = [], [], [], []
+        page.on("response", lambda r: posted.append(1) if urlsplit(r.url).path == "/api/rounds/discard" and r.ok else None)
+
+        def read_back(route):
+            if not posted or passing or len(faults) >= 2:
+                route.continue_()
+            elif not first:
+                first.append(route)  # held until the poll below is asked
+            else:
+                faults.append(route.request.url)
+                route.fulfill(status=500, content_type="application/json", body='{"error":"transient"}')
+
+        page.route("**/comments.json?*", read_back)
+        page.locator("#send-btn").click()
+        page.locator("#round-discard-btn").click()
+        for _ in range(40):
+            if first:
+                break
+            page.wait_for_timeout(100)
+        assert posted and first
+        page.evaluate(HOLD_ONE_GET, "/api/poll")
+        page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        page.wait_for_function("() => !!window.releaseOld")
+        fresh = lambda r: urlsplit(r.url).path == "/comments.json" and r.status == 200  # noqa: E731
+        if lands == "before":
+            passing.append(1)
+            with page.expect_response(fresh, timeout=4500):
+                page.evaluate("() => window.releaseOld()")
+            passing.clear()
+            page.wait_for_timeout(200)
+        faults.append(first[0].request.url)
+        first[0].fulfill(status=500, content_type="application/json", body='{"error":"transient"}')
+        expect(page.locator("#round-confirm-backdrop")).to_be_hidden()
+        page.wait_for_timeout(350)
+        assert len(faults) == 2
+        if lands == "after":
+            assert _pending(page) == 1
+            with page.expect_response(fresh, timeout=4500):
+                page.evaluate("() => window.releaseOld()")
+            page.wait_for_timeout(350)
+        assert _pending(page) == 0  # this poll, not one more
