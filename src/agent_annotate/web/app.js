@@ -849,7 +849,7 @@
     }
     close();
     setNote('Discarded ' + n + ' pending verdict' + (n === 1 ? '' : 's') + ' — nothing sent', '', 5000);
-    await docs.reload();
+    await docs.reload(true);  // discardPage read the page back already
   }
 
   $('#send-btn').addEventListener('click', openSummary);

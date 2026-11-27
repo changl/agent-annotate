@@ -134,15 +134,23 @@ def _poll(page, times=1):
 def test_shell_meta_polls_revalidate_then_refresh_injected_delivery_changes(tmp_path):
     directory = _directory(tmp_path)
     with _session(tmp_path, directory) as (page, base, restart):
-        _poll(page)  # content bootstrap can have populated metadata content stamps
-        responses = []
+        _poll(page, 2)  # content bootstrap can have populated metadata content stamps; the second asks /api/poll first
+        responses, polls = [], []
         meta_url = base + "current.meta.json"
-        page.on("response", lambda response: responses.append(response) if response.url == meta_url else None)
+
+        def seen(response):
+            if response.url == meta_url:
+                responses.append(response)
+            elif response.url.startswith(base + "api/poll?"):
+                polls.append(response)
+
+        page.on("response", seen)
         _poll(page, 2)
-        assert len(responses) == 2 and all(response.status == 304 for response in responses)
-        assert all(response.request.sizes()["responseBodySize"] == 0 for response in responses)
-        assert all(response.headers["cache-control"] == "private, no-cache" for response in responses)
-        responses.clear()
+        # uzd.10: an unchanged poll is one /api/poll, 304 with no body; the meta is not read again.
+        assert not responses and len(polls) == 2 and all(response.status == 304 for response in polls)
+        assert all(response.request.sizes()["responseBodySize"] == 0 for response in polls)
+        assert all(response.headers["cache-control"] == "private, no-cache" for response in polls)
+        polls.clear()
         delivery = tmp_path / "state/deliveries/bus/items-model.json"
         delivery.parent.mkdir(parents=True)
         delivery.write_text(json.dumps({"deliveries": {"test": {
@@ -153,13 +161,13 @@ def test_shell_meta_polls_revalidate_then_refresh_injected_delivery_changes(tmp_
         # av1: the delivery row is gone; the Send note says it (here, with no Send, the page holds it).
         page.wait_for_function("() => window.AnnotateDocs.deliveryNote()?.text === 'Read by the agent'")
         responses.clear()
+        polls.clear()
         _poll(page)
-        assert responses and all(response.status == 304 for response in responses)
-        responses.clear()
+        assert not responses and polls and all(response.status == 304 for response in polls)
+        polls.clear()
         restart()
         _poll(page)
-        assert responses and all(response.status == 304 for response in responses)
-        responses.clear()
+        assert not responses and polls and all(response.status == 304 for response in polls)
         page.reload(wait_until="networkidle")
         _loaded(page)
         assert responses and responses[0].status == 200
@@ -540,7 +548,7 @@ def test_polls_read_the_page_view_of_the_store(tmp_path):
     directory = _directory(tmp_path)
     with _session(tmp_path, directory) as (page, base, restart):
         urls = []
-        page.on("request", lambda r: urls.append(r.url) if "comments.json" in r.url else None)
+        page.on("request", lambda r: urls.append(r.url) if r.url.startswith(base + "comments.json") else None)
         _agent(base, "api/comments/batch", {"items": [{"anchor_id": "s:checks", "text": "Seen through the page view.", "version": "v1"}]})
         _poll(page)
         page.locator("#aa-fresh").click()  # dw4: shown when the reviewer asks

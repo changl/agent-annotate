@@ -381,7 +381,29 @@ function headRead(url) {
   delete reads[url];
   return p.then(r => r?.ok ? r : null, () => null);
 }
+// uzd.10: a tab's poll asks /api/poll which of its last poll's reads changed, and makes only those.
+// pollGate is set only while the poll starts its reads (see gated()): {etags, reads}.
+let pollGate = null, pollReads = [], pollBatched = true;
+function gated(gate, read) {
+  pollGate = gate;
+  try { return read(); } finally { pollGate = null; }
+}
+// The ETag each of the last poll's reads has now, or null to make them all (an older server: 404).
+async function askPoll() {
+  if (!pollBatched || !pollReads.length) return null;
+  const mark = STORE.partial ? STORE.store_mark : null;
+  const got = await pollJson('./api/poll?' + pollReads.map(u => 'u=' + encodeURIComponent(u)).join('&'), true,
+    mark ? { 'X-Annotate-Store-Mark': mark } : {}).catch(() => ({ ok: false }));
+  if (!got.ok) { if (got.status === 404) pollBatched = false; return null; }
+  return got.data && got.data.etags || null;
+}
 async function pollJson(url, quiet, headers = {}) {
+  const gate = pollGate;
+  if (gate) {
+    gate.reads.push(url);
+    const was = pollLast[url];
+    if (gate.etags && was?.etag && gate.etags[url] === was.etag) return { ok: true, same: true, data: was.data };
+  }
   const asked = ++pollAsked;
   const last = pollLast[url];
   if (last?.etag) headers['If-None-Match'] = last.etag;
@@ -776,11 +798,24 @@ function markReadItems(list) {
 }
 function postReadItems(items) {
   if (!items.length) return Promise.resolve(null);
-  return fetch(apiUrl('./api/read-state' + authorQuery()), {
+  const asked = ++pollAsked;
+  const q = authorQuery();
+  return fetch(apiUrl('./api/read-state' + q + (q ? '&' : '?') + 'counts=1'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ items }),
-  }).then(r => { refreshCountsSoon(); return r; }).catch(() => null);
+  }).then(async r => {
+    // uzd.10: the answer is api/categories after this mark, as a read gets it; an older server's is not.
+    const data = r.ok ? await r.clone().json().catch(() => null) : null;
+    const url = './api/categories', etag = r.headers.get('ETag');
+    if (!data || !Array.isArray(data.categories) || !etag) refreshCountsSoon();
+    else if (!pollLast[url] || pollLast[url].asked < asked) { // else a read asked later has answered
+      pollLast[url] = { etag, text: null, data, asked };
+      takeCategories(data);
+      if (window.AA) window.AA.changed();
+    }
+    return r;
+  }).catch(() => null);
 }
 // The header's unread counts are the server's; refetch them once a burst of
 // read marks has landed, so opening an item clears its count at once.
@@ -4538,15 +4573,17 @@ function sendItems() {
 // general:* item. No UI here; app/send.js reports it.
 async function prepareDocCore() {
   const items = sendItems();
-  let ok = true;
+  let ok = true, wrote = 0; // `wrote`: saves tried (a failed one may still have landed)
   const failed = [];
   for (const c of flattenAll(false).filter(c => hasSayDraft(c) || strandedSay(c))) {
+    wrote++;
     const target = feedbackTarget(c);
     const r = isUnresolvedDecision(target)
       ? await apiDecision(target.id, 'comment', sayDraft(c)) : await apiReply(target.id, sayDraft(c));
     if (r) { clearSayDraft(c.id); delete decisionChanging[c.id]; } else { ok = false; failed.push(c.id); }
   }
   for (const c of flattenAll(false).filter(replyDraft)) {
+    wrote++;
     if (await apiReply(feedbackTarget(c).id, replyDraft(c))) {
       setDraft(c.id, '');
       document.querySelectorAll('[data-reply-for="' + cssEsc(c.id) + '"]').forEach(ta => { ta.value = ''; });
@@ -4554,6 +4591,7 @@ async function prepareDocCore() {
   }
   const gf = gfDraft();
   if (gf) {
+    wrote += IDENTITY ? 1 : 0;
     const created = IDENTITY ? await apiCreateComment('general:' + CURRENT_VERSION, 'General feedback', gf, CURRENT_VERSION) : null;
     if (created) setDraft('gf', ''); else { ok = false; failed.push('gf:' + DOC); }
   }
@@ -4561,7 +4599,7 @@ async function prepareDocCore() {
     const g = document.getElementById('gf-ta');
     if (g) g.value = DRAFTS.gf || '';
   }
-  return { ok, items, failed };
+  return { ok, items, failed, wrote };
 }
 // A reopened finding this reviewer has not sent yet.
 function isReopenPending(c) {
@@ -4607,9 +4645,11 @@ async function submitPage(alsoPending, receipt) {
   const failedIds = new Set();
   // Text typed on a card the agent has since withdrawn goes as a reply to it.
   applyLive();
+  let wrote = 0;
   for (const doc of DOCS) {
     const r = await withDocAsync(doc, prepareDocCore);
     (r.failed || []).forEach(id => failedIds.add(doc + '|' + id));
+    wrote += r.wrote;
   }
   // A refreshed projection can omit a card whose draft was in the summary.
   for (const { it, keys } of shownDrafts) {
@@ -4621,7 +4661,8 @@ async function submitPage(alsoPending, receipt) {
   const kindOf = (it) => it.kind || (/^Comment: /.test(it.answer || '') ? 'push' : 'round');
   let roundLines = lines.filter(it => !failed.includes(it) && kindOf(it) === 'round');
   let pushLines = lines.filter(it => !failed.includes(it) && kindOf(it) === 'push');
-  await loadStore();
+  // uzd.10: the store read above is current unless a draft was saved since.
+  if (wrote) await loadStore(); else applyLive();
   const doRound = pageRoundPending() > 0 || alsoPending;
   // The round carries open comments with new activity (general feedback,
   // replies), so a Send wakes the owner once; push only when there is no round.
@@ -4685,7 +4726,8 @@ function receiptPayload(receipt, id) {
 async function discardPage() {
   const j = await apiRoundDiscard();
   if (!j) return null;
-  await loadStore();
+  // uzd.10: the one read-back of this Discard; the caller shows it with reload(true).
+  await Promise.all([loadStore(), loadReadState(), loadCategories()]);
   return j.comment_count != null ? j.comment_count : 0;
 }
 function wireRoundBar() {
@@ -5140,7 +5182,7 @@ async function loadDocState(doc) {
 }
 // Re-read the page from the server (after a Send); renders the document on
 // screen and tells every tab.
-// `readBack`: a read already on its way (submitPage's counts) to show instead of reading everything again.
+// `readBack`: a read already done or on its way (submitPage's counts, true after discardPage) to show instead of reading everything again.
 async function reloadPage(readBack) {
   await (readBack || Promise.all([loadStore(), loadReadState(), loadCategories()]));
   if (VIEW_DOC) withDoc(VIEW_DOC, renderAll);
@@ -5208,33 +5250,36 @@ async function loadCategories() {
   try {
     const got = await pollJson('./api/categories');
     if (!got.ok) return false;
-    if (got.same) return true;
-    CATEGORIES = got.data;
-    if (typeof CATEGORIES.read_only === 'boolean') {
-      CAPS = Object.assign({}, CAPS, { read_only: CATEGORIES.read_only });
-      document.body.classList.toggle('page-read-only', pageReadOnly());
-    }
-    const previousPlan = PLANS.find(p => p.id === PLAN_ID);
-    PLANS = Array.isArray(CATEGORIES.plans) ? CATEGORIES.plans : [];
-    const nextPlan = PLANS.find(p => p.id === PLAN_ID);
-    if (previousPlan && nextPlan && previousPlan.current !== nextPlan.current) {
-      const saved = DOC_STATE.plans;
-      if (saved) {
-        if (saved.CURRENT_VERSION === previousPlan.current) saved.CURRENT_VERSION = nextPlan.current;
-        saved.META = { ...saved.META, current: nextPlan.current, history: nextPlan.history };
-      }
-      // The plan on screen never follows by itself (Chang, 2026-11-01): the
-      // "Latest is …" banner offers the new revision.
-      if (DOC === 'plans') META = { ...META, current: nextPlan.current, history: nextPlan.history };
-    }
-    // Plans opens on the first plan in section order (tracking first); a
-    // hidden plan opens only by link, an archive page from Open project.
-    if (!PLAN_ID || !PLANS.some(p => p.id === PLAN_ID)) PLAN_ID = (PLANS.find(p => p.section !== 'hidden' && !isArchivePlan(p)) || PLANS.find(isArchivePlan) || {}).id || null;
-    DOCS = PLAN_ID ? ['review', 'plans'] : ['review'];
-    if (window.AnnotateDocs) window.AnnotateDocs.docs = DOCS;
-    if (DOC === 'review') renderProject(); // Open project lists the archive pages
+    if (!got.same) takeCategories(got.data);
     return true;
   } catch { return false; }
+}
+// The page's counts, plans and tabs from an api/categories answer (a read, or a read mark's: see postReadItems).
+function takeCategories(data) {
+  CATEGORIES = data;
+  if (typeof CATEGORIES.read_only === 'boolean') {
+    CAPS = Object.assign({}, CAPS, { read_only: CATEGORIES.read_only });
+    document.body.classList.toggle('page-read-only', pageReadOnly());
+  }
+  const previousPlan = PLANS.find(p => p.id === PLAN_ID);
+  PLANS = Array.isArray(CATEGORIES.plans) ? CATEGORIES.plans : [];
+  const nextPlan = PLANS.find(p => p.id === PLAN_ID);
+  if (previousPlan && nextPlan && previousPlan.current !== nextPlan.current) {
+    const saved = DOC_STATE.plans;
+    if (saved) {
+      if (saved.CURRENT_VERSION === previousPlan.current) saved.CURRENT_VERSION = nextPlan.current;
+      saved.META = { ...saved.META, current: nextPlan.current, history: nextPlan.history };
+    }
+    // The plan on screen never follows by itself (Chang, 2026-11-01): the
+    // "Latest is …" banner offers the new revision.
+    if (DOC === 'plans') META = { ...META, current: nextPlan.current, history: nextPlan.history };
+  }
+  // Plans opens on the first plan in section order (tracking first); a
+  // hidden plan opens only by link, an archive page from Open project.
+  if (!PLAN_ID || !PLANS.some(p => p.id === PLAN_ID)) PLAN_ID = (PLANS.find(p => p.section !== 'hidden' && !isArchivePlan(p)) || PLANS.find(isArchivePlan) || {}).id || null;
+  DOCS = PLAN_ID ? ['review', 'plans'] : ['review'];
+  if (window.AnnotateDocs) window.AnnotateDocs.docs = DOCS;
+  if (DOC === 'review') renderProject(); // Open project lists the archive pages
 }
 // An archive page of finished Review topics (long_pages.py), stored as a plan:
 // out of the Plans picker, listed under Open project. categories.is_archive_plan mirrors it.
@@ -5467,14 +5512,16 @@ async function init() {
     let changed = false;
     try {
       pollChanged = false;
+      const gate = { etags: await askPoll(), reads: [] };
       const doc = VIEW_DOC;
       const onDoc = doc && DOC === doc && !docBusy;
       // Where the last Send got to comes with the page's meta: read it with
       // the rest, not after it.
-      const delivery = onDoc ? loadMeta().then(() => loadDelivery()) : loadDelivery();
-      await Promise.all([pollStore(), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject(), delivery]);
+      const delivery = onDoc ? gated(gate, loadMeta).then(() => gated(gate, loadDelivery)) : gated(gate, loadDelivery);
+      await gated(gate, () => Promise.all([pollStore(), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject(), delivery]));
       if (historyDirty) loadHistory();
-      loadBoard();
+      gated(gate, loadBoard);
+      pollReads = [...new Set(gate.reads)];
       changed = pollChanged;
       if (changed) {
         if (onDoc) renderVersionRail();

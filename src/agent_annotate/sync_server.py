@@ -264,7 +264,49 @@ def _file_key(path: Path):
         return None
 
 
+_STAMPS = threading.local()
+
+
+@contextmanager
+def _stamps_once():
+    """Within one /api/poll, each file is stamped once for every read it answers for."""
+    _STAMPS.memo = {}
+    try:
+        yield
+    finally:
+        _STAMPS.memo = None
+
+
+def _once(key, take):
+    """take(), or inside _stamps_once() the first answer it gave for `key`."""
+    memo = getattr(_STAMPS, "memo", None)
+    if memo is None:
+        return take()
+    if key not in memo:
+        memo[key] = take()
+    return memo[key]
+
+
+_GZIPPED = {}  # sha256 of a body -> its gzip: an unchanged poll answer is not compressed again
+
+
+def _gzip(body: bytes) -> bytes:
+    if len(body) > 1 << 20:
+        return gzip.compress(body, compresslevel=6, mtime=0)
+    key = hashlib.sha256(body).digest()
+    if (packed := _GZIPPED.get(key)) is None:
+        packed = gzip.compress(body, compresslevel=6, mtime=0)
+        if len(_GZIPPED) >= 64:
+            _GZIPPED.clear()
+        _GZIPPED[key] = packed
+    return packed
+
+
 def _metadata_stamp(path: Path):
+    return _once(("file", str(path)), lambda: _take_metadata_stamp(path))
+
+
+def _take_metadata_stamp(path: Path):
     from .categories import MAX_PLAN_BYTES
 
     # A mapped JSON edit can leave the inode and timestamps unchanged.
@@ -697,6 +739,10 @@ def _implicit_asks(source: str) -> tuple:
 
 def _plan_stamps(artifact_dir: Path) -> tuple | None:
     """Fingerprint plan metadata even when the comment store is unchanged."""
+    return _once(("plans", str(artifact_dir)), lambda: _take_plan_stamps(artifact_dir))
+
+
+def _take_plan_stamps(artifact_dir: Path) -> tuple | None:
     from .categories import safe_path
 
     stamps = []
@@ -1293,6 +1339,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     _plans_listed = (None, None)
     _categories_answers = {}
     _cold_tallies = {}  # agent reader? -> (key, categories.tally of the cold generation's live items)
+    _capture = None  # while /api/poll asks a read: the ETags its _respond would send
     _stamp_checked = {}
 
     def handle_one_request(self):
@@ -1705,6 +1752,80 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         return True
 
     # ── GET ──────────────────────────────────────────────────────────
+    def _poll_read(self, route_path, parsed) -> bool:
+        """The reads a tab's poll repeats, each answered with an ETag (see _respond); False for any other route."""
+        if route_path == "/api/read-state":
+            self._v2_get_read_state(parsed)
+        elif route_path == "/api/session-monitor":
+            self._v2_get_session_monitor(parsed)
+        elif route_path == "/api/delivery":
+            from .delivery import delivery_status
+            self._respond(200, json.dumps(delivery_status(_monitor_project(self.bus_dir), self.slug)).encode(), "application/json")
+        elif route_path == "/api/project":
+            try:
+                body = json.dumps(self._project_payload()).encode()
+            except (OSError, ValueError) as exc:
+                self._respond(500, json.dumps({"error": str(exc)}).encode(), "application/json")
+            else:
+                self._respond(200, body, "application/json", cache_control="no-store")
+        elif route_path == "/api/board":
+            from .board import board_status
+            from .project_state import load_project
+            try:
+                status = board_status(load_project(self.artifact_dir).get("board"))
+            except (OSError, ValueError) as exc:
+                self._respond(500, json.dumps({"error": str(exc)}).encode(), "application/json")
+            else:
+                self._respond(200, json.dumps(status).encode(), "application/json", cache_control="no-store", conditional=True)
+        elif route_path == "/api/categories":
+            self._get_categories()
+        elif route_path.startswith("/api/plans/"):
+            from .categories import plan_meta
+            try:
+                with _locked_store(self.artifact_dir, write=False):
+                    meta = plan_meta(self.artifact_dir, urllib.parse.unquote(route_path[len("/api/plans/"):]),
+                                     store=self._v2_load(read_only=True))
+                body = json.dumps(meta).encode()
+            except KeyError:
+                self._respond(404, b'{"error":"plan not found"}')
+            except (ValueError, OSError) as exc:
+                self._respond(400, json.dumps({"error": str(exc)}).encode())
+            else:
+                self._respond(200, body, cache_control="no-store", conditional=True)
+        elif route_path == "/api/history":
+            self._v2_get_history(parsed)
+        elif route_path == "/comments.json":
+            self._v2_get_store(parsed)
+        elif route_path == "/current.meta.json":
+            self._v2_get_meta()
+        else:
+            return False
+        return True
+
+    _POLL_READS = 12  # more than a tab's poll makes (7 on FLD)
+
+    def _v2_get_poll(self, parsed):
+        """A tab's whole poll in one request (uzd.10). `u` lists the reads its last poll made, as the
+        page names them (./comments.json?view=page); the answer is the ETag each would have now,
+        every file's stamp taken once for all of them. Unchanged, it is a 304 like any poll read,
+        and the page re-reads only the ones whose ETag moved."""
+        urls = urllib.parse.parse_qs(parsed.query).get("u", [])[:self._POLL_READS]
+        path, etags = self.path, {}
+        try:
+            with _stamps_once():
+                for url in urls:
+                    self._capture = []
+                    self.path = (self.public_base_path or "") + "/" + url.removeprefix("./")
+                    inner = urllib.parse.urlparse(self.path)
+                    route = self._strip_base(inner.path)
+                    if url.startswith("./") and "/." not in inner.path and self._poll_read(route, inner):
+                        etags[url] = (self._capture or [None])[0]
+                    else:
+                        etags[url] = None
+        finally:
+            self.path, self._capture = path, None
+        self._respond(200, json.dumps({"etags": etags}).encode(), extra_headers={"Vary": "X-Annotate-Store-Mark"})
+
     def do_GET(self):
         self._promote_ids = ()  # a kept-alive connection's last write must not reach this request
         if self._signin_route() or not self._allow_request():
@@ -1723,35 +1844,18 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if self._redirect_moved(parsed, route_path):
             return
 
+        if route_path == "/api/poll":
+            return self._v2_get_poll(parsed)
+        if self._poll_read(route_path, parsed):
+            return
         if route_path == "/api/comments":
             return self._v2_get_comments(parsed)
         if route_path == "/api/seen":
             return self._v2_get_seen(parsed)
-        if route_path == "/api/read-state":
-            return self._v2_get_read_state(parsed)
         if route_path == "/api/identity":
             return self._v2_get_identity(parsed)
         if route_path == "/api/share-link":
             return self._v2_get_share_link()
-        if route_path == "/api/session-monitor":
-            return self._v2_get_session_monitor(parsed)
-        if route_path == "/api/delivery":
-            from .delivery import delivery_status
-            return self._respond(200, json.dumps(delivery_status(_monitor_project(self.bus_dir), self.slug)).encode(), "application/json")
-        if route_path == "/api/project":
-            try:
-                body = json.dumps(self._project_payload()).encode()
-            except (OSError, ValueError) as exc:
-                return self._respond(500, json.dumps({"error": str(exc)}).encode(), "application/json")
-            return self._respond(200, body, "application/json", cache_control="no-store")
-        if route_path == "/api/board":
-            from .board import board_status
-            from .project_state import load_project
-            try:
-                status = board_status(load_project(self.artifact_dir).get("board"))
-            except (OSError, ValueError) as exc:
-                return self._respond(500, json.dumps({"error": str(exc)}).encode(), "application/json")
-            return self._respond(200, json.dumps(status).encode(), "application/json", cache_control="no-store", conditional=True)
         if route_path == "/api/copy":
             from .copy_state import load_copy
             try:
@@ -1760,31 +1864,11 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             except (OSError, ValueError) as exc:
                 return self._respond(500, json.dumps({"error": str(exc)}).encode())
             return self._respond(200, body, cache_control="no-store")
-        if route_path == "/api/categories":
-            return self._get_categories()
-        if route_path.startswith("/api/plans/"):
-            from .categories import plan_meta
-            try:
-                with _locked_store(self.artifact_dir, write=False):
-                    meta = plan_meta(self.artifact_dir, urllib.parse.unquote(route_path[len("/api/plans/"):]),
-                                     store=self._v2_load(read_only=True))
-                body = json.dumps(meta).encode()
-            except KeyError:
-                return self._respond(404, b'{"error":"plan not found"}')
-            except (ValueError, OSError) as exc:
-                return self._respond(400, json.dumps({"error": str(exc)}).encode())
-            return self._respond(200, body, cache_control="no-store", conditional=True)
         if route_path.startswith("/plans/"):
             match = re.fullmatch(r"/plans/([^/]+)/(v[0-9]{1,10})\.html", urllib.parse.unquote(route_path))
             if not match:
                 return self._respond(400, b'{"error":"invalid plan path"}')
             return self._v2_serve_content(parsed, plan_id=match[1], plan_version=match[2])
-        if route_path == "/api/history":
-            return self._v2_get_history(parsed)
-        if route_path == "/comments.json":
-            return self._v2_get_store(parsed)
-        if route_path == "/current.meta.json":
-            return self._v2_get_meta()
         if route_path.lstrip("/") in _WEB_ASSETS:
             return self._serve_skill_asset(route_path.lstrip("/"))
         # A distinct path survives CDN configurations that strip query strings.
@@ -4473,6 +4557,10 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         return None
 
     def _project_payload(self) -> dict:
+        # /api/poll asks both project and current.meta.json, which carries it too
+        return _once(("project", str(self.artifact_dir)), self._take_project_payload)
+
+    def _take_project_payload(self) -> dict:
         from .page_names import project_payload
         data = project_payload(self.artifact_dir)
         if "board" in data:
@@ -4856,6 +4944,9 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 record[str(cid)] = {"ts": now, "sig": str(it.get("sig") or "")}
                 count += 1
             _save_read_state(self.artifact_dir, data)
+        if urllib.parse.parse_qs(parsed.query).get("counts") == ["1"]:
+            # uzd.10: the counts this mark changes, exactly as GET /api/categories answers them (body and ETag).
+            return self._get_categories()
         self._respond(200, json.dumps({"ok": True, "author": author, "count": count}, ensure_ascii=False).encode(), "application/json")
 
     def _v2_post_seen(self, parsed):
@@ -5030,7 +5121,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                 body = json.dumps(comment_view(payload), ensure_ascii=False).encode()
         poll = self.command in ("GET", "HEAD") and code == 200 and (
             route in {"/comments.json", "/api/read-state", "/api/session-monitor", "/api/categories",
-                      "/api/board", "/current.meta.json", "/api/delivery", "/api/history", "/api/project"}
+                      "/api/board", "/current.meta.json", "/api/delivery", "/api/history", "/api/project", "/api/poll"}
             or route.startswith("/api/plans/"))
         if poll:
             cache_control, conditional = "private, no-cache", True
@@ -5041,11 +5132,14 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
         if representation is not None:
             body, compressed = representation
         elif compressible and body and _accepts_gzip(self.headers.get("Accept-Encoding", "")):
-            packed = gzip.compress(body, compresslevel=6, mtime=0)
+            packed = _gzip(body)
             if len(packed) < len(body):
                 body, compressed = packed, True
         etag = ('"' + hashlib.sha256(body).hexdigest() + '"'
                 if code == 200 and (conditional or "no-store" not in cache_control) else None)
+        if self._capture is not None:  # a read /api/poll asks about: its ETag, nothing sent
+            self._capture.append(etag)
+            return
         validators = [value.strip().removeprefix("W/") for value in self.headers.get("If-None-Match", "").split(",")]
         if self.command in ("GET", "HEAD") and etag and (etag in validators or "*" in validators):
             code = 304
