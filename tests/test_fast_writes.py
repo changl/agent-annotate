@@ -7,6 +7,7 @@ import mmap
 import os
 import threading
 import time
+import urllib.parse
 
 import pytest
 
@@ -599,3 +600,56 @@ def test_a_page_poll_restamps_only_the_items_that_changed(server, monkeypatch):
     assert stamped == ["card"] and after["store_mark"] != first["store_mark"]
     marked = json.loads(request(httpd, "/comments.json?view=page", headers={"X-Annotate-Store-Mark": first["store_mark"]})[2])
     assert marked["changed_after"] == ["card"]
+
+
+POLL_READS = ("./comments.json?view=page", "./api/read-state", "./api/categories", "./api/session-monitor",
+              "./api/project", "./current.meta.json", "./api/delivery")
+
+
+def _poll(httpd, etag=None):
+    headers = {"Accept-Encoding": "gzip", **({"If-None-Match": etag} if etag else {})}
+    status, got, body = request(httpd, "/api/poll?" + urllib.parse.urlencode([("u", url) for url in POLL_READS]), headers=headers)
+    if body and got.get("Content-Encoding") == "gzip":
+        body = gzip.decompress(body)
+    return status, got, body
+
+
+def test_one_poll_answers_each_reads_etag_stamping_each_plan_once(server, monkeypatch):
+    httpd, root, _, _ = server
+    for n in range(5):
+        publish_plan_revision(root, f"more-{n}", "<html><body>Plan</body></html>", title="More")
+    status, headers, body = _poll(httpd)
+    etags = json.loads(body)["etags"]
+    assert status == 200 and headers["Cache-Control"] == "private, no-cache"
+    for url in POLL_READS:  # the old reads answer as before, with the ETag the poll gave
+        assert request(httpd, url[1:], headers={"Accept-Encoding": "gzip"})[1]["ETag"] == etags[url]
+    stamped, original = [], sync_server._take_metadata_stamp
+    monkeypatch.setattr(sync_server, "_take_metadata_stamp", lambda path: stamped.append(path) or original(path))
+    status, _, body = _poll(httpd, headers["ETag"])
+    assert status == 304 and body == b""
+    plans = [path for path in stamped if path.name == "meta.json" and path.parent.parent.name == "plans"]
+    assert len(plans) == len(set(plans)) == 6, plans  # an unchanged poll: each plan meta hashed once
+
+    meta = root / "plans/test/meta.json"
+    key, same = sync_server._file_key, sync_server._file_key(meta)
+    monkeypatch.setattr(sync_server, "_file_key", lambda path: same if path == meta else key(path))
+    with meta.open("r+b") as source, mmap.mmap(source.fileno(), 0) as mapped:
+        mapped[:] = mapped[:].replace(b'"title": "Test"', b'"title": "Next"')
+        status, _, body = _poll(httpd, headers["ETag"])
+    assert status == 200 and json.loads(body)["etags"]["./api/categories"] != etags["./api/categories"]
+
+
+def test_a_poll_names_no_etag_for_what_is_not_a_poll_read(server):
+    httpd, _, _, _ = server
+    query = urllib.parse.urlencode([("u", u) for u in ("./api/categories", "./api/poll", "./../comments.json", "/api/project")])
+    etags = json.loads(request(httpd, "/api/poll?" + query)[2])["etags"]
+    assert etags.pop("./api/categories") and set(etags.values()) == {None}
+
+
+def test_a_read_mark_answers_the_counts_as_categories_does(server):
+    httpd, _, _, _ = server
+    status, mark, body = request(httpd, "/api/read-state?counts=1", "POST", {"items": [{"id": "card", "sig": "seen"}]})
+    _, read, counts = request(httpd, "/api/categories")
+    assert status == 200 and body == counts and mark["ETag"] == read["ETag"]  # the page skips the categories read
+    plain = json.loads(request(httpd, "/api/read-state", "POST", {"items": [{"id": "card", "sig": "again"}]})[2])
+    assert "categories" not in plain
