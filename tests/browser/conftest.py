@@ -1,5 +1,7 @@
-"""Lease loopback test ports across parallel suites, including server subprocesses."""
+"""Lease loopback test ports across parallel suites, including server subprocesses; share browsers."""
 
+import asyncio
+import contextlib
 import fcntl
 import json
 import os
@@ -8,8 +10,147 @@ import subprocess
 import time
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+
+class _Borrowed:
+    """One test's handle on a shared browser: its contexts are its own, and close() closes only them."""
+
+    def __init__(self, shared, key):
+        self._shared, self._key, self._mine = shared, key, []
+
+    def _open(self, make):
+        made = self._shared.open(self._key, make)
+        self._mine.append(getattr(made, "context", made))
+        return made
+
+    def new_context(self, **options):
+        return self._open(lambda browser: browser.new_context(**options))
+
+    def new_page(self, **options):
+        # The real new_page, so page.close() still closes the context it made.
+        return self._open(lambda browser: browser.new_page(**options))
+
+    def close(self):
+        for context in self._mine:
+            context.close()
+
+    def __getattr__(self, name):
+        return getattr(self._shared.browser(self._key), name)
+
+
+class SharedPlaywright:
+    """Stands in for sync_playwright()'s runner: one driver, one browser per (engine, launch options)."""
+
+    def __init__(self, start, error):
+        self._start, self._error, self._runner, self._browsers, self._options = start, error, None, {}, {}
+        self.chromium = SimpleNamespace(launch=lambda **options: self._launch("chromium", options))
+        self.webkit = SimpleNamespace(launch=lambda **options: self._launch("webkit", options))
+
+    @property
+    def devices(self):
+        return self._playwright().devices
+
+    def _playwright(self):
+        if self._runner is None:
+            self._runner = self._start().start()
+        return self._runner
+
+    def _launch(self, engine, options):
+        key = (engine, repr(sorted(options.items())))
+        self._options[key] = (engine, options)
+        self.browser(key)  # launch now, so a missing WebKit still raises here and its tests skip
+        return _Borrowed(self, key)
+
+    def browser(self, key):
+        browser = self._browsers.get(key)
+        if browser is None or not browser.is_connected():
+            engine, options = self._options[key]
+            browser = self._browsers[key] = getattr(self._playwright(), engine).launch(**options)
+        return browser
+
+    def open(self, key, make):
+        try:
+            return make(self.browser(key))
+        except self._error:
+            if self._browsers[key].is_connected():
+                raise
+            return make(self.browser(key))  # it crashed while idle, before Playwright noticed: relaunch once
+
+    def close_contexts(self):
+        # Every context in these browsers belongs to the test that just ended, including any a failed
+        # new_page left behind. A browser that will not close one is dropped; the test fails with the error.
+        failures = []
+        for key, browser in list(self._browsers.items()):
+            try:
+                for context in browser.contexts:
+                    context.close()
+            except Exception as failure:
+                failures.append(failure)
+                del self._browsers[key]
+                with contextlib.suppress(Exception):
+                    browser.close()
+        if failures:
+            raise failures[0]
+
+    def stop(self):
+        try:
+            self.close_contexts()
+        finally:
+            if self._runner is not None:
+                loop = self._runner._loop
+                try:
+                    self._runner.stop()
+                finally:
+                    if asyncio._get_running_loop() is loop:  # an interrupted sync call can leave it set
+                        asyncio._set_running_loop(None)
+
+
+_shared = None
+
+
+@pytest.fixture(autouse=True)
+def shared_browsers(monkeypatch):
+    # cjb: each browser start on macOS costs tccd, syspolicyd and XProtect checks, so this folder launches
+    # one per engine and launch options instead of one per test. Each test still gets fresh contexts,
+    # closed when it ends.
+    global _shared
+    try:
+        from playwright import sync_api
+    except ImportError:
+        yield
+        return
+    if _shared is None:
+        _shared = SharedPlaywright(sync_api.sync_playwright, sync_api.Error)
+    shared = _shared
+    monkeypatch.setattr(sync_api, "sync_playwright", lambda: contextlib.nullcontext(shared))
+    yield
+    shared.close_contexts()
+
+
+def _stop_shared():
+    global _shared
+    shared, _shared = _shared, None
+    if shared is not None:
+        shared.stop()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item, nextitem):
+    # A live sync Playwright leaves its loop running, which breaks asyncio.run in tests outside this folder.
+    # tests/browser is not a package, so a package-scoped fixture would only stop at session end.
+    try:
+        return (yield)
+    finally:
+        if nextitem is None or Path(__file__).parent not in nextitem.path.parents:
+            _stop_shared()
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_sessionfinish(session):
+    _stop_shared()  # a run cut short (-x, Ctrl-C) never reaches the last teardown above
 
 
 @pytest.fixture(autouse=True)
