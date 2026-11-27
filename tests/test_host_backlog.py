@@ -51,26 +51,33 @@ def test_workers_flag_only_those_asking_for_action():
     assert hb.orca_workers(workers, {"run_x": "FLD"}) == {"worker:ctx_a": 'An Orca worker in "FLD" is stuck: permission'}
 
 
-def sample(mac, idle, minutes_ago=0.0, memory=60, cores=10, all_cores=10):
+def sample(mac, idle, minutes_ago=0.0, memory=60, cores=10, all_cores=10, load=1.0):
     """One Mac as `mac-admit --json` prints it."""
     at = (NOW - datetime.timedelta(minutes=minutes_ago)).isoformat()
-    return {"target": mac, "cores": cores, "all_cores": all_cores,
-            "sample": {"cpu_idle_percent": idle, "memory_free_percent": memory, "observed_at": at}}
+    return {"target": mac, "cores": cores, "all_cores": all_cores, "thresholds": {"max_load_per_core": 2.5},
+            "sample": {"cpu_idle_percent": idle, "memory_free_percent": memory, "load_per_core": load,
+                       "observed_at": at}}
 
 
 def runs(observations, state=None, census=lambda macs: {}):
     """Feed successive mac-admit outputs through pressure(); returns each run's problems and the last state."""
     state, seen = state or {}, []
     for observed in observations:
-        got, state = hb.pressure({o["target"]: hb.reading(o) for o in observed}, state, NOW, census)
+        got, state = hb.pressure({o["target"]: hb.reading(o) for o in observed}, state, NOW, census,
+                                 hb.load_limit(observed))
         seen.append(got)
     return seen, state
 
 
+OVER = "over its limits (80% CPU or memory, load 2.5 per core)"
+
+
 def test_reading_keeps_the_measured_figures_and_the_failure_kind():
-    assert hb.reading(sample("M1Max", 20.4)) == {"kind": "measured", "idle": 20.4, "memory": 60.0, "hot": False,
-                                                 "at": NOW.isoformat()}
+    assert hb.reading(sample("M1Max", 20.4)) == {"kind": "measured", "idle": 20.4, "memory": 60.0, "load": 1.0,
+                                                 "hot": False, "at": NOW.isoformat()}
     assert hb.reading(sample("M1Max", 50, cores=6))["hot"] is True
+    assert hb.reading(sample("M1Max", 50, load=None))["load"] is None
+    assert hb.reading(sample("M1Max", 50, load=float("nan")))["load"] is None
     for slow in ("ssh_host_or_probe_timeout:M1Max16", "host_probe_failed:M1Max16", "host_probe_timeout:M1Max",
                  "sample_unreadable:M1Max16"):
         assert hb.reading({"target": "M1Max16", "error": slow})["kind"] == "slow"
@@ -86,23 +93,59 @@ def test_families_sum_cpu_by_command_and_count_simulators_as_one():
     assert hb.families(ps) == "iOS simulators about 6.5 cores (2 processes), fseventsd about 1.1 cores (1 process)"
 
 
+def test_load_per_core_makes_a_mac_busy_under_80_percent_cpu():
+    # The M1Max16, 2026-11-27: about 75% CPU and 68% memory free, yet load 15.6 per core and swapping.
+    seen, _ = runs([[sample("M1Max16", 25, minutes_ago=m, memory=68, load=15)] for m in (30, 20, 10, 0)])
+    assert seen[:3] == [{}, {}, {}]
+    assert seen[3] == {"busy:M1Max16": f"The M1Max16 has been {OVER} for 30 min (now CPU 75% busy, memory 32% used, "
+                                       "load 15.0 per core)"}
+    seen, _ = runs([[sample("M1Max16", 25, minutes_ago=m, memory=68, load=1)] for m in (30, 20, 10, 0)])
+    assert seen[3] == {}
+
+
+def test_the_load_limit_is_the_m1_max_admission_limit():
+    loose = {**sample("M1Max16", 50), "thresholds": {"max_load_per_core": 1000}}  # its own config never refuses tests
+    assert hb.load_limit([loose, {**sample("M1Max", 50), "thresholds": {"max_load_per_core": 4}}]) == 4
+    assert hb.load_limit([loose, {"target": "M1Max", "error": "ssh_host_offline_or_asleep:M1Max"}]) == hb.LOAD_PER_CORE
+
+
+def test_memory_users_pick_the_largest_commands():
+    ps = (" 22964000 /System/Library/Frameworks/CoreServices.framework/Versions/A/Support/fseventsd\n"
+          "  900000 /usr/libexec/secd\n 1500000 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome\n"
+          " 1500000 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome\n  junk\n")
+    assert hb.memory_users(ps) == "fseventsd 23.5 GB, Google Chrome 3.1 GB (2 processes)"
+
+
+def test_census_names_cpu_and_memory_users_within_its_time(monkeypatch):
+    asked = []
+
+    def run(command, timeout):
+        asked.append((command, timeout))
+        return " 300.0 /usr/bin/rustc\n" if "pcpu=,comm=" in command else " 22964000 /usr/sbin/fseventsd\n"
+    monkeypatch.setattr(hb, "_run", run)
+    assert hb.census(["M1Max16", "Elsewhere"]) == {
+        "M1Max16": "using the most CPU: rustc about 3.0 cores (1 process); the most memory: fseventsd 23.5 GB"}
+    assert [command[-1] for command, _ in asked] == ["pcpu=,comm=", "rss=,comm="]
+    assert all(command[:-3] == hb.PS["M1Max16"] and timeout <= hb.CENSUS_S for command, timeout in asked)
+
+
 def test_the_clock_uses_the_sample_times_and_the_measured_idle():
     asked = []
 
     def census(macs):
         asked.extend(macs)
-        return {mac: "rustc about 3.0 cores (3 processes)" for mac in macs}
+        return {mac: "using the most CPU: rustc about 3.0 cores (3 processes)" for mac in macs}
     # Sampled 30.5, 20.5, 10.5 and 0.5 min ago: 30 min apart by the Mac's clock, though the runs spanned 30.5.
     seen, _ = runs([[sample("M1Max16", 5, minutes_ago=m)] for m in (30.5, 20.5, 10.5, 0.5)], census=census)
     assert seen[:3] == [{}, {}, {}] and asked == ["M1Max16"]
-    assert seen[3] == {"busy:M1Max16": "The M1Max16 has been over 80% busy for 30 min (now CPU 95% busy, memory 40% "
-                                      "used); using the most CPU: rustc about 3.0 cores (3 processes)"}
+    assert seen[3] == {"busy:M1Max16": f"The M1Max16 has been {OVER} for 30 min (now CPU 95% busy, memory 40% "
+                                      "used, load 1.0 per core); using the most CPU: rustc about 3.0 cores (3 processes)"}
     seen, _ = runs([[sample("M1Max16", 5, minutes_ago=m)] for m in (29.5, 20, 10, 0.5)])
     assert seen[3] == {}  # 29 min by the sample times
     seen, _ = runs([[sample("M1Max", 20.4, minutes_ago=m)] for m in (40, 30, 20, 10, 0)])
     assert seen[-1] == {}  # 79.6% busy is under the line even though mac-admit prints it as 20% idle
     seen, _ = runs([[sample("M1Max", 60, memory=15, cores=6, minutes_ago=m)] for m in (30, 20, 10, 0)])
-    assert "memory 85% used, running hot" in seen[-1]["busy:M1Max"]
+    assert "memory 85% used, load 1.0 per core, running hot" in seen[-1]["busy:M1Max"]
 
 
 def test_failed_probes_never_read_as_measured_load():
@@ -116,7 +159,7 @@ def test_failed_probes_never_read_as_measured_load():
     assert seen[0] == {"quiet:M1Max16": "The M1Max16 has not answered its load check for 30 min"} and asked == []
     mixed = {"M1Max16": {"since": ago(30), "last": ago(10), "checks": 3, "busy": 1}}
     seen, _ = runs([[sample("M1Max16", 1)]], state=mixed)
-    assert seen[0]["busy:M1Max16"].startswith("The M1Max16 has been over 80% busy whenever it answered for 30 min "
+    assert seen[0]["busy:M1Max16"].startswith(f"The M1Max16 has been {OVER} whenever it answered for 30 min "
                                               "(busy in 2 of 4 checks, the others did not answer; now CPU 99% busy")
 
 
@@ -125,8 +168,9 @@ def test_a_refused_check_inside_a_busy_run_is_counted_not_hidden():
     seen, state = runs([[sample("M1Max16", 5, minutes_ago=30)], [sample("M1Max16", 5, minutes_ago=20)], [refused],
                         [sample("M1Max16", 5, minutes_ago=0)]])
     assert seen[2] == {"reach:M1Max16": "The host check cannot sample the M1Max16: its SSH login was refused"}
-    assert seen[3] == {"busy:M1Max16": "The M1Max16 has been over 80% busy whenever it answered for 30 min (busy in "
-                                       "3 of 4 checks, the others did not answer; now CPU 95% busy, memory 40% used)"}
+    assert seen[3] == {"busy:M1Max16": f"The M1Max16 has been {OVER} whenever it answered for 30 min (busy in "
+                                       "3 of 4 checks, the others did not answer; now CPU 95% busy, memory 40% used, "
+                                       "load 1.0 per core)"}
     # A long refusal outlasts the gap, so the next answer starts a new clock.
     seen, _ = runs([[refused]] * 5 + [[sample("M1Max16", 5)]],
                    state={"M1Max16": {"since": ago(60), "last": ago(50), "checks": 2, "busy": 2}})
