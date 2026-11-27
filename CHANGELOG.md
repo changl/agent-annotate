@@ -1,6 +1,6 @@
 # agent-annotate — changelog
 
-## Unreleased
+## 2.37.0
 
 - `api/categories` after a save counts only comments.json's items (agent-annotate-uzd.10). What the cold generation contributes is counted once per generation and reader kind and reused; on a copy of FLD the call after a save drops from about 220 to 65 ms CPU. Every count and plan is byte-identical to a full recount, for page and agent readers.
 - Send reads the page back once (agent-annotate-uzd.10). It no longer reads the store right after submitting and then again with the read state, and the page shows that read instead of reloading everything. It also skips the store read before submitting when no draft was saved since its own poll. On a copy of FLD, after the confirm: 8 requests instead of 12, 5 one after another instead of 7. Discard reads the page back once, too. A read of that read-back that fails is read again before the page shows the result; the reads that succeeded are reused. If the store read fails again, the next store read asked after the Send or Discard succeeded that succeeds, a poll's included and even one that lands before the read-back fails, shows the store; a poll asked before it cannot. Each store read is numbered when it is asked (a poll's when it asks `/api/poll`), and only the newest asked reaches the page.
