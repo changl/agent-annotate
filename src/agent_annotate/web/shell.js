@@ -5195,7 +5195,7 @@ function readBack() {
 async function reloadPage(back) {
   back = back || {};
   await Promise.all([[back.store, loadStore], [back.read, loadReadState], [back.cats, loadCategories]]
-    .map(([done, load]) => Promise.resolve(done).then(ok => ok || load())));
+    .map(([done, load]) => done ? done.then(ok => ok || load()) : load())); // no read-back: read now, not a tick later
   if (VIEW_DOC) withDoc(VIEW_DOC, renderAll);
   document.dispatchEvent(new CustomEvent('annotate:store'));
   if (window.AA) window.AA.changed();
