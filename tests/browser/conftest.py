@@ -1,5 +1,6 @@
 """Lease loopback test ports across parallel suites, including server subprocesses; share browsers."""
 
+import asyncio
 import contextlib
 import fcntl
 import json
@@ -17,31 +18,35 @@ import pytest
 class _Borrowed:
     """One test's handle on a shared browser: its contexts are its own, and close() closes only them."""
 
-    def __init__(self, browser, opened):
-        self._browser, self._opened, self._mine = browser, opened, []
+    def __init__(self, shared, key):
+        self._shared, self._key, self._mine = shared, key, []
+
+    def _open(self, make):
+        made = self._shared.open(self._key, make)
+        self._mine.append(made.context if hasattr(made, "context") else made)
+        return made
 
     def new_context(self, **options):
-        context = self._browser.new_context(**options)
-        self._mine.append(context)
-        self._opened.append(context)
-        return context
+        return self._open(lambda browser: browser.new_context(**options))
 
     def new_page(self, **options):
-        return self.new_context(**options).new_page()
+        # The real new_page, so page.close() still closes the context it made.
+        return self._open(lambda browser: browser.new_page(**options))
 
     def close(self):
         for context in self._mine:
             context.close()
 
     def __getattr__(self, name):
-        return getattr(self._browser, name)
+        return getattr(self._shared.browser(self._key), name)
 
 
 class SharedPlaywright:
     """Stands in for sync_playwright()'s runner: one driver, one browser per (engine, launch options)."""
 
-    def __init__(self, start):
-        self._start, self._runner, self._browsers, self.opened = start, None, {}, []
+    def __init__(self, start, error):
+        self._start, self._error, self._runner, self._browsers, self._options = start, error, None, {}, {}
+        self.opened = []
         self.chromium = SimpleNamespace(launch=lambda **options: self._launch("chromium", options))
         self.webkit = SimpleNamespace(launch=lambda **options: self._launch("webkit", options))
 
@@ -56,20 +61,49 @@ class SharedPlaywright:
 
     def _launch(self, engine, options):
         key = (engine, repr(sorted(options.items())))
+        self._options[key] = (engine, options)
+        self.browser(key)  # launch now, so a missing WebKit still raises here and its tests skip
+        return _Borrowed(self, key)
+
+    def browser(self, key):
         browser = self._browsers.get(key)
         if browser is None or not browser.is_connected():
+            engine, options = self._options[key]
             browser = self._browsers[key] = getattr(self._playwright(), engine).launch(**options)
-        return _Borrowed(browser, self.opened)
+        return browser
 
-    def close_contexts(self, error):
-        while self.opened:
-            with contextlib.suppress(error):  # its browser crashed; the test that saw it already failed
-                self.opened.pop().close()
+    def open(self, key, make):
+        try:
+            made = make(self.browser(key))
+        except self._error:
+            if self._browsers[key].is_connected():
+                raise
+            made = make(self.browser(key))  # it crashed while idle, before Playwright noticed: relaunch once
+        self.opened.append(made.context if hasattr(made, "context") else made)
+        return made
 
-    def stop(self, error):
-        self.close_contexts(error)
-        if self._runner is not None:
-            self._runner.stop()
+    def close_contexts(self):
+        # Close every context the test left open, then fail that test with the first error.
+        contexts = self.opened[:]
+        self.opened.clear()
+        failures = []
+        for context in contexts:
+            try:
+                context.close()
+            except Exception as failure:
+                failures.append(failure)
+        if failures:
+            raise failures[0]
+
+    def stop(self):
+        try:
+            self.close_contexts()
+        finally:
+            try:
+                if self._runner is not None:
+                    self._runner.stop()
+            finally:
+                asyncio._set_running_loop(None)  # an interrupted sync call can leave Playwright's loop set
 
 
 _shared = None
@@ -87,26 +121,33 @@ def shared_browsers(monkeypatch):
         yield
         return
     if _shared is None:
-        _shared = SharedPlaywright(sync_api.sync_playwright)
+        _shared = SharedPlaywright(sync_api.sync_playwright, sync_api.Error)
     shared = _shared
     monkeypatch.setattr(sync_api, "sync_playwright", lambda: contextlib.nullcontext(shared))
     yield
-    shared.close_contexts(sync_api.Error)
+    shared.close_contexts()
+
+
+def _stop_shared():
+    global _shared
+    shared, _shared = _shared, None
+    if shared is not None:
+        shared.stop()
 
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_teardown(item, nextitem):
     # A live sync Playwright leaves its loop running, which breaks asyncio.run in tests outside this folder.
     # tests/browser is not a package, so a package-scoped fixture would only stop at session end.
-    global _shared
     try:
         return (yield)
     finally:
-        if _shared is not None and (nextitem is None or Path(__file__).parent not in nextitem.path.parents):
-            from playwright.sync_api import Error
+        if nextitem is None or Path(__file__).parent not in nextitem.path.parents:
+            _stop_shared()
 
-            _shared.stop(Error)
-            _shared = None
+
+def pytest_sessionfinish(session):
+    _stop_shared()  # a run cut short (-x, Ctrl-C) never reaches the last teardown above
 
 
 @pytest.fixture(autouse=True)
