@@ -27,8 +27,8 @@ STATE = pathlib.Path.home() / ".claude/annotate-state/state"
 DELIVERIES = STATE / "deliveries"
 OPEN = ("pending", "accepted", "started", "uncertain")
 BUSY_PERCENT = 80  # Chang 2026-11-26: no new work on a Mac at 80% or more
-# wm-test admission's max_load_per_core for the M1Max (~/.config/agent-tools/wm-test.json); mac-admit's
-# samples carry it as thresholds, and this is used only when the M1Max's sample does not.
+# wm-test's M1 Max admission limit (max_load_per_core in ~/.config/agent-tools/wm-test.json), fixed here so a
+# failed sample cannot change it.
 LOAD_PER_CORE = 2.5
 BUSY_MIN = 30
 GAP_MIN = 25  # a gap longer than two runs (asleep, off) restarts a Mac's busy clock
@@ -120,18 +120,10 @@ def reading(observed: dict) -> dict:
         return {"kind": "slow", "why": "sample unreadable"}
     hot = isinstance(observed.get("cores"), int) and observed.get("all_cores", 0) > observed["cores"]
     load = sample.get("load_per_core")
-    load = float(load) if isinstance(load, (int, float)) and 0 <= load < float("inf") else None  # NaN fails too
+    load = (float(load) if isinstance(load, (int, float)) and not isinstance(load, bool) and 0 <= load < float("inf")
+            else None)  # NaN fails the range
     return {"kind": "measured", "idle": float(idle), "memory": float(memory), "load": load, "hot": hot,
             "at": sample.get("observed_at")}
-
-
-def load_limit(observed: list) -> float:
-    """The M1Max's max_load_per_core from mac-admit's samples (wm-test's config), else LOAD_PER_CORE."""
-    for o in observed:
-        limit = (o.get("thresholds") or {}).get("max_load_per_core") if o.get("target") == "M1Max" else None
-        if isinstance(limit, (int, float)) and 0 < limit < float("inf"):
-            return float(limit)
-    return LOAD_PER_CORE
 
 
 def load_state(path: pathlib.Path) -> dict:
@@ -182,10 +174,10 @@ def memory_users(ps_text: str, top: int = 3) -> str:
                      for name, kib in rss.most_common(top) if kib * 1024 >= 1e9)
 
 
-def pressure(readings: dict, state: dict, now, census, limit: float = LOAD_PER_CORE) -> tuple:
+def pressure(readings: dict, state: dict, now, census) -> tuple:
     """readings: {mac: reading()}. state: load_state(). census(macs) -> {mac: what uses its CPU and memory},
-    asked only for Macs reported as measured busy. limit: load per core at which a Mac is busy (load_limit()).
-    Busy is CPU or memory at BUSY_PERCENT or more, or load per core at `limit` or more: a Mac swapping
+    asked only for Macs reported as measured busy.
+    Busy is CPU or memory at BUSY_PERCENT or more, or load per core at LOAD_PER_CORE or more: a Mac swapping
     with every core queued can still read just under 80% CPU. Returns (problems, next state).
     A run of checks that were busy or did not answer, each within GAP_MIN of the last, is reported once it
     spans BUSY_MIN by the Macs' own sample times; the text says how many checks measured it busy.
@@ -201,7 +193,7 @@ def pressure(readings: dict, state: dict, now, census, limit: float = LOAD_PER_C
                 following[mac] = {**before, "checks": before["checks"] + 1}
             continue
         busy = r["kind"] == "measured" and (r["idle"] <= floor or r["memory"] <= floor
-                                            or (r.get("load") is not None and r["load"] >= limit))
+                                            or (r.get("load") is not None and r["load"] >= LOAD_PER_CORE))
         if r["kind"] == "asleep" or (r["kind"] == "measured" and not busy):
             continue  # off, asleep or fine: its clock restarts
         try:
@@ -224,7 +216,7 @@ def pressure(readings: dict, state: dict, now, census, limit: float = LOAD_PER_C
             now_text += ", running hot so macOS switched cores off" if r["hot"] else ""
         else:
             now_text = "not answering now"
-        over = f"over its limits ({BUSY_PERCENT}% CPU or memory, load {limit:g} per core)"
+        over = f"over its limits ({BUSY_PERCENT}% CPU or memory, load {LOAD_PER_CORE:g} per core)"
         if not run["busy"]:
             key, text = "quiet", f"The {mac} has not answered its load check for {minutes} min"
         elif run["busy"] == run["checks"]:
@@ -239,15 +231,15 @@ def pressure(readings: dict, state: dict, now, census, limit: float = LOAD_PER_C
 
 def _run(command: list, timeout: int) -> str:
     try:
-        return subprocess.run(command, capture_output=True, text=True, timeout=timeout,
-                              stdin=subprocess.DEVNULL).stdout
+        return subprocess.run(command, capture_output=True, text=True, errors="replace", timeout=timeout,
+                              stdin=subprocess.DEVNULL).stdout  # a stream cut mid-character still reads
     except (OSError, subprocess.SubprocessError):
         return ""
 
 
 def census(macs: list) -> dict:
     """What uses each Mac's CPU and memory, all Macs at once, each within CENSUS_S; a part ps does not
-    answer in time is left out."""
+    answer in time is left out. The memory part is optional: any failure in it adds nothing."""
     macs = [mac for mac in macs if mac in PS]
     if not macs:
         return {}
@@ -256,7 +248,10 @@ def census(macs: list) -> dict:
         end = time.monotonic() + CENSUS_S
         cpu = families(_run(PS[mac] + ["ps", "-axo", "pcpu=,comm="], CENSUS_S))
         left = end - time.monotonic()
-        memory = memory_users(_run(PS[mac] + ["ps", "-axo", "rss=,comm="], left)) if left >= 1 else ""
+        try:
+            memory = memory_users(_run(PS[mac] + ["ps", "-axo", "rss=,comm="], left)) if left >= 1 else ""
+        except Exception:  # noqa: BLE001 - it must never cost the busy warning or the CPU census
+            memory = ""
         return "; ".join(part for part in (cpu and f"using the most CPU: {cpu}",
                                            memory and f"the most memory: {memory}") if part)
     with ThreadPoolExecutor(len(macs)) as pool:
@@ -283,7 +278,7 @@ def mac_pressure(now, save: bool) -> dict:
     missing = {mac: {"kind": "unreachable", "why": "not_configured"} for mac in PS}  # a Mac mac-admit left out
     observed = sample_macs()
     readings = missing | {o["target"]: reading(o) for o in observed}
-    problems, following = pressure(readings, load_state(PRESSURE), now, census, load_limit(observed))
+    problems, following = pressure(readings, load_state(PRESSURE), now, census)
     if save:
         PRESSURE.parent.mkdir(parents=True, exist_ok=True)
         partial = PRESSURE.with_suffix(".partial")

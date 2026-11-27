@@ -1,6 +1,7 @@
 import datetime
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("host_backlog", Path(__file__).parents[1] / "scripts" / "host_backlog.py")
@@ -54,7 +55,7 @@ def test_workers_flag_only_those_asking_for_action():
 def sample(mac, idle, minutes_ago=0.0, memory=60, cores=10, all_cores=10, load=1.0):
     """One Mac as `mac-admit --json` prints it."""
     at = (NOW - datetime.timedelta(minutes=minutes_ago)).isoformat()
-    return {"target": mac, "cores": cores, "all_cores": all_cores, "thresholds": {"max_load_per_core": 2.5},
+    return {"target": mac, "cores": cores, "all_cores": all_cores,
             "sample": {"cpu_idle_percent": idle, "memory_free_percent": memory, "load_per_core": load,
                        "observed_at": at}}
 
@@ -63,8 +64,7 @@ def runs(observations, state=None, census=lambda macs: {}):
     """Feed successive mac-admit outputs through pressure(); returns each run's problems and the last state."""
     state, seen = state or {}, []
     for observed in observations:
-        got, state = hb.pressure({o["target"]: hb.reading(o) for o in observed}, state, NOW, census,
-                                 hb.load_limit(observed))
+        got, state = hb.pressure({o["target"]: hb.reading(o) for o in observed}, state, NOW, census)
         seen.append(got)
     return seen, state
 
@@ -103,10 +103,47 @@ def test_load_per_core_makes_a_mac_busy_under_80_percent_cpu():
     assert seen[3] == {}
 
 
-def test_the_load_limit_is_the_m1_max_admission_limit():
-    loose = {**sample("M1Max16", 50), "thresholds": {"max_load_per_core": 1000}}  # its own config never refuses tests
-    assert hb.load_limit([loose, {**sample("M1Max", 50), "thresholds": {"max_load_per_core": 4}}]) == 4
-    assert hb.load_limit([loose, {"target": "M1Max", "error": "ssh_host_offline_or_asleep:M1Max"}]) == hb.LOAD_PER_CORE
+def test_the_load_limit_is_fixed_so_a_failed_local_sample_cannot_move_it(tmp_path, monkeypatch):
+    # Review of PR #188: a local timeout dropped the sampled limit and reset a busy peer's clock.
+    monkeypatch.setattr(hb, "PRESSURE", tmp_path / "pressure.json")
+    monkeypatch.setattr(hb, "census", lambda macs: {})
+
+    def checks(peer_load, limit, fail_at):
+        for m in (30, 20, 10, 0):
+            local = {"target": "M1Max", "error": "host_probe_timeout:M1Max"} if m in fail_at else {
+                **sample("M1Max", 50, minutes_ago=m, load=0.5), "thresholds": {"max_load_per_core": limit}}
+            peer = {**sample("M1Max16", 50, minutes_ago=m, load=peer_load), "thresholds": {"max_load_per_core": 1000}}
+            monkeypatch.setattr(hb, "sample_macs", lambda rows=[local, peer]: rows)
+            got = hb.mac_pressure(NOW, save=True)
+        hb.PRESSURE.unlink()
+        return got
+    assert "busy:M1Max16" in checks(3.0, 1.5, fail_at=(20,))
+    assert "busy:M1Max16" not in checks(2.0, 1.5, fail_at=())  # a sampled limit is not used
+    assert "busy:M1Max16" not in checks(2.0, 4.0, fail_at=(30, 20, 10, 0))
+
+
+def test_a_boolean_load_is_not_a_load():
+    assert hb.reading(sample("M1Max16", 50, load=True))["load"] is None
+    seen, state = runs([[sample("M1Max16", 50, minutes_ago=m, load=True)] for m in (30, 20, 10, 0)])
+    assert seen[3] == {} and "M1Max16" not in state
+
+
+def test_a_failed_memory_census_keeps_the_busy_warning_and_the_cpu_census(tmp_path, monkeypatch):
+    # Review of PR #188: rss output cut mid-character raised UnicodeDecodeError and lost the busy warning.
+    ps = tmp_path / "fake_ps.py"
+    ps.write_text("import sys\n"
+                  "if sys.argv[-1] == 'pcpu=,comm=':\n    sys.stdout.buffer.write(b' 200.0 /bin/worker\\n')\n"
+                  "else:\n    sys.stdout.buffer.write(b' 22964000 /bin/partial-\\xc3')\n    sys.exit(255)\n")
+    monkeypatch.setattr(hb, "PRESSURE", tmp_path / "pressure.json")
+    hb.PRESSURE.write_text(json.dumps({"M1Max16": {"since": ago(30), "last": ago(10), "checks": 3, "busy": 3}}))
+    monkeypatch.setattr(hb, "PS", {"M1Max16": [sys.executable, str(ps)]})
+    monkeypatch.setattr(hb, "sample_macs", lambda: [sample("M1Max16", 5, load=15)])
+    monkeypatch.setattr(hb, "queues", lambda now, end: {"send:reviews/a": "waiting"})
+    got = hb.collect(NOW, save=False)
+    assert got["send:reviews/a"] == "waiting" and "worker about 2.0 cores" in got["busy:M1Max16"], got
+    monkeypatch.setattr(hb, "memory_users", lambda text: 1 / 0)
+    got = hb.collect(NOW, save=False)
+    assert got["busy:M1Max16"].endswith("; using the most CPU: worker about 2.0 cores (1 process)"), got
 
 
 def test_memory_users_pick_the_largest_commands():
