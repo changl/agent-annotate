@@ -3,6 +3,7 @@
 ## Unreleased
 
 - The host check reports a Mac whose load per core is at or above wm-test's admission limit for the M1 Max (2.5) for 30 min, not only one at 80% CPU or memory (agent-annotate-98w). The M1 Max 16 ran at about 75% CPU, load 15.6 per core and swapping, and was never reported. The report gives the load per core next to CPU and memory, and names the biggest memory users next to the biggest CPU users (for example "fseventsd 22.0 GB"). The limit is a fixed 2.5, so a failed sample cannot move it; the memory list is optional and a failure in it never costs the busy warning or the CPU list.
+- The host check's launchd job runs at Standard priority, not Background (`scripts/launchd/com.changlee.annotate-host-backlog.plist`, now in the repo). Under Background an overloaded M1 Max starved it: sampling the Macs, reading Orca and the upload timed out on the very runs that should have reported the load, and the gaps they left restarted the busy clock. The sweep job made the same move earlier.
 
 ## 2.36.0
 
