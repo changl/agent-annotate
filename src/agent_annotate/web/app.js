@@ -804,7 +804,7 @@
     const failed = r ? (r.failed || []).length : items.length;
     if (!sent.length) {
       btns.forEach(b => { b.disabled = false; });
-      if (r) { await docs.reload(); AA.changed(); }
+      if (r) { await docs.reload(r.counts); AA.changed(); }
       $('#round-confirm-sub').textContent = 'Failed to submit — try again.';
       return;
     }
@@ -817,7 +817,7 @@
     if (failed) {
       // A partial Send: the summary stays open on what is still pending.
       setNote(result, r.delivered ? 'is-success' : 'is-queued');
-      await docs.reload();
+      await docs.reload(r.counts);
       AA.TABS.forEach(t => { const pr = AA.providers[t.id]; if (pr && pr.afterSend) pr.afterSend(); });
       btns.forEach(b => { b.disabled = false; });
       render();
@@ -828,7 +828,7 @@
     }
     close();
     setNote(result, r.delivered ? 'is-success' : 'is-queued');
-    await docs.reload();
+    await docs.reload(r.counts);  // submitPage read the page back already
     AA.TABS.forEach(t => { const pr = AA.providers[t.id]; if (pr && pr.afterSend) pr.afterSend(); });
     if (AA.rail.tab === 'history') AA.rail.renderHistory();
     AA.changed();

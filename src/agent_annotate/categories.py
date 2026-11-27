@@ -545,23 +545,18 @@ def _count_row(comment: dict) -> list | None:
             _follows_viewer(comment), None]
 
 
-def category_counts(page_dir: Path | str, author: str | None = None, *, read_state: dict | None = None,
-                    store: dict | None = None, plans: list | None = None, submitted_only: bool = False,
-                    rows: dict | None = None) -> dict:
-    """`rows` memoizes _count_row by id(comment): pass one only while every comment object is unchanged and alive."""
-    from .consolidate import marker
-    from .sync_server import _author_key
-    counts = {c: dict.fromkeys(("needs_you", "later", "ready", "waiting", "done", "unread"), 0) for c in CATEGORIES}
-    if marker(page_dir) is not None:
-        return counts
-    read = (read_state if read_state is not None else
-            _json(safe_path(page_dir, "read-state.json"), {}).get(_author_key(author), {}) if author else {})
-    if store is None:
-        from .cold import merge
-        store = merge(_comments(page_dir))
-    versions = _current_versions(page_dir, plans if plans is not None else list_plans(page_dir, store=store)) if author else {}
+_SECTIONS = ("needs_you", "later", "ready", "waiting", "done", "unread")
+
+
+def tally(store: dict, versions: dict, rows: dict | None = None) -> tuple[dict, list, set]:
+    """What category_counts takes from store's comments, the read state aside: (section counts,
+    [(category, id, sig)] of those that may be unread, the categories present).
+    `rows` memoizes _count_row by id(comment): pass one only while every comment object is unchanged and alive."""
+    counts = {c: dict.fromkeys(_SECTIONS, 0) for c in CATEGORIES}
+    maybe, present = [], set()
     for items in store["anchors"].values():
         for comment in items:
+            present.add(comment_category(comment))
             if rows is None:
                 row = _count_row(comment)
             elif (row := rows.get(id(comment), False)) is False:
@@ -570,7 +565,7 @@ def category_counts(page_dir: Path | str, author: str | None = None, *, read_sta
                 continue
             section, category, can_be_unread, doc, follows, sig = row
             counts[category][section] += 1
-            if not (author and can_be_unread):
+            if not can_be_unread:
                 continue
             # Review and Plans: unread on the document's current version (the
             # rail's scope), plus cards that follow the viewer to it. Checked
@@ -581,7 +576,34 @@ def category_counts(page_dir: Path | str, author: str | None = None, *, read_sta
                     continue
             if sig is None:
                 sig = row[5] = comment_sig(comment)
-            if read.get(comment.get("id"), {}).get("sig") != sig:
+            maybe.append((category, comment.get("id"), sig))
+    return counts, maybe, present
+
+
+def category_counts(page_dir: Path | str, author: str | None = None, *, read_state: dict | None = None,
+                    store: dict | None = None, plans: list | None = None, submitted_only: bool = False,
+                    rows: dict | None = None, tallies: list | None = None) -> dict:
+    """`rows`: see tally. `tallies`: tally results to count instead of `store`'s comments
+    (the server's, for a cold generation's items apart from the hot ones)."""
+    from .consolidate import marker
+    from .sync_server import _author_key
+    counts = {c: dict.fromkeys(_SECTIONS, 0) for c in CATEGORIES}
+    if marker(page_dir) is not None:
+        return counts
+    read = (read_state if read_state is not None else
+            _json(safe_path(page_dir, "read-state.json"), {}).get(_author_key(author), {}) if author else {})
+    if tallies is None:
+        if store is None:
+            from .cold import merge
+            store = merge(_comments(page_dir))
+        versions = _current_versions(page_dir, plans if plans is not None else list_plans(page_dir, store=store)) if author else {}
+        tallies = [tally(store, versions, rows)]
+    for sections, maybe, _ in tallies:
+        for category, values in sections.items():
+            for section, n in values.items():
+                counts[category][section] += n
+        for category, cid, sig in maybe if author else ():
+            if read.get(cid, {}).get("sig") != sig:
                 counts[category]["unread"] += 1
     try:
         blocks = load_copy(page_dir)["blocks"]

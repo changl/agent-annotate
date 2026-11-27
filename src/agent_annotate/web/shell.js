@@ -4632,7 +4632,6 @@ async function submitPage(alsoPending, receipt) {
   if (doRound) {
     const j = await withDocAsync('review', () => apiRoundSubmit(null, receiptPayload(roundLines, sendId)));
     if (j) { last = j; sentCount += (j.comment_count || 0) + (j.edit_count || 0); delivered = delivered || j.delivery === 'active_monitor'; sent.push(...roundLines); } else failed.push(...roundLines);
-    await loadStore();
     // Activity arriving during this Send waits for the next manual Send.
     doPush = false;
   }
@@ -4645,7 +4644,9 @@ async function submitPage(alsoPending, receipt) {
     SESSION_MONITOR = { active: delivered, monitor_count: last.monitor_count || 0, delivery: last.delivery || 'queued', owner: last.monitor_owner || null };
   }
   historyDirty = true;
+  // uzd.10: the one read-back of this Send; the caller shows it with reload(result.counts).
   await Promise.all([loadStore(), loadReadState()]);
+  const counts = loadCategories(); // the counts need not hold up the result note
   DOC_CARD.open = {}; // a Send folds every card he opened again
   loadHistory();
   const order = (it) => lines.indexOf(it);
@@ -4661,7 +4662,7 @@ async function submitPage(alsoPending, receipt) {
       delivered = data.latest?.id === last.delivery_id && data.latest.delivered === true;
     } catch {}
   }
-  return { ok: !failed.length, sent, failed, sentCount, delivered, automatic: true, any: !!last, send_id: sendId, delivery_id: last?.delivery_id };
+  return { ok: !failed.length, sent, failed, sentCount, delivered, automatic: true, any: !!last, send_id: sendId, delivery_id: last?.delivery_id, counts };
 }
 function newSendId() {
   return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
@@ -5139,8 +5140,9 @@ async function loadDocState(doc) {
 }
 // Re-read the page from the server (after a Send); renders the document on
 // screen and tells every tab.
-async function reloadPage() {
-  await Promise.all([loadStore(), loadReadState(), loadCategories()]);
+// `readBack`: a read already on its way (submitPage's counts) to show instead of reading everything again.
+async function reloadPage(readBack) {
+  await (readBack || Promise.all([loadStore(), loadReadState(), loadCategories()]));
   if (VIEW_DOC) withDoc(VIEW_DOC, renderAll);
   document.dispatchEvent(new CustomEvent('annotate:store'));
   if (window.AA) window.AA.changed();

@@ -1,5 +1,10 @@
 # agent-annotate — changelog
 
+## Unreleased
+
+- `api/categories` after a save counts only comments.json's items (agent-annotate-uzd.10). What the cold generation contributes is counted once per generation and reader kind and reused; on a copy of FLD the call after a save drops from about 220 to 65 ms CPU. Every count and plan is byte-identical to a full recount, for page and agent readers.
+- Send reads the page back once (agent-annotate-uzd.10). It no longer reads the store right after submitting and then again with the read state, and the page shows that read instead of reloading everything: 8 requests instead of 11, 5 one after another instead of 6.
+
 ## 2.36.0
 
 - Saves cost about half as much server CPU on page.db (agent-annotate-uzd.10). A save rewrites comments.json from each item's stored bytes and serializes only the items that changed; Send adds just its new round rows to page.db instead of re-reading rounds.ndjson; History reads rounds.ndjson once and then only its new lines; a page poll re-stamps only changed items. On a copy of FLD: save answer 57 → 31 ms CPU (2.33.0: 173), Send 235 → 172 ms (2.33.0: 648). The files written are byte-identical.

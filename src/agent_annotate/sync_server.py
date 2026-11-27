@@ -1292,6 +1292,7 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     _count_rows = (None, None, {})
     _plans_listed = (None, None)
     _categories_answers = {}
+    _cold_tallies = {}  # agent reader? -> (key, categories.tally of the cold generation's live items)
     _stamp_checked = {}
 
     def handle_one_request(self):
@@ -4544,39 +4545,44 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
     def _get_categories(self):
         from .categories import (
             CATEGORIES,
+            _current_versions,
             category_counts,
-            comment_category,
             list_plans,
             load_categories,
             safe_path,
+            tally,
         )
+        from .cold import KEY, ordered
         from .copy_state import load_copy
         from .plan_topics import file_plans
         from .project_state import linked_pages
         try:
             with _locked_store(self.artifact_dir, write=False):
                 author = self._warm_author() or self._author()
+                agent = self._agent_reader()
                 from .review_versions import visible_store
-                raw = self._v2_load(read_only=True, merged=True)
-                # uzd: ~60 plan metas and their topics took ~110 ms on FLD; they change only with these files.
+                raw = self._v2_load(read_only=True)  # the hot store: cold items are counted once per generation
+                # uzd: ~60 plan metas and their topics took ~110 ms on FLD; they change only with these files
+                # (of comments.json, list_plans reads approved_plans alone: the same for both readers).
                 topics_stamp = _metadata_stamp(safe_path(self.artifact_dir, "plan-topics.json"))
-                plans_key = (self._store_signature(), self._agent_reader(), _plan_stamps(self.artifact_dir), topics_stamp)
+                plans_key = (json.dumps(raw.get("approved_plans")), _plan_stamps(self.artifact_dir), topics_stamp)
                 # uzd: everything but the linked pages, while this store snapshot and the files it reads are
                 # unchanged (content hashes, as for the plans: a mapped edit can keep the stat). FLD ~60 ms.
                 from .consolidate import ARCHIVE_MARKER, MARKER
-                answer_key = (plans_key, author, _metadata_stamp(PROJECTS_TOML), _file_key(self.artifact_dir / ".review-drafts"),
+                drafts, meta_stamp = _file_key(self.artifact_dir / ".review-drafts"), _metadata_stamp(self._meta_path())
+                answer_key = (self._store_signature(), plans_key, agent, author, _metadata_stamp(PROJECTS_TOML), drafts, meta_stamp,
                               *(_metadata_stamp(safe_path(self.artifact_dir, name)) for name in (
-                                  "current.meta.json", "read-state.json", "categories.json", "copy.json",
-                                  MARKER, ARCHIVE_MARKER)))
+                                  "read-state.json", "categories.json", "copy.json", MARKER, ARCHIVE_MARKER)))
                 answered = type(self)._categories_answers.get(author, (None, None, None))
                 if answered[0] == answer_key and answered[1] is raw:
                     result = dict(answered[2])
                 else:
                     # Read-state writes replace the file atomically and may need the store lock.
                     read = self._reviewer_state(_load_read_state(self.artifact_dir), author)
-                    store = visible_store(self.artifact_dir, raw, self._read_meta())
+                    meta = self._read_meta()
+                    store = visible_store(self.artifact_dir, ordered(raw), meta)
                     rows = None
-                    if self._agent_reader():
+                    if agent:
                         store = store_view(store)  # fresh comment objects: no memo by id
                     else:
                         # uzd: per-comment counting work, kept while this snapshot (and so every id) is alive and unchanged.
@@ -4592,15 +4598,26 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
                         plans = list_plans(self.artifact_dir, store=store)
                         topics = file_plans(self.artifact_dir, plans)
                         type(self)._plans_listed = (plans_key, (plans, topics))
-                    counts = category_counts(self.artifact_dir, author, read_state=read, store=store, plans=plans,
-                                             submitted_only=self._agent_reader(), rows=rows)
+                    versions = _current_versions(self.artifact_dir, plans)
+                    tallies = [tally(store, versions, rows)]
+                    if KEY in raw:
+                        # uzd.10: a cold generation's items never change; only promoting one changes the summary's lists.
+                        cold_key = (raw.index.gen, raw.index.digest, json.dumps(raw[KEY]["lists"]), drafts, meta_stamp,
+                                    tuple(versions.items()))
+                        hit = type(self)._cold_tallies.get(agent)
+                        if not hit or hit[0] != cold_key:
+                            hit = (cold_key, self._cold_tally(raw, meta, versions, agent))
+                            type(self)._cold_tallies = {**type(self)._cold_tallies, agent: hit}
+                        tallies.append(hit[1])
+                    counts = category_counts(self.artifact_dir, author, read_state=read, submitted_only=agent,
+                                             tallies=tallies)
                     category_data = load_categories(self.artifact_dir)
                     try:
                         library = load_copy(self.artifact_dir)
                     except ValueError as exc:
                         # The other tabs still count; Library reports the problem.
                         library = {"blocks": [], "error": f"copy.json is invalid ({exc})"}
-                    present = {comment_category(c) for items in store["anchors"].values() for c in items}
+                    present = set().union(*(t[2] for t in tallies))
                     available = {"review": True, "library": bool(library["blocks"]) or "library" in present,
                                  "findings": bool(category_data["findings_sets"]) or "findings" in present,
                                  "plans": any(p["section"] != "hidden" for p in plans) or "plans" in present}
@@ -4624,6 +4641,17 @@ class AnnotateHandler(http.server.BaseHTTPRequestHandler):
             # Unexpected page data is reported, never a dropped connection.
             return self._respond(400, json.dumps({"error": f"page data could not be read: {exc}"}).encode())
         return self._respond(200, body, cache_control="no-store", conditional=True)
+
+    def _cold_tally(self, hot, meta, versions, agent) -> tuple:
+        """categories.tally of the cold items comments.json still points at, as this reader sees them."""
+        from .categories import tally
+        from .cold import live
+        from .review_versions import visible_store
+        whole = {"anchors": {}, "archived": {}}
+        for area, aid, _, item in live(hot):
+            whole[area].setdefault(aid, []).append(item)
+        store = visible_store(self.artifact_dir, whole, meta)
+        return tally(store_view(store) if agent else store, versions)
 
     def _bounded_json_body(self):
         try:
@@ -5093,6 +5121,7 @@ def make_handler(
     BoundHandler._count_rows = (None, None, {})
     BoundHandler._plans_listed = (None, None)
     BoundHandler._categories_answers = {}
+    BoundHandler._cold_tallies = {}
     BoundHandler._stamp_checked = {}
     BoundHandler._meta_snapshot = None
     BoundHandler._meta_responses = {}

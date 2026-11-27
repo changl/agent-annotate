@@ -194,7 +194,7 @@ def _same(a, b, root_a, root_b):
     assert json.dumps(store.snapshot(root_a).comments) == json.dumps(store.snapshot(root_b).comments)
 
 
-def _writes(httpd, serve):
+def _writes(httpd, serve, after=lambda: None):
     serve.reset_ids()
     agent = {"X-Annotate-Agent": "agent:test"}
     steps = [
@@ -212,6 +212,7 @@ def _writes(httpd, serve):
         status, _, body = request(httpd, path, method, payload, headers)
         assert status in (200, 201), (path, body[:300])
         out.append(json.loads(body))
+        after()
     return out
 
 
@@ -264,6 +265,34 @@ def test_split_page_reads_and_writes_exactly_as_one_file(tmp_path, sandbox, back
     assert raw[cold.KEY]["gen"] >= gen  # numbers only grow
     # Reopened and changes-requested items are not settled: they stay hot.
     assert {"settled", "old-q-3"} <= _ids(raw)
+
+
+def test_categories_count_a_cold_generation_once_and_match_a_full_recount_after_each_write(tmp_path, sandbox):
+    """uzd.10: after every write, both readers get the bytes the one-file page (a full recount) gives."""
+    root_a, root_b = _page(tmp_path / "a"), _page(tmp_path / "b")
+    a, handler = sandbox(root_a, "proj-a")
+    b, _ = sandbox(root_b, "proj-b", split=False)
+    request(a, "/comments.json?view=page")  # splits the page
+    assert _split(root_a)
+    tallied = []
+    real = handler._cold_tally
+    handler._cold_tally = lambda self, *args: tallied.append(args[-1]) or real(self, *args)
+    readers = (None, {"X-Annotate-Agent": "agent:test"})
+
+    def categories(httpd, out):
+        out.append([request(httpd, "/api/categories", headers=h)[2] for h in readers])
+        out[-1].append(len(tallied))
+
+    seen = {"a": [], "b": []}
+    categories(a, seen["a"])
+    categories(b, seen["b"])
+    _writes(a, sandbox, lambda: categories(a, seen["a"]))
+    _writes(b, sandbox, lambda: categories(b, seen["b"]))
+    assert [s[:2] for s in seen["a"]] == [s[:2] for s in seen["b"]]
+    counts = [s[2] for s in seen["a"]]
+    assert counts[0] == 2  # once per reader
+    assert counts[4] == counts[3]  # a new note leaves the cold items alone: no recount
+    assert json.loads(seen["a"][-1][0])["categories"][0]["counts"]["waiting"] > 0
 
 
 def test_reader_of_a_page_without_cold_store_is_unchanged(tmp_path):
