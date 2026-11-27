@@ -104,3 +104,72 @@ def test_a_discard_reads_the_page_back_once(tmp_path):
         expect(page.locator("#round-confirm-backdrop")).to_be_hidden()
         page.wait_for_timeout(500)
         assert _paths(seen[_at(seen, "/api/rounds/discard"):]).count("/comments.json") == 1, seen
+
+
+def _pending(page):
+    return page.evaluate("() => AnnotateDocs.pageRoundPending()")
+
+
+def _unread(page):
+    return page.evaluate("() => AnnotateDocs.categories().categories.find(c => c.id === 'review').counts.unread")
+
+
+@pytest.mark.parametrize("action", ["submit", "discard"])
+def test_a_failed_read_back_after_a_send_or_discard_is_read_again(tmp_path, action):
+    # Review of b82ca42: the tab showed the cleared verdict as pending after one 500.
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (page, base, _):
+        _manual(page)
+        _answer(page)
+        assert _pending(page) == 1
+        posted, fault = [], []
+        page.on("response", lambda r: posted.append(1) if urlsplit(r.url).path == f"/api/rounds/{action}" and r.ok else None)
+
+        def read_back(route):
+            if posted and not fault:
+                fault.append(route.request.url)
+                route.fulfill(status=500, content_type="application/json", body='{"error":"transient"}')
+            else:
+                route.continue_()
+
+        page.route("**/comments.json?*", read_back)
+        page.locator("#send-btn").click()
+        page.locator(f"#round-{action}-btn").click()
+        expect(page.locator("#round-confirm-backdrop")).to_be_hidden()
+        page.wait_for_timeout(350)
+        assert posted and fault
+        second = page.context.new_page()
+        second.goto(base + "#view=review", wait_until="networkidle")
+        _loaded(second)
+        assert _pending(second) == 0, "the server cleared it"
+        page.bring_to_front()
+        _poll(page)
+        assert _pending(page) == 0
+
+
+def test_a_read_mark_overtaken_by_a_counts_read_still_shows_its_counts(tmp_path):
+    # Review of b82ca42: a categories GET asked after the mark but sampled before it kept the old count.
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (page, base, _):
+        _manual(page)
+        before = _unread(page)
+        assert before > 0
+        page.evaluate("""() => {
+            const original = window.fetch;
+            window.fetch = (resource, options) => {
+                if (options?.method === 'POST' && String(resource).includes('/api/read-state')) {
+                    return new Promise((resolve, reject) => {
+                        window.releaseMark = () => original(resource, options).then(resolve, reject);
+                    });
+                }
+                return original(resource, options);
+            };
+            window.pendingMark = AnnotateDocs.markRead([AnnotateDocs.findComment('question-11')]);
+        }""")
+        page.wait_for_function("() => !!window.releaseMark")
+        page.evaluate("() => AnnotateDocs.refreshStore()")
+        assert _unread(page) == before
+        page.evaluate("async () => { window.releaseMark(); await window.pendingMark; }")
+        server = next(c["counts"]["unread"] for c in page.request.get(base + "api/categories").json()["categories"] if c["id"] == "review")
+        assert server == before - 1
+        page.wait_for_function("n => AnnotateDocs.categories().categories.find(c => c.id === 'review').counts.unread === n", arg=server)

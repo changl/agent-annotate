@@ -809,10 +809,13 @@ function postReadItems(items) {
     const data = r.ok ? await r.clone().json().catch(() => null) : null;
     const url = './api/categories', etag = r.headers.get('ETag');
     if (!data || !Array.isArray(data.categories) || !etag) refreshCountsSoon();
-    else if (!pollLast[url] || pollLast[url].asked < asked) { // else a read asked later has answered
+    else if (!pollLast[url] || pollLast[url].asked < asked) {
       pollLast[url] = { etag, text: null, data, asked };
       takeCategories(data);
       if (window.AA) window.AA.changed();
+    } else if (pollLast[url].etag !== etag) {
+      // A read asked later answered first, but it may have sampled before this mark landed.
+      refreshCountsSoon();
     }
     return r;
   }).catch(() => null);
@@ -4685,9 +4688,9 @@ async function submitPage(alsoPending, receipt) {
     SESSION_MONITOR = { active: delivered, monitor_count: last.monitor_count || 0, delivery: last.delivery || 'queued', owner: last.monitor_owner || null };
   }
   historyDirty = true;
-  // uzd.10: the one read-back of this Send; the caller shows it with reload(result.counts).
-  await Promise.all([loadStore(), loadReadState()]);
-  const counts = loadCategories(); // the counts need not hold up the result note
+  // uzd.10: the one read-back of this Send; the caller shows it with reload(result.readBack).
+  const back = readBack();
+  await Promise.all([back.store, back.read]); // the counts need not hold up the result note
   DOC_CARD.open = {}; // a Send folds every card he opened again
   loadHistory();
   const order = (it) => lines.indexOf(it);
@@ -4703,7 +4706,7 @@ async function submitPage(alsoPending, receipt) {
       delivered = data.latest?.id === last.delivery_id && data.latest.delivered === true;
     } catch {}
   }
-  return { ok: !failed.length, sent, failed, sentCount, delivered, automatic: true, any: !!last, send_id: sendId, delivery_id: last?.delivery_id, counts };
+  return { ok: !failed.length, sent, failed, sentCount, delivered, automatic: true, any: !!last, send_id: sendId, delivery_id: last?.delivery_id, readBack: back };
 }
 function newSendId() {
   return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
@@ -4722,13 +4725,14 @@ function receiptPayload(receipt, id) {
   };
 }
 // 2.20 behaviour and wording: clears the pending verdicts only (typed
-// comments and general feedback stay as drafts). Returns the count or null.
+// comments and general feedback stay as drafts). Returns { count, readBack } or null.
 async function discardPage() {
   const j = await apiRoundDiscard();
   if (!j) return null;
-  // uzd.10: the one read-back of this Discard; the caller shows it with reload(true).
-  await Promise.all([loadStore(), loadReadState(), loadCategories()]);
-  return j.comment_count != null ? j.comment_count : 0;
+  // uzd.10: the one read-back of this Discard; the caller shows it with reload(result.readBack).
+  const back = readBack();
+  await Promise.all(Object.values(back));
+  return { count: j.comment_count != null ? j.comment_count : 0, readBack: back };
 }
 function wireRoundBar() {
   let t = null;
@@ -5182,9 +5186,16 @@ async function loadDocState(doc) {
 }
 // Re-read the page from the server (after a Send); renders the document on
 // screen and tells every tab.
-// `readBack`: a read already done or on its way (submitPage's counts, true after discardPage) to show instead of reading everything again.
-async function reloadPage(readBack) {
-  await (readBack || Promise.all([loadStore(), loadReadState(), loadCategories()]));
+// `back`: an action's readBack() (Send, Discard). Each read that succeeded is
+// reused; one that failed is read again, so a transient error cannot leave the
+// page showing what the action already cleared.
+function readBack() {
+  return { store: loadStore(), read: loadReadState(), cats: loadCategories() };
+}
+async function reloadPage(back) {
+  back = back || {};
+  await Promise.all([[back.store, loadStore], [back.read, loadReadState], [back.cats, loadCategories]]
+    .map(([done, load]) => Promise.resolve(done).then(ok => ok || load())));
   if (VIEW_DOC) withDoc(VIEW_DOC, renderAll);
   document.dispatchEvent(new CustomEvent('annotate:store'));
   if (window.AA) window.AA.changed();

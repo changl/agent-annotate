@@ -804,7 +804,7 @@
     const failed = r ? (r.failed || []).length : items.length;
     if (!sent.length) {
       btns.forEach(b => { b.disabled = false; });
-      if (r) { await docs.reload(r.counts); AA.changed(); }
+      if (r) { await docs.reload(r.readBack); AA.changed(); }
       $('#round-confirm-sub').textContent = 'Failed to submit — try again.';
       return;
     }
@@ -817,7 +817,7 @@
     if (failed) {
       // A partial Send: the summary stays open on what is still pending.
       setNote(result, r.delivered ? 'is-success' : 'is-queued');
-      await docs.reload(r.counts);
+      await docs.reload(r.readBack);
       AA.TABS.forEach(t => { const pr = AA.providers[t.id]; if (pr && pr.afterSend) pr.afterSend(); });
       btns.forEach(b => { b.disabled = false; });
       render();
@@ -828,7 +828,7 @@
     }
     close();
     setNote(result, r.delivered ? 'is-success' : 'is-queued');
-    await docs.reload(r.counts);  // submitPage read the page back already
+    await docs.reload(r.readBack);  // submitPage read the page back already
     AA.TABS.forEach(t => { const pr = AA.providers[t.id]; if (pr && pr.afterSend) pr.afterSend(); });
     if (AA.rail.tab === 'history') AA.rail.renderHistory();
     AA.changed();
@@ -840,16 +840,17 @@
     sending = true;
     const btns = ['round-submit-btn', 'round-discard-btn', 'round-cancel-btn'].map(id => document.getElementById(id));
     btns.forEach(b => { b.disabled = true; });
-    const n = await docs.discardPage();
+    const r = await docs.discardPage();
     sending = false;
-    if (n == null) {
+    if (r == null) {
       btns.forEach(b => { b.disabled = false; });
       $('#round-confirm-sub').textContent = 'Failed to discard — try again.';
       return;
     }
+    const n = r.count;
     close();
     setNote('Discarded ' + n + ' pending verdict' + (n === 1 ? '' : 's') + ' — nothing sent', '', 5000);
-    await docs.reload(true);  // discardPage read the page back already
+    await docs.reload(r.readBack);  // discardPage read the page back already
   }
 
   $('#send-btn').addEventListener('click', openSummary);
