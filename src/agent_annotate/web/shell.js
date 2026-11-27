@@ -437,14 +437,15 @@ async function pollJson(url, quiet, headers = {}) {
 // Polls read LIVE only (Chang, 2026-11-01: nothing changes under the reviewer).
 let LIVE = null;
 let liveBaseMark = null;
-let storeAsked = 0, storeTaken = 0, storeStale = false;
+// Store reads are numbered when asked; only the newest asked reaches LIVE. staleAfter: see readBack().
+let storeAsked = 0, storeTaken = 0, staleAfter = 0;
 // uzd: the page first reads `view=page`, what the latest version shows and a
 // Send needs (FLD: 140 of 9,178 comments). Earlier feedback, Not in this
 // Send, History, an older version or text typed on an old card read the
 // whole store (`view=poll`) once, and the page keeps it from then on.
 let STORE_VIEW = 'page';
-async function pollStore() {
-  const asked = ++storeAsked;
+// `asked`: the poll's number, taken when it asked /api/poll, whose answer may stand for this read.
+async function pollStore(asked = ++storeAsked) {
   const baseMark = STORE.partial ? STORE.store_mark : null;
   try {
     const got = await pollJson('./comments.json?view=' + STORE_VIEW, false,
@@ -459,7 +460,7 @@ async function pollStore() {
       LIVE = got.data && got.data.schema_version === 2 ? got.data : { schema_version: 2, anchors: {}, archived: {} };
       pollChanged = true;
     }
-    if (storeStale) { storeStale = false; applyLive(); showStore(); } // see readBack()
+    if (staleAfter && asked > staleAfter) { staleAfter = 0; applyLive(); showStore(); } // see readBack()
     return true;
   } catch { return false; }
 }
@@ -5189,9 +5190,10 @@ async function loadDocState(doc) {
 // screen and tells every tab.
 // `back`: an action's readBack() (Send, Discard). Each read that succeeded is
 // reused; one that failed is read again. A failed store read-back marks the
-// shown store stale; the next store read that succeeds, a poll's too, shows it.
+// shown store stale as of the action's finish; the first store read asked
+// after that which succeeds, a poll's too, shows it. An earlier read cannot.
 function readBack() {
-  const store = loadStore().then(ok => { if (!ok) storeStale = true; return ok; });
+  const store = loadStore().then(ok => { if (!ok) staleAfter = storeAsked; return ok; });
   return { store, read: loadReadState(), cats: loadCategories() };
 }
 async function reloadPage(back) {
@@ -5528,13 +5530,14 @@ async function init() {
     let changed = false;
     try {
       pollChanged = false;
+      const asked = ++storeAsked; // the store read is as fresh as /api/poll's answer, not later
       const gate = { etags: await askPoll(), reads: [] };
       const doc = VIEW_DOC;
       const onDoc = doc && DOC === doc && !docBusy;
       // Where the last Send got to comes with the page's meta: read it with
       // the rest, not after it.
       const delivery = onDoc ? gated(gate, loadMeta).then(() => gated(gate, loadDelivery)) : gated(gate, loadDelivery);
-      await gated(gate, () => Promise.all([pollStore(), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject(), delivery]));
+      await gated(gate, () => Promise.all([pollStore(asked), loadReadState(), loadCategories(), loadSessionMonitor(), loadProject(), delivery]));
       if (historyDirty) loadHistory();
       gated(gate, loadBoard);
       pollReads = [...new Set(gate.reads)];

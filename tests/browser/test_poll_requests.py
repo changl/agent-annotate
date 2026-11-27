@@ -174,3 +174,58 @@ def test_a_read_mark_overtaken_by_a_counts_read_still_shows_its_counts(tmp_path)
         server = next(c["counts"]["unread"] for c in page.request.get(base + "api/categories").json()["categories"] if c["id"] == "review")
         assert server == before - 1
         page.wait_for_function("n => AnnotateDocs.categories().categories.find(c => c.id === 'review').counts.unread === n", arg=server)
+
+
+HOLD_ONE_GET = """path => {
+    const real = window.fetch;
+    let hold = true;
+    window.fetch = (resource, options) => {
+        if (hold && new URL(resource, location.href).pathname === path && (!options?.method || options.method === 'GET')) {
+            hold = false;
+            return real(resource, options).then(answer => new Promise(resolve => {
+                window.oldStatus = answer.status;
+                window.releaseOld = () => resolve(answer);
+            }));
+        }
+        return real(resource, options);
+    };
+}"""
+
+
+@pytest.mark.parametrize("held, action", [("/comments.json", "discard"), ("/api/poll", "discard"), ("/api/poll", "submit")],
+                         ids=["legacy-discard", "batch-discard", "batch-send"])
+def test_a_poll_asked_before_a_failed_read_back_cannot_clear_its_recovery(tmp_path, held, action):
+    # Review of 02d2881: a poll asked before the Send or Discard and answered after it cleared the stale mark.
+    directory = _directory(tmp_path)
+    with _session(tmp_path, directory) as (page, _, _):
+        _manual(page)
+        if held == "/comments.json":
+            page.route("**/api/poll?*", lambda route: route.fulfill(status=404, body="{}"))
+        _answer(page)
+        assert _pending(page) == 1
+        _poll(page, 2)  # the poll's ETags are known, or the tab is back on the old reads
+        page.evaluate(HOLD_ONE_GET, held)
+        page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        page.wait_for_function("() => !!window.releaseOld")
+        assert page.evaluate("window.oldStatus") in (200, 304)
+        posted, fault = [], []
+        page.on("response", lambda r: posted.append(1) if urlsplit(r.url).path == f"/api/rounds/{action}" and r.ok else None)
+
+        def read_back(route):
+            if posted and len(fault) < 2:
+                fault.append(route.request.url)
+                route.fulfill(status=500, content_type="application/json", body='{"error":"transient"}')
+            else:
+                route.continue_()
+
+        page.route("**/comments.json?*", read_back)
+        page.locator("#send-btn").click()
+        page.locator(f"#round-{action}-btn").click()
+        expect(page.locator("#round-confirm-backdrop")).to_be_hidden()
+        page.wait_for_timeout(350)
+        assert posted and len(fault) == 2 and _pending(page) == 1
+        page.evaluate("() => window.releaseOld()")
+        page.wait_for_timeout(350)
+        with page.expect_response(lambda r: urlsplit(r.url).path == "/comments.json" and r.status in (200, 304), timeout=4500):
+            _poll(page)
+        assert _pending(page) == 0
