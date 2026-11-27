@@ -23,7 +23,7 @@ class _Borrowed:
 
     def _open(self, make):
         made = self._shared.open(self._key, make)
-        self._mine.append(made.context if hasattr(made, "context") else made)
+        self._mine.append(getattr(made, "context", made))
         return made
 
     def new_context(self, **options):
@@ -46,7 +46,6 @@ class SharedPlaywright:
 
     def __init__(self, start, error):
         self._start, self._error, self._runner, self._browsers, self._options = start, error, None, {}, {}
-        self.opened = []
         self.chromium = SimpleNamespace(launch=lambda **options: self._launch("chromium", options))
         self.webkit = SimpleNamespace(launch=lambda **options: self._launch("webkit", options))
 
@@ -74,24 +73,25 @@ class SharedPlaywright:
 
     def open(self, key, make):
         try:
-            made = make(self.browser(key))
+            return make(self.browser(key))
         except self._error:
             if self._browsers[key].is_connected():
                 raise
-            made = make(self.browser(key))  # it crashed while idle, before Playwright noticed: relaunch once
-        self.opened.append(made.context if hasattr(made, "context") else made)
-        return made
+            return make(self.browser(key))  # it crashed while idle, before Playwright noticed: relaunch once
 
     def close_contexts(self):
-        # Close every context the test left open, then fail that test with the first error.
-        contexts = self.opened[:]
-        self.opened.clear()
+        # Every context in these browsers belongs to the test that just ended, including any a failed
+        # new_page left behind. A browser that will not close one is dropped; the test fails with the error.
         failures = []
-        for context in contexts:
+        for key, browser in list(self._browsers.items()):
             try:
-                context.close()
+                for context in browser.contexts:
+                    context.close()
             except Exception as failure:
                 failures.append(failure)
+                del self._browsers[key]
+                with contextlib.suppress(Exception):
+                    browser.close()
         if failures:
             raise failures[0]
 
@@ -99,11 +99,13 @@ class SharedPlaywright:
         try:
             self.close_contexts()
         finally:
-            try:
-                if self._runner is not None:
+            if self._runner is not None:
+                loop = self._runner._loop
+                try:
                     self._runner.stop()
-            finally:
-                asyncio._set_running_loop(None)  # an interrupted sync call can leave Playwright's loop set
+                finally:
+                    if asyncio._get_running_loop() is loop:  # an interrupted sync call can leave it set
+                        asyncio._set_running_loop(None)
 
 
 _shared = None
@@ -146,6 +148,7 @@ def pytest_runtest_teardown(item, nextitem):
             _stop_shared()
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_sessionfinish(session):
     _stop_shared()  # a run cut short (-x, Ctrl-C) never reaches the last teardown above
 
