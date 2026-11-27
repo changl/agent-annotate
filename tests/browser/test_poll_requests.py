@@ -114,9 +114,10 @@ def _unread(page):
     return page.evaluate("() => AnnotateDocs.categories().categories.find(c => c.id === 'review').counts.unread")
 
 
-@pytest.mark.parametrize("action", ["submit", "discard"])
-def test_a_failed_read_back_after_a_send_or_discard_is_read_again(tmp_path, action):
-    # Review of b82ca42: the tab showed the cleared verdict as pending after one 500.
+@pytest.mark.parametrize("action, fails", [("submit", 1), ("discard", 1), ("submit", 2)])
+def test_a_failed_read_back_after_a_send_or_discard_is_read_again(tmp_path, action, fails):
+    # Review of b82ca42: the tab showed the cleared verdict as pending after one 500. Review of
+    # eeb804b: after two, the retry failed too, and the next healthy poll must show the store.
     directory = _directory(tmp_path)
     with _session(tmp_path, directory) as (page, base, _):
         _manual(page)
@@ -126,7 +127,7 @@ def test_a_failed_read_back_after_a_send_or_discard_is_read_again(tmp_path, acti
         page.on("response", lambda r: posted.append(1) if urlsplit(r.url).path == f"/api/rounds/{action}" and r.ok else None)
 
         def read_back(route):
-            if posted and not fault:
+            if posted and len(fault) < fails:
                 fault.append(route.request.url)
                 route.fulfill(status=500, content_type="application/json", body='{"error":"transient"}')
             else:
@@ -137,7 +138,7 @@ def test_a_failed_read_back_after_a_send_or_discard_is_read_again(tmp_path, acti
         page.locator(f"#round-{action}-btn").click()
         expect(page.locator("#round-confirm-backdrop")).to_be_hidden()
         page.wait_for_timeout(350)
-        assert posted and fault
+        assert posted and len(fault) == fails
         second = page.context.new_page()
         second.goto(base + "#view=review", wait_until="networkidle")
         _loaded(second)

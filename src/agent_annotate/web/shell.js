@@ -437,7 +437,7 @@ async function pollJson(url, quiet, headers = {}) {
 // Polls read LIVE only (Chang, 2026-11-01: nothing changes under the reviewer).
 let LIVE = null;
 let liveBaseMark = null;
-let storeAsked = 0, storeTaken = 0;
+let storeAsked = 0, storeTaken = 0, storeStale = false;
 // uzd: the page first reads `view=page`, what the latest version shows and a
 // Send needs (FLD: 140 of 9,178 comments). Earlier feedback, Not in this
 // Send, History, an older version or text typed on an old card read the
@@ -459,6 +459,7 @@ async function pollStore() {
       LIVE = got.data && got.data.schema_version === 2 ? got.data : { schema_version: 2, anchors: {}, archived: {} };
       pollChanged = true;
     }
+    if (storeStale) { storeStale = false; applyLive(); showStore(); } // see readBack()
     return true;
   } catch { return false; }
 }
@@ -5187,15 +5188,19 @@ async function loadDocState(doc) {
 // Re-read the page from the server (after a Send); renders the document on
 // screen and tells every tab.
 // `back`: an action's readBack() (Send, Discard). Each read that succeeded is
-// reused; one that failed is read again, so a transient error cannot leave the
-// page showing what the action already cleared.
+// reused; one that failed is read again. A failed store read-back marks the
+// shown store stale; the next store read that succeeds, a poll's too, shows it.
 function readBack() {
-  return { store: loadStore(), read: loadReadState(), cats: loadCategories() };
+  const store = loadStore().then(ok => { if (!ok) storeStale = true; return ok; });
+  return { store, read: loadReadState(), cats: loadCategories() };
 }
 async function reloadPage(back) {
   back = back || {};
   await Promise.all([[back.store, loadStore], [back.read, loadReadState], [back.cats, loadCategories]]
     .map(([done, load]) => done ? done.then(ok => ok || load()) : load())); // no read-back: read now, not a tick later
+  showStore();
+}
+function showStore() {
   if (VIEW_DOC) withDoc(VIEW_DOC, renderAll);
   document.dispatchEvent(new CustomEvent('annotate:store'));
   if (window.AA) window.AA.changed();
